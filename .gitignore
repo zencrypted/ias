@@ -1,3 +1,4 @@
+rocksdb/*
 ebin
 mix.lock
 _build/

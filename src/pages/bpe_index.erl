@@ -31,13 +31,26 @@ event(create) ->
     nitro:show(frms);
 
 event({'Spawn',_}) ->
-    Atom = nitro:to_atom(nitro:q(process_type_pi_none)),
-    Id = case bpe:start(Atom:def(), []) of
-              {error,I} -> I;
-              {ok,I} -> I end,
-    nitro:insert_after(header, bpe_row:new(form:atom([row,Id]),bpe:proc(Id),[])),
-    nitro:hide(frms),
-    nitro:show(ctrl);
+    Atom = nitro:to_atom(nitro:q(process_type_act_none)),
+    io:format("Selected Combo: ~p~n",[Atom]),
+    case Atom of
+        '' -> ok;
+        _ ->
+            case code:ensure_loaded(Atom) of
+                {module, Atom} ->
+                    case erlang:function_exported(Atom, def, 0) of
+                        true ->
+                            Id = case bpe:start(Atom:def(), []) of
+                                      {error,I} -> I;
+                                      {ok,I} -> I end,
+                            nitro:insert_after(header, bpe_row:new(form:atom([row,Id]),bpe:proc(Id),[])),
+                            nitro:hide(frms),
+                            nitro:show(ctrl);
+                        false -> ok
+                    end;
+                _ -> ok
+            end
+    end;
 
 event({'Discard',[]}) ->
     nitro:hide(frms),
@@ -46,7 +59,7 @@ event({'Discard',[]}) ->
 event({Event,Name}) ->
     nitro:wire(lists:concat(["console.log(\"",io_lib:format("~p",[{Event,Name}]),"\");"]));
 
-event(Event) ->
+event(_Event) ->
     ok.
 
 header() ->

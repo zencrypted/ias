@@ -17,7 +17,7 @@ new(Name,Proc,_) ->
         #panel{class=column6,   body = nitro:to_list(current(Proc))},
         #panel{class=column20,  body = nitro:to_list(current(Proc))},
         #panel{class=column20,  body = string:join(lists:map(fun(X)-> nitro:to_list([element(1,X)]) end,Docs),", ") },
-        #panel{class=column10,  body = case current(Proc) of "Final" -> [];
+        #panel{class=column10,  body = case current(Proc) of "Final" -> []; "Closed" -> []; "Delivered" -> [];
                                        _ -> [ #link{postback={complete,Proc#process.id}, class=[button,sgreen],
                                          body= "Go", source=[], validate=[]} ] end }
        ]}.

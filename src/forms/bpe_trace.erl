@@ -14,5 +14,20 @@ new(Name,Hist,_) ->
         #panel{class=column20,  body = string:join(lists:map(fun(X)-> nitro:to_list([element(1,X)]) end,Docs),", ")}
        ]}.
 
-name(#sequenceFlow{source=Task}) -> nitro:to_list(Task);
+name(#sequenceFlow{name=Name, source=Source, target=Target}) ->
+    case Source of
+        [] -> case Name of
+            [] -> nitro:to_list(Target);
+            _ -> nitro:to_list(Name)
+        end;
+        _ -> nitro:to_list(Source)
+    end;
+name(#task{name=Name}) -> nitro:to_list(Name);
+name(#userTask{name=Name}) -> nitro:to_list(Name);
+name(#serviceTask{name=Name}) -> nitro:to_list(Name);
+name(#beginEvent{name=Name}) -> nitro:to_list(Name);
+name(#endEvent{name=Name}) -> nitro:to_list(Name);
+name(Atom) when is_atom(Atom) -> nitro:to_list(Atom);
+name(Bin) when is_binary(Bin) -> nitro:to_list(Bin);
+name(List) when is_list(List) -> List;
 name(_) -> [].

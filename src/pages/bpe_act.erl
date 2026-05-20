@@ -1,5 +1,6 @@
 -module(bpe_act).
 -copyright('Maxim Sokhatsky').
+-include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 -include_lib("form/include/meta.hrl").
 -include_lib("bpe/include/bpe.hrl").
@@ -9,8 +10,20 @@
 event(init) ->
    nitro:clear(tableHead),
    nitro:clear(tableRow),
-   Bin = nitro:qc(p),
-   Id = try binary_to_list(Bin) catch _:_ -> 0 end,
+   CX = get(context),
+   Req = CX#cx.req,
+   Bin = case Req of
+              #{qs := QS} ->
+                  proplists:get_value(<<"p">>, uri_string:dissect_query(nitro:to_binary(QS)));
+              #{query_string := QS} ->
+                  proplists:get_value(<<"p">>, uri_string:dissect_query(nitro:to_binary(QS)));
+              _ ->
+                  nitro:qc(p)
+         end,
+   Id = case Bin of
+             undefined -> "";
+             _ -> nitro:to_list(Bin)
+        end,
    case kvs:get("/bpe/proc",Id) of
         {error,not_found} ->
            nitro:update(n, "ERR"),

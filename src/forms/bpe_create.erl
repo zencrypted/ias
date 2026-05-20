@@ -9,7 +9,7 @@
 doc() -> "Dialog for creation of BPE processes.".
 id() -> #act{}.
 new(Name,#act{}, _) ->
-  put(process_type_pi_none, "bpe_account"),
+  put(process_type_act_none, "bpe_account"),
   #document { name = form:atom([pi,Name]),
     sections = [ #sec { name=[<<"New process: "/utf8>>] } ],
     buttons  = [ #but { id=form:atom([pi,decline]),
@@ -19,7 +19,7 @@ new(Name,#act{}, _) ->
                  #but { id=form:atom([pi,proceed]),
                         title = <<"Create"/utf8>>,
                         class = [button,sgreen],
-                        sources = [process_type],
+                        sources = [process_type_act_none],
                         postback = {'Spawn',[]}}],
     fields = [ #field { name=process_type,
                         id=process_type,
@@ -27,5 +27,8 @@ new(Name,#act{}, _) ->
                         title= "Type",
                         tooltips = [],
                         default = bpe_account,
-                        options = [ #opt{name=bpe_account,checked=true,title = "Client Account"} ]
+                        options = [ #opt{name=bpe_account,checked=true,title = "Client Account"},
+                                    #opt{name=bpe_ticket,checked=true,title = "Support Ticker"},
+                                    #opt{name=bpe_order,checked=true,title = "Commertical Order"}
+                                     ]
                        } ] }.

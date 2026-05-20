@@ -1,3 +1,4 @@
+<!DOCTYPE html>
 <html>
 
 <head>
@@ -5,46 +6,51 @@
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="description" content="" />
-    <meta name="author" content="Maxim Sokhatsky" />
-    <title>FORMS</title>
-    <link rel="stylesheet" href="css/blank.css?v=1" />
-    <link rel="stylesheet" href="css/forms.css?v=1" />
+    <title>FORM</title>
+    <link rel="stylesheet" href="css/blank.css" />
+    <link rel="stylesheet" href="css/forms.css" />
+    <link rel="stylesheet" href="css/admin.css" />
+    <link rel="stylesheet" href="https://nitro.n2o.dev/priv/css/calendar.css" />
 </head>
 
-<body>
+<body class="form-grid-page">
 
-<nav>
-    <a href='index.html'>FIN</a>
-    <a href='actors.htm'>ACTORS</a>
-    <a href='forms.htm' style="background:#ededed;">FORMS</a>
-</nav>
+    <nav>
+       <a href='index.htm'>FIN</a>
+       <a href='actors.htm'>ACTORS</a>
+       <a href='forms.htm' style="background:#ededed;">FORMS</a>
+    </nav>
 
-<aside>
-    <section>
-          <h2>FORMS</h2>
-          <p>Debug list of registered NITRO forms in the system.</p>
-          <br>
-          <div id=stand class="box">
-          </div>
-          <br>
-       <small>Зроблено з любов'ю <span class="heart">❤</span> до BPE</small>
-    </section>
-</aside>
-
-<main>
-</main>
+    <aside>
+        <section>
+            <h2>FORM</h2>
+            <p>Повний перелік форм зареєстрованих в системі.<br>
+                Налаштовується в змінній :registry додатку :form файлу конфігурації config/config.exs.</p>
+        </section>
+    </aside>
+    <main>
+        <section>
+            <div id=stand class="box form-grid">
+            </div>
+        </section>
+    </main>
+    <aside>
+        <section>
+            <small>Зроблено з любов'ю <span class="heart">❤</span> до FORM</small>
+        </section>
+    </aside>
 
     <script src='https://ws.n2o.dev/priv/utf8.js'></script>
     <script src='https://ws.n2o.dev/priv/bert.js'></script>
     <script src='https://ws.n2o.dev/priv/heart.js'></script>
     <script src='https://ws.n2o.dev/priv/ieee754.js'></script>
-    <script src='https://ws.n2o.dev/priv/n2o.js?v=5'></script>
-        <script>host = location.hostname === 'bpe.n2o.dev' ? 'ns.synrc.com' : location.hostname; port = 8041;</script>
-        <script src='https://ws.n2o.dev/priv/ftp.js'></script>
-        <script src='https://nitro.n2o.dev/priv/js/nitro.js'></script>
-        <script>protos = [$bert]; N2O_start();</script>
+    <script src='https://ws.n2o.dev/priv/n2o.js'></script>
+    <script src='https://ws.n2o.dev/priv/ftp.js'></script>
+    <script src='https://nitro.n2o.dev/priv/js/nitro.js'></script>
+    <script src='https://nitro.n2o.dev/priv/js/calendar.js'></script>
+    <script>host = location.hostname; port = 8041;</script>
+    <script>protos = [$bert]; N2O_start();</script>
 
 </body>
+
 </html>
-
-

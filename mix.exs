@@ -21,8 +21,8 @@ defmodule FIN.Mixfile do
   end
 
   def application(),
-    do: [mod: {:fin, []},
-         applications: [:rocksdb,:ranch,:cowboy,:kvs,:syn,:bpe,:nitro,:form,:n2o]]
+    do: [ mod: { :fin, [] },
+          applications: [ :rocksdb, :ranch, :cowboy, :kvs, :syn, :bpe, :nitro, :form, :n2o ] ]
 
   def deps() do
     [
@@ -38,3 +38,4 @@ defmodule FIN.Mixfile do
     ]
   end
 end
+
