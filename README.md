@@ -26,7 +26,7 @@ $ open http://localhost:8041/app/index.html
 ### Статичні HTML контейнери
 
 * [login.htm](priv/static/login.htm) Сторінка авторизації
-* [index.html](priv/static/index.html) Домашня сторінка
+* [index.html](priv/static/index.htm) Домашня сторінка
 * [forms.html](priv/static/forms.htm) Сторінка всіх форм
 * [actors.html](priv/static/actors.htm) Сторінка всіх процесів
 * [act.html](priv/static/act.htm) Сторінка історії процесу
