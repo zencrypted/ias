@@ -15,4 +15,6 @@
         terminationDate={2015,1,1}
        }).
 
+-record(close_account2, {id=kvs:seq([],[]), reason=retired}).
+
 -endif.
