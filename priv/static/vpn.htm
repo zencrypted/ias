@@ -3,9 +3,9 @@
     <meta charset="utf-8" />
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="IAS devices" />
+    <meta name="description" content="IAS VPN status" />
     <meta name="author" content="IAS" />
-    <title>Devices</title>
+    <title>VPN</title>
     <link rel="stylesheet" href="css/blank.css" />
     <link rel="stylesheet" href="css/forms.css" />
 </head>
@@ -13,28 +13,23 @@
     <nav>
         <a href="index.htm">IAS</a>
         <a href="users.htm">Users</a>
-        <a href="devices.htm" style="background:#ededed;">Devices</a>
+        <a href="devices.htm">Devices</a>
         <a href="services.htm">Services</a>
         <a href="certificates.htm">Certificates</a>
         <a href="profiles.htm">Security Profiles</a>
         <a href="relationships.htm">Relationships</a>
-        <a href="vpn.htm">VPN</a>
+        <a href="vpn.htm" style="background:#ededed;">VPN</a>
     </nav>
 
     <aside>
         <article>
             <section id="stand">
-                <h2>Devices</h2>
-                <p>Track endpoints and devices that will participate in IAS policies.</p>
-                <h3>Devices: 3</h3>
-                <table class="ias-table">
-                    <thead><tr><th>ID</th><th>Owner</th><th>Type</th></tr></thead>
-                    <tbody>
-                        <tr><td>laptop1</td><td>alice</td><td>laptop</td></tr>
-                        <tr><td>phone1</td><td>alice</td><td>phone</td></tr>
-                        <tr><td>workstation1</td><td>bob</td><td>workstation</td></tr>
-                    </tbody>
-                </table>
+                <h2>VPN</h2>
+                <p>Read-only VPN runtime status from the VPN admin API.</p>
+                <div class="ias-status-card">
+                    <h3>VPN service unavailable</h3>
+                    <p>IAS is running normally. VPN runtime status will appear when the VPN admin API is reachable.</p>
+                </div>
             </section>
         </article>
     </aside>

@@ -44,6 +44,18 @@ User
 
 VPN integration will consume these relationships later.
 
+VPN Integration
+---------------
+
+IAS consumes VPN runtime status through the VPN admin HTTP API.
+
+Current integration is read-only.
+
+Future work:
+- CA integration
+- certificate issuance
+- profile-based certificate attributes
+
 Це навчальний приклад освітнього підготовчого курсу для інтернів, який використовується для здодобуття навичок програмування систем на бібліотеках <a href="https://n2o.dev">N2O.DEV</a>.
 
 Структура проекту
