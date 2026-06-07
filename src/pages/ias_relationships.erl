@@ -69,7 +69,7 @@ vpn_state({ok, Data}) ->
     end.
 
 peers(Data) when is_map(Data) ->
-    case field(Data, [peers, configured_peers_list, peer_status]) of
+    case field(Data, [<<"peers">>, peers, configured_peers_list, peer_status]) of
         Peers when is_list(Peers) -> [Peer || Peer <- Peers, is_map(Peer)];
         _ -> []
     end;
@@ -80,7 +80,7 @@ running_count(Peers) ->
     length([Peer || Peer <- Peers, running(Peer)]).
 
 running(Peer) ->
-    case field(Peer, [running, is_running, status]) of
+    case field(Peer, [<<"running">>, running, is_running, status]) of
         true -> true;
         <<"running">> -> true;
         <<"up">> -> true;
@@ -101,18 +101,25 @@ field(Map, [Key | Rest], Default) ->
     end.
 
 lookup(Map, Key) ->
-    Binary = atom_to_binary(Key, utf8),
-    String = atom_to_list(Key),
     case maps:find(Key, Map) of
         {ok, Value} -> Value;
+        error -> lookup_fallback(Map, Key)
+    end.
+
+lookup_fallback(Map, Key) when is_atom(Key) ->
+    lookup_variants(Map, atom_to_binary(Key, utf8), atom_to_list(Key));
+lookup_fallback(Map, Key) when is_binary(Key) ->
+    lookup_variants(Map, binary_to_atom(Key, utf8), binary_to_list(Key));
+lookup_fallback(_Map, _Key) ->
+    undefined.
+
+lookup_variants(Map, Key1, Key2) ->
+    case maps:find(Key1, Map) of
+        {ok, Value} -> Value;
         error ->
-            case maps:find(Binary, Map) of
+            case maps:find(Key2, Map) of
                 {ok, Value} -> Value;
-                error ->
-                    case maps:find(String, Map) of
-                        {ok, Value} -> Value;
-                        error -> undefined
-                    end
+                error -> undefined
             end
     end.
 

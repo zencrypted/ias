@@ -28,11 +28,12 @@ body({error, _Reason}) ->
     ]}.
 
 counters(Data, Peers) ->
+    Counts = counts(Data),
     #panel{class = <<"ias-summary">>, body = [
-        summary("Configured Peers", metric(Data, [configured_peers, configured, peers_total], length(Peers))),
-        summary("Running Peers", metric(Data, [running_peers, running], running_count(Peers))),
-        summary("Stopped Peers", metric(Data, [stopped_peers, stopped], stopped_count(Peers))),
-        summary("Certificates", metric(Data, [certificates, certificate_count], undefined))
+        summary("Configured Peers", count(Counts, <<"configured">>, length(Peers))),
+        summary("Running Peers", count(Counts, <<"running">>, running_count(Peers))),
+        summary("Stopped Peers", count(Counts, <<"stopped">>, stopped_count(Peers))),
+        summary("Certificates", count(Counts, <<"certificates">>, 0))
     ]}.
 
 summary(Label, undefined) ->
@@ -50,13 +51,13 @@ peers_table(Peers) ->
 
 peer_row(Peer) ->
     row([field(Peer, [peer, id, name]),
-         field(Peer, [running, is_running, status]),
+         field(Peer, [<<"running">>, running, is_running, status]),
          field(Peer, [mode]),
          field(Peer, [ip, address]),
-         field(Peer, [remote_peer, remote]),
-         field(Peer, [trusted]),
-         field(Peer, [key_match]),
-         field(Peer, [expires, expires_at]),
+         field(Peer, [remote_peer_id, remote_peer, remote]),
+         certificate_field(Peer, [trusted]),
+         certificate_field(Peer, [key_match]),
+         certificate_field(Peer, [not_after, expires, expires_at]),
          field(Peer, [crypto_failures]),
          field(Peer, [frames_rejected])]).
 
@@ -67,16 +68,21 @@ row(Values) ->
     #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
 
 peers(Data) ->
-    case field(Data, [peers, configured_peers_list, peer_status]) of
+    case field(Data, [<<"peers">>, peers, configured_peers_list, peer_status]) of
         Peers when is_list(Peers) -> [Peer || Peer <- Peers, is_map(Peer)];
         _ -> []
     end.
 
-metric(Data, Keys, Default) ->
-    case field(Data, Keys) of
-        undefined -> Default;
-        Value -> Value
-    end.
+counts(Data) when is_map(Data) ->
+    case field(Data, [<<"counts">>, counts]) of
+        Counts when is_map(Counts) -> Counts;
+        _ -> #{}
+    end;
+counts(_) ->
+    #{}.
+
+count(Counts, Key, Default) ->
+    maps:get(Key, Counts, maps:get(binary_to_atom(Key, utf8), Counts, Default)).
 
 running_count(Peers) ->
     length([Peer || Peer <- Peers, running(Peer)]).
@@ -85,13 +91,19 @@ stopped_count(Peers) ->
     length(Peers) - running_count(Peers).
 
 running(Peer) ->
-    case field(Peer, [running, is_running, status]) of
+    case field(Peer, [<<"running">>, running, is_running, status]) of
         true -> true;
         <<"running">> -> true;
         <<"up">> -> true;
         "running" -> true;
         "up" -> true;
         _ -> false
+    end.
+
+certificate_field(Peer, Keys) ->
+    case field(Peer, [certificate]) of
+        Certificate when is_map(Certificate) -> field(Certificate, Keys);
+        _ -> field(Peer, Keys)
     end.
 
 field(Map, Keys) when is_map(Map) ->
@@ -108,18 +120,25 @@ field(Map, [Key | Rest], Default) ->
     end.
 
 lookup(Map, Key) ->
-    Binary = atom_to_binary(Key, utf8),
-    String = atom_to_list(Key),
     case maps:find(Key, Map) of
         {ok, Value} -> Value;
+        error -> lookup_fallback(Map, Key)
+    end.
+
+lookup_fallback(Map, Key) when is_atom(Key) ->
+    lookup_variants(Map, atom_to_binary(Key, utf8), atom_to_list(Key));
+lookup_fallback(Map, Key) when is_binary(Key) ->
+    lookup_variants(Map, binary_to_atom(Key, utf8), binary_to_list(Key));
+lookup_fallback(_Map, _Key) ->
+    undefined.
+
+lookup_variants(Map, Key1, Key2) ->
+    case maps:find(Key1, Map) of
+        {ok, Value} -> Value;
         error ->
-            case maps:find(Binary, Map) of
+            case maps:find(Key2, Map) of
                 {ok, Value} -> Value;
-                error ->
-                    case maps:find(String, Map) of
-                        {ok, Value} -> Value;
-                        error -> undefined
-                    end
+                error -> undefined
             end
     end.
 
