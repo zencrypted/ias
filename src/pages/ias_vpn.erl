@@ -3,17 +3,29 @@
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
+    logger:info("IAS VPN page init"),
+    Summary = ias_vpn_client:summary(),
+    logger:info("IAS VPN summary result: ~p", [summary_shape(Summary)]),
     nitro:clear(stand),
-    nitro:insert_bottom(stand, content());
+    nitro:insert_bottom(stand, content(Summary));
 event(_) ->
     ok.
 
-content() ->
+content(Summary) ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = "VPN"},
         #p{body = "Read-only VPN runtime status from the VPN admin API."},
-        render_summary(ias_vpn_client:summary())
+        render_summary(Summary)
     ]}.
+
+summary_shape({ok, Data}) when is_map(Data) ->
+    Counts = vpn_counts(Data),
+    Peers = vpn_peers(Data),
+    {ok, #{counts => Counts, peers => length(Peers)}};
+summary_shape({ok, Data}) ->
+    {ok, Data};
+summary_shape({error, Reason}) ->
+    {error, Reason}.
 
 render_summary({ok, Data}) when is_map(Data) ->
     Counts = vpn_counts(Data),
