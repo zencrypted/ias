@@ -1,10 +1,9 @@
-FIN: Тарифікаційний менеджер
-============================
+IAS: Identity, Access and Security Administration
+================================================
 
-[![Hex pm](http://img.shields.io/hexpm/v/fin.svg?style=flat)](https://hex.pm/packages/fin)
-[![Actions Status](https://github.com/erpuno/fin/workflows/mix/badge.svg)](https://github.com/erpuno/fin/actions)
+IAS is an Erlang/N2O bootstrap application for Identity, Access and Security Administration.
 
-FIN — це універсальний менеджер облікових записів, які містять історію тарифікованих транзакції. Облікові записи управляються BPMN процесами, активності яких визначені Erlang функціями. FIN, як приклад <a href="https://erp.uno">ERP.UNO</a> може бути використаний як прототип для побудови білінгових систем, банків та інших облікових систем.
+IAS was forked from FIN and is being renamed as the first IAS application baseline.
 
 
 Запуск
@@ -36,9 +35,9 @@ $ open http://localhost:8041/app/index.html
 
 ### Базові модулі
 
-* [fin_kvs](src/boot/fin_kvs.erl) Схема даних, її налаштування
-* [fin_route](src/pages/fin_route.erl) Налаштування маршрутів HTML сторінок для веб-серверу
-* [fin](src/fin.erl) Головний модуль Erlang/OTP додатку
+* [ias_kvs](src/boot/ias_kvs.erl) Схема даних, її налаштування
+* [ias_route](src/pages/ias_route.erl) Налаштування маршрутів HTML сторінок для веб-серверу
+* [ias](src/ias.erl) Головний модуль Erlang/OTP додатку
 
 ### Редактори форм
 
@@ -58,4 +57,3 @@ $ open http://localhost:8041/app/index.html
 -------
 
 * Максим Сохацький
-

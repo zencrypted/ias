@@ -1,9 +1,0 @@
-{application, fin,
- [
-  {description, "FIN Client Account Transaction Management"},
-  {vsn, "3.11.4"},
-  {registered, []},
-  {applications, [kernel,stdlib,mnesia,ranch,cowboy,nitro,kvs,syn,n2o,bpe,form]},
-  {mod, { fin, []}},
-  {env, []}
- ]}.
