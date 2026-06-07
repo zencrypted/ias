@@ -84,6 +84,31 @@ li {
   border-bottom: 0;
 }
 
+.ias-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.ias-summary-item {
+  padding: 6px 10px;
+  border: 1px solid var(--border-color, rgba(15, 23, 42, 0.08));
+  background: var(--bg-primary, #f8fafc);
+  color: var(--text-primary, #0f172a);
+  font-weight: 600;
+}
+
+.ias-relationship-tree {
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--border-color, rgba(15, 23, 42, 0.08));
+  background: var(--bg-primary, #f8fafc);
+  color: var(--text-primary, #0f172a);
+  overflow-x: auto;
+  white-space: pre;
+}
+
 .box:after,
 .form:after,
 .errorMSG:after {
