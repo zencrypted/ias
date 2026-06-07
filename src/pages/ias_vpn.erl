@@ -12,28 +12,33 @@ content() ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = "VPN"},
         #p{body = "Read-only VPN runtime status from the VPN admin API."},
-        body(ias_vpn_client:summary())
+        render_summary(ias_vpn_client:summary())
     ]}.
 
-body({ok, Data}) ->
-    Peers = peers(Data),
+render_summary({ok, Data}) when is_map(Data) ->
+    Counts = vpn_counts(Data),
+    Peers = vpn_peers(Data),
     [
-        counters(Data, Peers),
+        counters(Counts, Peers),
         peers_table(Peers)
     ];
-body({error, _Reason}) ->
+render_summary({ok, _Data}) ->
+    unavailable();
+render_summary({error, _Reason}) ->
+    unavailable().
+
+unavailable() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = "VPN service unavailable"},
         #p{body = "IAS is running normally. VPN runtime status will appear when the VPN admin API is reachable."}
     ]}.
 
-counters(Data, Peers) ->
-    Counts = counts(Data),
+counters(Counts, Peers) ->
     #panel{class = <<"ias-summary">>, body = [
-        summary("Configured Peers", count(Counts, <<"configured">>, length(Peers))),
-        summary("Running Peers", count(Counts, <<"running">>, running_count(Peers))),
-        summary("Stopped Peers", count(Counts, <<"stopped">>, stopped_count(Peers))),
-        summary("Certificates", count(Counts, <<"certificates">>, 0))
+        summary("Configured Peers", maps:get(<<"configured">>, Counts, length(Peers))),
+        summary("Running Peers", maps:get(<<"running">>, Counts, running_count(Peers))),
+        summary("Stopped Peers", maps:get(<<"stopped">>, Counts, stopped_count(Peers))),
+        summary("Certificates", maps:get(<<"certificates">>, Counts, 0))
     ]}.
 
 summary(Label, undefined) ->
@@ -67,22 +72,17 @@ header(Columns) ->
 row(Values) ->
     #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
 
-peers(Data) ->
-    case field(Data, [<<"peers">>, peers, configured_peers_list, peer_status]) of
+vpn_counts(Data) ->
+    case maps:get(<<"counts">>, Data, #{}) of
+        Counts when is_map(Counts) -> Counts;
+        _ -> #{}
+    end.
+
+vpn_peers(Data) ->
+    case maps:get(<<"peers">>, Data, []) of
         Peers when is_list(Peers) -> [Peer || Peer <- Peers, is_map(Peer)];
         _ -> []
     end.
-
-counts(Data) when is_map(Data) ->
-    case field(Data, [<<"counts">>, counts]) of
-        Counts when is_map(Counts) -> Counts;
-        _ -> #{}
-    end;
-counts(_) ->
-    #{}.
-
-count(Counts, Key, Default) ->
-    maps:get(Key, Counts, maps:get(binary_to_atom(Key, utf8), Counts, Default)).
 
 running_count(Peers) ->
     length([Peer || Peer <- Peers, running(Peer)]).

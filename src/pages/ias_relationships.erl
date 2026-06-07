@@ -60,27 +60,27 @@ service_label(#{id := vpn}, VpnState) ->
 service_label(Service, _VpnState) ->
     value(maps:get(id, Service)).
 
-vpn_state({error, _Reason}) ->
-    offline;
-vpn_state({ok, Data}) ->
-    case running_count(peers(Data)) of
+vpn_state({ok, Data}) when is_map(Data) ->
+    case running_count(vpn_peers(Data)) of
         0 -> stopped;
         _ -> running
-    end.
+    end;
+vpn_state({ok, _Data}) ->
+    offline;
+vpn_state({error, _Reason}) ->
+    offline.
 
-peers(Data) when is_map(Data) ->
-    case field(Data, [<<"peers">>, peers, configured_peers_list, peer_status]) of
+vpn_peers(Data) ->
+    case maps:get(<<"peers">>, Data, []) of
         Peers when is_list(Peers) -> [Peer || Peer <- Peers, is_map(Peer)];
         _ -> []
-    end;
-peers(_) ->
-    [].
+    end.
 
 running_count(Peers) ->
     length([Peer || Peer <- Peers, running(Peer)]).
 
 running(Peer) ->
-    case field(Peer, [<<"running">>, running, is_running, status]) of
+    case maps:get(<<"running">>, Peer, field(Peer, [running, is_running, status])) of
         true -> true;
         <<"running">> -> true;
         <<"up">> -> true;
