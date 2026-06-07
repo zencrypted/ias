@@ -51,6 +51,39 @@ li {
   width: 100%;
 }
 
+.ias-table {
+  width: 100%;
+  margin-top: 16px;
+  border-collapse: collapse;
+  table-layout: auto;
+  background: var(--bg-card, #ffffff);
+  border: 1px solid var(--border-color, rgba(15, 23, 42, 0.08));
+}
+
+.ias-table th,
+.ias-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-color, rgba(15, 23, 42, 0.08));
+  text-align: left;
+  vertical-align: top;
+  white-space: nowrap;
+}
+
+.ias-table th {
+  color: var(--text-primary, #0f172a);
+  font-weight: 600;
+  background: var(--bg-primary, #f8fafc);
+}
+
+.ias-table td + td,
+.ias-table th + th {
+  border-left: 1px solid var(--border-color, rgba(15, 23, 42, 0.08));
+}
+
+.ias-table tr:last-child td {
+  border-bottom: 0;
+}
+
 .box:after,
 .form:after,
 .errorMSG:after {
