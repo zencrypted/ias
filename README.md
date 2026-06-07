@@ -12,6 +12,9 @@ FIN — це універсальний менеджер облікових за
 
 Бізнес-процеси підприємства BPE визначають інфраструктуру для оркестрування виробничих процесів згідно стандарту BPMN, та систем на основі декларативних правил. BPE зберігає транзакційно усі кроки бізнес-процесів у сучасній системі даних KVS на базі RocksDB.
 
+IAS bootstrap currently uses Mnesia-backed KVS.
+RocksDB is disabled temporarily for Ubuntu 20.04 compatibility.
+
 ```
 $ mix deps.get
 $ iex -S mix
@@ -55,5 +58,4 @@ $ open http://localhost:8041/app/index.html
 -------
 
 * Максим Сохацький
-
 
