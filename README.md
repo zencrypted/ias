@@ -22,6 +22,18 @@ $ rebar3 shell
 $ open http://localhost:8041/app/index.htm
 ```
 
+IAS Domain Model v0
+-------------------
+
+Users
+Devices
+Services
+Certificates
+Security Profiles
+
+Current implementation uses hardcoded demo data.
+Persistence and CA integration will be added later.
+
 Це навчальний приклад освітнього підготовчого курсу для інтернів, який використовується для здодобуття навичок програмування систем на бібліотеках <a href="https://n2o.dev">N2O.DEV</a>.
 
 Структура проекту

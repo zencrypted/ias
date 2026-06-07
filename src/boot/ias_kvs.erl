@@ -1,0 +1,20 @@
+-module(ias_kvs).
+-export([metainfo/0,ias/0]).
+-include("bank/phone.hrl").
+-include("bank/account.hrl").
+-include("ent.hrl").
+-include_lib("kvs/include/metainfo.hrl").
+-include_lib("form/include/meta.hrl").
+
+metainfo() -> #schema { name = ias, tables = ias() }.
+
+ias() ->
+       [
+        #table{name = phone,         fields=record_info(fields, phone), instance = #phone{} },
+        #table{name = field,         fields=record_info(fields, field), instance = #field{} },
+        #table{name = close_account2,fields=record_info(fields, close_account2), instance = #close_account2{} },
+        #table{name = 'account',     fields=record_info(fields, account), instance = #account{} },
+        #table{name = 'client',      fields=record_info(fields, client), instance = #client{}},
+        #table{name = 'card',        fields=record_info(fields, card), instance = #card{}},
+        #table{name = 'transaction', fields=record_info(fields, transaction), instance = #transaction{}}
+    ].
