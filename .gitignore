@@ -5,3 +5,8 @@ _build/
 .applist
 Mnesia*/
 deps
+
+chatgpt-*/
+.idea/
+*.iml
+rebar.lock
