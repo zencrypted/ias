@@ -3,21 +3,23 @@ IAS: Identity, Access and Security Administration
 
 IAS is an Erlang/N2O bootstrap application for Identity, Access and Security Administration.
 
-IAS was forked from FIN and is being renamed as the first IAS application baseline.
+IAS was forked from FIN.
+Inherited FIN/BPE pages are intentionally removed from the visible UI.
+IAS v0 starts with placeholder pages for Users, Devices, Services, Certificates and Security Profiles.
 
 
 Запуск
 ------
 
-Бізнес-процеси підприємства BPE визначають інфраструктуру для оркестрування виробничих процесів згідно стандарту BPMN, та систем на основі декларативних правил. BPE зберігає транзакційно усі кроки бізнес-процесів у сучасній системі даних KVS на базі RocksDB.
+IAS bootstrap currently provides a placeholder Erlang/N2O application shell.
 
 IAS bootstrap currently uses Mnesia-backed KVS.
 RocksDB is disabled temporarily for Ubuntu 20.04 compatibility.
 
 ```
-$ mix deps.get
-$ iex -S mix
-$ open http://localhost:8041/app/index.html
+$ rebar3 get-deps
+$ rebar3 shell
+$ open http://localhost:8041/app/index.htm
 ```
 
 Це навчальний приклад освітнього підготовчого курсу для інтернів, який використовується для здодобуття навичок програмування систем на бібліотеках <a href="https://n2o.dev">N2O.DEV</a>.
