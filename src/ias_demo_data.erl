@@ -49,6 +49,25 @@ certificates() ->
 
 profiles() ->
     [
-        #{id => default_user, description => <<"Default user profile">>},
-        #{id => administrator, description => <<"Administrator profile">>}
+        #{id => default_user,
+          name => <<"Default User">>,
+          description => <<"Default user profile">>,
+          services => [vpn],
+          certificate_role => peer,
+          trust_level => standard,
+          attributes => [user, device, vpn_peer]},
+        #{id => administrator,
+          name => <<"Administrator">>,
+          description => <<"Administrator profile">>,
+          services => [vpn, ias],
+          certificate_role => admin,
+          trust_level => elevated,
+          attributes => [admin, issue_certificates, revoke_certificates]},
+        #{id => service_account,
+          name => <<"Service Account">>,
+          description => <<"Automation service profile">>,
+          services => [vpn],
+          certificate_role => service,
+          trust_level => restricted,
+          attributes => [machine, automation]}
     ].
