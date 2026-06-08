@@ -62,7 +62,7 @@ service_label(_Device, Service, _VpnSummary) ->
 
 format_vpn_service(Device, VpnSummary) ->
     PeerId = maps:get(vpn_peer, Device, undefined),
-    ["vpn -> ", value(PeerId), " -> ", atom_to_list(vpn_peer_status(PeerId, VpnSummary))].
+    ["vpn → ", value(PeerId), " → ", atom_to_list(vpn_peer_status(PeerId, VpnSummary))].
 
 vpn_peer_status(undefined, _VpnSummary) ->
     unknown;
@@ -146,10 +146,10 @@ join_blocks([Block | Rest]) ->
     [Block, tree_line(""), join_blocks(Rest)].
 
 tree_line(Body) ->
-    #panel{class = <<"ias-tree-line">>, body = #span{body = escape_text(Body)}}.
+    #panel{class = <<"ias-tree-line">>, body = #span{body = line_text(Body)}}.
 
-escape_text(Value) ->
-    escape_list(text_chars(Value)).
+line_text(Value) ->
+    unicode:characters_to_binary(text_chars(Value)).
 
 text_chars(Value) when is_binary(Value) ->
     binary_to_list(Value);
@@ -169,17 +169,6 @@ is_charlist([Char | Rest]) when is_integer(Char), Char >= 0 ->
     is_charlist(Rest);
 is_charlist(_) ->
     false.
-
-escape_list([]) ->
-    [];
-escape_list([$& | Rest]) ->
-    ["&amp;" | escape_list(Rest)];
-escape_list([$< | Rest]) ->
-    ["&lt;" | escape_list(Rest)];
-escape_list([$> | Rest]) ->
-    ["&gt;" | escape_list(Rest)];
-escape_list([Char | Rest]) ->
-    [Char | escape_list(Rest)].
 
 value(Value) when is_atom(Value) ->
     atom_to_list(Value);
