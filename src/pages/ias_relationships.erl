@@ -146,21 +146,29 @@ join_blocks([Block | Rest]) ->
     [Block, tree_line(""), join_blocks(Rest)].
 
 tree_line(Body) ->
-    #panel{class = <<"ias-tree-line">>, body = tree_text(Body)}.
+    #panel{class = <<"ias-tree-line">>, body = #span{body = escape_text(Body)}}.
 
-tree_text(Parts) when is_list(Parts) ->
-    [tree_text(Part) || Part <- Parts];
-tree_text(Part) ->
-    #span{body = escape(value(Part))}.
+escape_text(Value) ->
+    escape_list(text_chars(Value)).
 
-escape(Value) when is_binary(Value) ->
-    escape(binary_to_list(Value));
-escape(Value) when is_atom(Value) ->
-    escape(atom_to_list(Value));
-escape(Value) when is_integer(Value) ->
+text_chars(Value) when is_binary(Value) ->
+    binary_to_list(Value);
+text_chars(Value) when is_atom(Value) ->
+    atom_to_list(Value);
+text_chars(Value) when is_integer(Value) ->
     integer_to_list(Value);
-escape(Value) when is_list(Value) ->
-    escape_list(Value).
+text_chars(Value) when is_list(Value) ->
+    case is_charlist(Value) of
+        true -> Value;
+        false -> lists:append([text_chars(Part) || Part <- Value])
+    end.
+
+is_charlist([]) ->
+    true;
+is_charlist([Char | Rest]) when is_integer(Char), Char >= 0 ->
+    is_charlist(Rest);
+is_charlist(_) ->
+    false.
 
 escape_list([]) ->
     [];
