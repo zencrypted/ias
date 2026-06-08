@@ -4,7 +4,7 @@
 
 event(init) ->
     logger:info("IAS VPN page init"),
-    Summary = ias_vpn_client:summary(),
+    Summary = ias_vpn_runtime:summary(),
     logger:info("IAS VPN summary result: ~p", [summary_shape(Summary)]),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content(Summary));
@@ -19,8 +19,8 @@ content(Summary) ->
     ]}.
 
 summary_shape({ok, Data}) when is_map(Data) ->
-    Counts = vpn_counts(Data),
-    Peers = vpn_peers(Data),
+    Counts = ias_vpn_runtime:counts(Data),
+    Peers = ias_vpn_runtime:peers(Data),
     {ok, #{counts => Counts, peers => length(Peers)}};
 summary_shape({ok, Data}) ->
     {ok, Data};
@@ -28,8 +28,8 @@ summary_shape({error, Reason}) ->
     {error, Reason}.
 
 render_summary({ok, Data}) when is_map(Data) ->
-    Counts = vpn_counts(Data),
-    Peers = vpn_peers(Data),
+    Counts = ias_vpn_runtime:counts(Data),
+    Peers = ias_vpn_runtime:peers(Data),
     [
         counters(Counts, Peers),
         peers_table(Peers)
@@ -48,8 +48,8 @@ unavailable() ->
 counters(Counts, Peers) ->
     #panel{class = <<"ias-summary">>, body = [
         summary("Configured Peers", maps:get(<<"configured">>, Counts, length(Peers))),
-        summary("Running Peers", maps:get(<<"running">>, Counts, running_count(Peers))),
-        summary("Stopped Peers", maps:get(<<"stopped">>, Counts, stopped_count(Peers))),
+        summary("Running Peers", maps:get(<<"running">>, Counts, ias_vpn_runtime:running_count(Peers))),
+        summary("Stopped Peers", maps:get(<<"stopped">>, Counts, ias_vpn_runtime:stopped_count(Peers))),
         summary("Certificates", maps:get(<<"certificates">>, Counts, 0))
     ]}.
 
@@ -67,92 +67,22 @@ peers_table(Peers) ->
            body = #tbody{body = [peer_row(Peer) || Peer <- Peers]}}.
 
 peer_row(Peer) ->
-    row([field(Peer, [peer, id, name]),
-         field(Peer, [<<"running">>, running, is_running, status]),
-         field(Peer, [mode]),
-         field(Peer, [ip, address]),
-         field(Peer, [remote_peer_id, remote_peer, remote]),
-         certificate_field(Peer, [trusted]),
-         certificate_field(Peer, [key_match]),
-         certificate_field(Peer, [not_after, expires, expires_at]),
-         field(Peer, [crypto_failures]),
-         field(Peer, [frames_rejected])]).
+    row([ias_vpn_runtime:field(Peer, [peer, id, name]),
+         ias_vpn_runtime:field(Peer, [<<"running">>, running, is_running, status]),
+         ias_vpn_runtime:field(Peer, [mode]),
+         ias_vpn_runtime:field(Peer, [ip, address]),
+         ias_vpn_runtime:field(Peer, [remote_peer_id, remote_peer, remote]),
+         ias_vpn_runtime:certificate_field(Peer, [trusted]),
+         ias_vpn_runtime:certificate_field(Peer, [key_match]),
+         ias_vpn_runtime:certificate_field(Peer, [not_after, expires, expires_at]),
+         ias_vpn_runtime:field(Peer, [crypto_failures]),
+         ias_vpn_runtime:field(Peer, [frames_rejected])]).
 
 header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
 
 row(Values) ->
     #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
-
-vpn_counts(Data) ->
-    case maps:get(<<"counts">>, Data, #{}) of
-        Counts when is_map(Counts) -> Counts;
-        _ -> #{}
-    end.
-
-vpn_peers(Data) ->
-    case maps:get(<<"peers">>, Data, []) of
-        Peers when is_list(Peers) -> [Peer || Peer <- Peers, is_map(Peer)];
-        _ -> []
-    end.
-
-running_count(Peers) ->
-    length([Peer || Peer <- Peers, running(Peer)]).
-
-stopped_count(Peers) ->
-    length(Peers) - running_count(Peers).
-
-running(Peer) ->
-    case field(Peer, [<<"running">>, running, is_running, status]) of
-        true -> true;
-        <<"running">> -> true;
-        <<"up">> -> true;
-        "running" -> true;
-        "up" -> true;
-        _ -> false
-    end.
-
-certificate_field(Peer, Keys) ->
-    case field(Peer, [certificate]) of
-        Certificate when is_map(Certificate) -> field(Certificate, Keys);
-        _ -> field(Peer, Keys)
-    end.
-
-field(Map, Keys) when is_map(Map) ->
-    field(Map, Keys, undefined);
-field(_Value, _Keys) ->
-    undefined.
-
-field(_Map, [], Default) ->
-    Default;
-field(Map, [Key | Rest], Default) ->
-    case lookup(Map, Key) of
-        undefined -> field(Map, Rest, Default);
-        Value -> Value
-    end.
-
-lookup(Map, Key) ->
-    case maps:find(Key, Map) of
-        {ok, Value} -> Value;
-        error -> lookup_fallback(Map, Key)
-    end.
-
-lookup_fallback(Map, Key) when is_atom(Key) ->
-    lookup_variants(Map, atom_to_binary(Key, utf8), atom_to_list(Key));
-lookup_fallback(Map, Key) when is_binary(Key) ->
-    lookup_variants(Map, binary_to_atom(Key, utf8), binary_to_list(Key));
-lookup_fallback(_Map, _Key) ->
-    undefined.
-
-lookup_variants(Map, Key1, Key2) ->
-    case maps:find(Key1, Map) of
-        {ok, Value} -> Value;
-        error ->
-            case maps:find(Key2, Map) of
-                {ok, Value} -> Value;
-                error -> undefined
-            end
-    end.
 
 value(undefined) ->
     "-";

@@ -10,16 +10,36 @@ event(_) ->
 
 content() ->
     Services = ias_demo_data:services(),
+    VpnSummary = ias_vpn_runtime:summary(),
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = "Services"},
         #p{body = "Register services that will later use IAS identity and access controls."},
         #h3{body = count("Services", Services)},
         #table{class = <<"ias-table">>,
-               header = header(["ID", "Name"]),
+               header = header(["Service", "State", "Configured Peers", "Running Peers", "Certificates"]),
                body = #tbody{body =
-                   [row([id(Service), maps:get(name, Service)])
+                   [service_row(Service, VpnSummary)
                     || Service <- Services]}}
     ]}.
+
+service_row(#{id := vpn, name := Name}, VpnSummary) ->
+    Counts = ias_vpn_runtime:counts(VpnSummary),
+    Peers = ias_vpn_runtime:peers(VpnSummary),
+    row([Name,
+         vpn_state(VpnSummary, Peers),
+         maps:get(<<"configured">>, Counts, length(Peers)),
+         maps:get(<<"running">>, Counts, ias_vpn_runtime:running_count(Peers)),
+         maps:get(<<"certificates">>, Counts, 0)]);
+service_row(Service, _VpnSummary) ->
+    row([maps:get(name, Service), "-", "-", "-", "-"]).
+
+vpn_state({error, _Reason}, _Peers) ->
+    unavailable;
+vpn_state(_VpnSummary, Peers) ->
+    case ias_vpn_runtime:running_count(Peers) of
+        0 -> stopped;
+        _ -> running
+    end.
 
 header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
@@ -30,10 +50,11 @@ row(Values) ->
 count(Label, Rows) ->
     [Label, ": ", integer_to_list(length(Rows))].
 
-id(Map) ->
-    maps:get(id, Map).
-
+value(undefined) ->
+    "-";
 value(Value) when is_atom(Value) ->
     atom_to_list(Value);
+value(Value) when is_integer(Value) ->
+    integer_to_list(Value);
 value(Value) ->
     Value.
