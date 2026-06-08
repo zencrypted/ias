@@ -3,8 +3,10 @@
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
-    nitro:clear(stand),
-    nitro:insert_bottom(stand, content());
+    Content = content(),
+    Html = iolist_to_binary(nitro:render(Content)),
+    SafeHtml = nitro:js_escape(Html),
+    nitro:wire(["qi('stand').innerHTML='", SafeHtml, "';"]);
 event(_) ->
     ok.
 
