@@ -18,8 +18,8 @@ content() ->
         #h2{body = "Relationships"},
         #p{body = "User to device, certificate and service relationships."},
         counters(Users, Devices, Certificates, Services),
-        #pre{class = <<"ias-relationship-tree">>,
-             body = hierarchy(Users, Devices, Certificates, Services, VpnSummary)}
+        #panel{class = <<"ias-relationship-tree">>,
+               body = hierarchy(Users, Devices, Certificates, Services, VpnSummary)}
     ]}.
 
 counters(Users, Devices, Certificates, Services) ->
@@ -35,25 +35,25 @@ summary(Label, Rows) ->
            body = [Label, ": ", integer_to_list(length(Rows))]}.
 
 hierarchy(Users, Devices, Certificates, Services, VpnSummary) ->
-    join_lines([user_tree(User, Devices, Certificates, Services, VpnSummary) || User <- Users]).
+    join_blocks([user_tree(User, Devices, Certificates, Services, VpnSummary) || User <- Users]).
 
 user_tree(User, Devices, Certificates, Services, VpnSummary) ->
     UserDevices = [find(DeviceId, Devices) || DeviceId <- maps:get(devices, User, [])],
-    [value(maps:get(name, User)), "\n",
+    [tree_line(value(maps:get(name, User))),
      device_lines(UserDevices, Certificates, Services, VpnSummary)].
 
 device_lines(Devices, Certificates, Services, VpnSummary) ->
-    join_lines([device_tree(Device, Certificates, Services, VpnSummary) || Device <- Devices]).
+    lists:append([device_tree(Device, Certificates, Services, VpnSummary) || Device <- Devices]).
 
 device_tree(Device, Certificates, Services, VpnSummary) ->
     Certificate = find(maps:get(certificate, Device), Certificates),
     DeviceServices = [find(ServiceId, Services) || ServiceId <- maps:get(services, Device, [])],
-    ["  +- ", value(maps:get(id, Device)), "\n",
-     "  |  +- ", value(maps:get(id, Certificate)), "\n",
-     service_lines(Device, DeviceServices, VpnSummary)].
+    [tree_line(["  +- ", value(maps:get(id, Device))]),
+     tree_line(["  |  +- ", value(maps:get(id, Certificate))])
+     | service_lines(Device, DeviceServices, VpnSummary)].
 
 service_lines(Device, Services, VpnSummary) ->
-    join_lines([["  |  `- ", service_label(Device, Service, VpnSummary)] || Service <- Services]).
+    [tree_line(["  |  `- ", service_label(Device, Service, VpnSummary)]) || Service <- Services].
 
 service_label(Device, #{id := vpn}, VpnSummary) ->
     format_vpn_service(Device, VpnSummary);
@@ -138,12 +138,40 @@ find(Id, Rows) ->
         [] -> #{id => Id}
     end.
 
-join_lines([]) ->
+join_blocks([]) ->
     [];
-join_lines([Line]) ->
-    Line;
-join_lines([Line | Rest]) ->
-    [Line, "\n", join_lines(Rest)].
+join_blocks([Block]) ->
+    Block;
+join_blocks([Block | Rest]) ->
+    [Block, tree_line(""), join_blocks(Rest)].
+
+tree_line(Body) ->
+    #panel{class = <<"ias-tree-line">>, body = tree_text(Body)}.
+
+tree_text(Parts) when is_list(Parts) ->
+    [tree_text(Part) || Part <- Parts];
+tree_text(Part) ->
+    #span{body = escape(value(Part))}.
+
+escape(Value) when is_binary(Value) ->
+    escape(binary_to_list(Value));
+escape(Value) when is_atom(Value) ->
+    escape(atom_to_list(Value));
+escape(Value) when is_integer(Value) ->
+    integer_to_list(Value);
+escape(Value) when is_list(Value) ->
+    escape_list(Value).
+
+escape_list([]) ->
+    [];
+escape_list([$& | Rest]) ->
+    ["&amp;" | escape_list(Rest)];
+escape_list([$< | Rest]) ->
+    ["&lt;" | escape_list(Rest)];
+escape_list([$> | Rest]) ->
+    ["&gt;" | escape_list(Rest)];
+escape_list([Char | Rest]) ->
+    [Char | escape_list(Rest)].
 
 value(Value) when is_atom(Value) ->
     atom_to_list(Value);
