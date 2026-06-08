@@ -18,7 +18,8 @@ content() ->
         #h3{body = count("Users", Users)},
         table([
             #table{class = <<"ias-table">>,
-                   header = header(["User", "Role", "Devices", "VPN Peers", "Certificates", "Services"]),
+                   header = header(["User", "Role", "Security Profile", "Devices",
+                                    "VPN Peers", "Certificates", "Services"]),
                    body = #tbody{body =
                        [user_row(User, Devices, Certificates)
                         || User <- Users]}}
@@ -29,6 +30,7 @@ user_row(User, Devices, Certificates) ->
     UserDevices = user_devices(User, Devices),
     row([maps:get(name, User),
          maps:get(role, User),
+         maps:get(profile_id, User, undefined),
          length(UserDevices),
          ias_html:join_csv(vpn_peers(UserDevices)),
          length(user_certificates(UserDevices, Certificates)),

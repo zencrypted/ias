@@ -6,10 +6,12 @@ users() ->
         #{id => alice,
           name => <<"Alice">>,
           role => administrator,
+          profile_id => administrator,
           devices => [laptop1, phone1]},
         #{id => bob,
           name => <<"Bob">>,
           role => <<"operator">>,
+          profile_id => default_user,
           devices => [workstation1]}
     ].
 
@@ -19,17 +21,20 @@ devices() ->
           owner => alice,
           type => <<"laptop">>,
           certificate => cert1,
+          profile_id => default_user,
           services => [vpn],
           vpn_peer => <<"peer_a">>},
         #{id => phone1,
           owner => alice,
           type => <<"phone">>,
           certificate => cert2,
+          profile_id => default_user,
           services => [portal]},
         #{id => workstation1,
           owner => bob,
           type => <<"workstation">>,
           certificate => cert3,
+          profile_id => default_user,
           services => [vpn],
           vpn_peer => <<"peer_b">>}
     ].
@@ -42,9 +47,12 @@ services() ->
 
 certificates() ->
     [
-        #{id => cert1, owner => alice, device => laptop1, status => <<"valid">>},
-        #{id => cert2, owner => alice, device => phone1, status => <<"valid">>},
-        #{id => cert3, owner => bob, device => workstation1, status => <<"pending">>}
+        #{id => cert1, owner => alice, device => laptop1, vpn_peer => <<"peer_a">>,
+          profile_id => default_user, status => <<"valid">>},
+        #{id => cert2, owner => alice, device => phone1,
+          profile_id => default_user, status => <<"valid">>},
+        #{id => cert3, owner => bob, device => workstation1, vpn_peer => <<"peer_b">>,
+          profile_id => default_user, status => <<"pending">>}
     ].
 
 profiles() ->

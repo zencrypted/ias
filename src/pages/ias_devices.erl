@@ -17,7 +17,8 @@ content() ->
         #h3{body = count("Devices", Devices)},
         table([
             #table{class = <<"ias-table">>,
-                   header = header(["Device", "VPN Peer", "Peer IP", "State", "Remote Peer"]),
+                   header = header(["Device", "Security Profile", "VPN Peer", "Peer IP",
+                                    "State", "Remote Peer"]),
                    body = #tbody{body =
                        [device_row(Device, VpnSummary)
                         || Device <- Devices]}}
@@ -28,6 +29,7 @@ device_row(Device, VpnSummary) ->
     PeerId = maps:get(vpn_peer, Device, undefined),
     Peer = ias_vpn_runtime:peer(PeerId, VpnSummary),
     row([id(Device),
+         maps:get(profile_id, Device, undefined),
          peer_id(PeerId),
          peer_field(Peer, [ip, address]),
          peer_state(PeerId, Peer, VpnSummary),
