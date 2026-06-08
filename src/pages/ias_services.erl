@@ -15,11 +15,13 @@ content() ->
         #h2{body = "Services"},
         #p{body = "Register services that will later use IAS identity and access controls."},
         #h3{body = count("Services", Services)},
-        #table{class = <<"ias-table">>,
-               header = header(["Service", "State", "Configured Peers", "Running Peers", "Certificates"]),
-               body = #tbody{body =
-                   [service_row(Service, VpnSummary)
-                    || Service <- Services]}}
+        table([
+            #table{class = <<"ias-table">>,
+                   header = header(["Service", "State", "Configured Peers", "Running Peers", "Certificates"]),
+                   body = #tbody{body =
+                       [service_row(Service, VpnSummary)
+                        || Service <- Services]}}
+        ])
     ]}.
 
 service_row(#{id := vpn, name := Name}, VpnSummary) ->
@@ -46,6 +48,9 @@ header(Columns) ->
 
 row(Values) ->
     #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
+
+table(Body) ->
+    #panel{class = <<"ias-table-container">>, body = Body}.
 
 count(Label, Rows) ->
     [Label, ": ", integer_to_list(length(Rows))].

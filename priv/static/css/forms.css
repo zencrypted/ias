@@ -51,9 +51,15 @@ li {
   width: 100%;
 }
 
-.ias-table {
+.ias-table-container {
+  overflow-x: auto;
   width: 100%;
   margin-top: 16px;
+}
+
+.ias-table {
+  width: 100%;
+  margin-top: 0;
   border-collapse: collapse;
   table-layout: auto;
   background: var(--bg-card, #ffffff);

@@ -14,10 +14,12 @@ content() ->
         #h2{body = ias_html:text("Security Profiles")},
         #p{body = ias_html:text("Security profiles define attributes and permissions that will later be embedded into issued certificates.")},
         #h3{body = count("Profiles", Profiles)},
-        #table{class = <<"ias-table">>,
-               header = header(["Profile", "Services", "Certificate Role", "Trust Level", "Attributes"]),
-               body = #tbody{body =
-                   [profile_row(Profile) || Profile <- Profiles]}}
+        table([
+            #table{class = <<"ias-table">>,
+                   header = header(["Profile", "Services", "Certificate Role", "Trust Level", "Attributes"]),
+                   body = #tbody{body =
+                       [profile_row(Profile) || Profile <- Profiles]}}
+        ])
     ]}.
 
 profile_row(Profile) ->
@@ -35,6 +37,9 @@ header(Columns) ->
 
 row(Values) ->
     #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
+
+table(Body) ->
+    #panel{class = <<"ias-table-container">>, body = Body}.
 
 count(Label, Rows) ->
     ias_html:join([Label, ": ", length(Rows)]).

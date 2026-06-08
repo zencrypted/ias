@@ -16,11 +16,13 @@ content() ->
         #p{body = "Review live VPN certificate metadata from the VPN admin API."},
         #h3{body = count("Certificates", Peers)},
         status(VpnSummary),
-        #table{class = <<"ias-table">>,
-               header = header(["Peer", "Subject CN", "Issuer CN", "Valid From",
-                                "Valid To", "Trusted", "Key Match"]),
-               body = #tbody{body =
-                   [certificate_row(Peer) || Peer <- Peers]}}
+        table([
+            #table{class = <<"ias-table">>,
+                   header = header(["Peer", "Subject CN", "Issuer CN", "Valid From",
+                                    "Valid To", "Trusted", "Key Match"]),
+                   body = #tbody{body =
+                       [certificate_row(Peer) || Peer <- Peers]}}
+        ])
     ]}.
 
 status({error, _Reason}) ->
@@ -42,6 +44,9 @@ header(Columns) ->
 
 row(Values) ->
     #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
+
+table(Body) ->
+    #panel{class = <<"ias-table-container">>, body = Body}.
 
 count(Label, Rows) ->
     [Label, ": ", integer_to_list(length(Rows))].

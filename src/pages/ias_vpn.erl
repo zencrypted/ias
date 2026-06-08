@@ -61,10 +61,12 @@ summary(Label, Value) ->
 peers_table([]) ->
     #panel{class = <<"ias-status-card">>, body = "No VPN peers reported."};
 peers_table(Peers) ->
-    #table{class = <<"ias-table">>,
-           header = header(["Peer", "Running", "Mode", "IP", "Remote Peer", "Trusted",
-                            "Key Match", "Expires", "Crypto Failures", "Frames Rejected"]),
-           body = #tbody{body = [peer_row(Peer) || Peer <- Peers]}}.
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               header = header(["Peer", "Running", "Mode", "IP", "Remote Peer", "Trusted",
+                                "Key Match", "Expires", "Crypto Failures", "Frames Rejected"]),
+               body = #tbody{body = [peer_row(Peer) || Peer <- Peers]}}
+    ]}.
 
 peer_row(Peer) ->
     row([ias_vpn_runtime:field(Peer, [peer, id, name]),

@@ -15,11 +15,13 @@ content() ->
         #h2{body = "Devices"},
         #p{body = "Track endpoints and devices that will participate in IAS policies."},
         #h3{body = count("Devices", Devices)},
-        #table{class = <<"ias-table">>,
-               header = header(["Device", "VPN Peer", "Peer IP", "State", "Remote Peer"]),
-               body = #tbody{body =
-                   [device_row(Device, VpnSummary)
-                    || Device <- Devices]}}
+        table([
+            #table{class = <<"ias-table">>,
+                   header = header(["Device", "VPN Peer", "Peer IP", "State", "Remote Peer"]),
+                   body = #tbody{body =
+                       [device_row(Device, VpnSummary)
+                        || Device <- Devices]}}
+        ])
     ]}.
 
 device_row(Device, VpnSummary) ->
@@ -55,6 +57,9 @@ header(Columns) ->
 
 row(Values) ->
     #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
+
+table(Body) ->
+    #panel{class = <<"ias-table-container">>, body = Body}.
 
 count(Label, Rows) ->
     [Label, ": ", integer_to_list(length(Rows))].

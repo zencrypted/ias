@@ -14,11 +14,13 @@ content() ->
         #h2{body = "Users"},
         #p{body = "Manage identities that will access IAS-controlled services."},
         #h3{body = count("Users", Users)},
-        #table{class = <<"ias-table">>,
-               header = header(["ID", "Name", "Role"]),
-               body = #tbody{body =
-                   [row([id(User), maps:get(name, User), maps:get(role, User)])
-                    || User <- Users]}}
+        table([
+            #table{class = <<"ias-table">>,
+                   header = header(["ID", "Name", "Role"]),
+                   body = #tbody{body =
+                       [row([id(User), maps:get(name, User), maps:get(role, User)])
+                        || User <- Users]}}
+        ])
     ]}.
 
 header(Columns) ->
@@ -26,6 +28,9 @@ header(Columns) ->
 
 row(Values) ->
     #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
+
+table(Body) ->
+    #panel{class = <<"ias-table-container">>, body = Body}.
 
 count(Label, Rows) ->
     [Label, ": ", integer_to_list(length(Rows))].
