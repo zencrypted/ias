@@ -28,13 +28,13 @@ profile_row(Profile) ->
          join_values(maps:get(attributes, Profile, []))]).
 
 profile_name(Profile) ->
-    [id(Profile), " - ", maps:get(name, Profile)].
+    text([id(Profile), " - ", maps:get(name, Profile)]).
 
 header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
 
 row(Values) ->
-    #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
+    #tr{cells = [#td{body = text(Value)} || Value <- Values]}.
 
 count(Label, Rows) ->
     [Label, ": ", integer_to_list(length(Rows))].
@@ -42,21 +42,23 @@ count(Label, Rows) ->
 id(Map) ->
     maps:get(id, Map).
 
-value(Value) when is_atom(Value) ->
-    atom_to_list(Value);
-value(Value) when is_integer(Value) ->
-    integer_to_list(Value);
-value(Value) ->
-    Value.
+text(Value) when is_binary(Value) ->
+    Value;
+text(Value) when is_atom(Value) ->
+    atom_to_binary(Value, utf8);
+text(Value) when is_integer(Value) ->
+    integer_to_binary(Value);
+text(Value) when is_list(Value) ->
+    iolist_to_binary([text(Part) || Part <- Value]).
 
 join_values([]) ->
-    "-";
+    <<"-">>;
 join_values(Values) ->
     join_values(Values, []).
 
 join_values([], Acc) ->
-    lists:reverse(Acc);
+    iolist_to_binary(lists:reverse(Acc));
 join_values([Value], Acc) ->
-    lists:reverse([value(Value) | Acc]);
+    join_values([], [text(Value) | Acc]);
 join_values([Value | Rest], Acc) ->
-    join_values(Rest, [", ", value(Value) | Acc]).
+    join_values(Rest, [<<", ">>, text(Value) | Acc]).
