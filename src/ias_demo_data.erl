@@ -5,7 +5,7 @@ users() ->
     [
         #{id => alice,
           name => <<"Alice">>,
-          role => <<"admin">>,
+          role => administrator,
           devices => [laptop1, phone1]},
         #{id => bob,
           name => <<"Bob">>,
