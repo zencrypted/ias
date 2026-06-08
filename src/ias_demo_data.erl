@@ -19,7 +19,8 @@ devices() ->
           owner => alice,
           type => <<"laptop">>,
           certificate => cert1,
-          services => [vpn]},
+          services => [vpn],
+          vpn_peer => <<"peer_a">>},
         #{id => phone1,
           owner => alice,
           type => <<"phone">>,
@@ -29,7 +30,8 @@ devices() ->
           owner => bob,
           type => <<"workstation">>,
           certificate => cert3,
-          services => [vpn]}
+          services => [vpn],
+          vpn_peer => <<"peer_b">>}
     ].
 
 services() ->

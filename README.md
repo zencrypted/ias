@@ -44,6 +44,9 @@ User
 
 VPN integration will consume these relationships later.
 
+Relationships now map demo IAS devices to live VPN peers using vpn_peer identifiers.
+Current data model is still demo-based; VPN runtime status is live.
+
 VPN Integration
 ---------------
 

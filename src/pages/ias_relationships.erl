@@ -13,13 +13,13 @@ content() ->
     Devices = ias_demo_data:devices(),
     Certificates = ias_demo_data:certificates(),
     Services = ias_demo_data:services(),
-    VpnState = vpn_state(ias_vpn_client:summary()),
+    VpnSummary = ias_vpn_client:summary(),
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = "Relationships"},
         #p{body = "User to device, certificate and service relationships."},
         counters(Users, Devices, Certificates, Services),
         #pre{class = <<"ias-relationship-tree">>,
-             body = hierarchy(Users, Devices, Certificates, Services, VpnState)}
+             body = hierarchy(Users, Devices, Certificates, Services, VpnSummary)}
     ]}.
 
 counters(Users, Devices, Certificates, Services) ->
@@ -34,41 +34,47 @@ summary(Label, Rows) ->
     #panel{class = <<"ias-summary-item">>,
            body = [Label, ": ", integer_to_list(length(Rows))]}.
 
-hierarchy(Users, Devices, Certificates, Services, VpnState) ->
-    join_lines([user_tree(User, Devices, Certificates, Services, VpnState) || User <- Users]).
+hierarchy(Users, Devices, Certificates, Services, VpnSummary) ->
+    join_lines([user_tree(User, Devices, Certificates, Services, VpnSummary) || User <- Users]).
 
-user_tree(User, Devices, Certificates, Services, VpnState) ->
+user_tree(User, Devices, Certificates, Services, VpnSummary) ->
     UserDevices = [find(DeviceId, Devices) || DeviceId <- maps:get(devices, User, [])],
     [value(maps:get(name, User)), "\n",
-     device_lines(UserDevices, Certificates, Services, VpnState)].
+     device_lines(UserDevices, Certificates, Services, VpnSummary)].
 
-device_lines(Devices, Certificates, Services, VpnState) ->
-    join_lines([device_tree(Device, Certificates, Services, VpnState) || Device <- Devices]).
+device_lines(Devices, Certificates, Services, VpnSummary) ->
+    join_lines([device_tree(Device, Certificates, Services, VpnSummary) || Device <- Devices]).
 
-device_tree(Device, Certificates, Services, VpnState) ->
+device_tree(Device, Certificates, Services, VpnSummary) ->
     Certificate = find(maps:get(certificate, Device), Certificates),
     DeviceServices = [find(ServiceId, Services) || ServiceId <- maps:get(services, Device, [])],
     ["  +- ", value(maps:get(id, Device)), "\n",
      "  |  +- ", value(maps:get(id, Certificate)), "\n",
-     service_lines(DeviceServices, VpnState)].
+     service_lines(Device, DeviceServices, VpnSummary)].
 
-service_lines(Services, VpnState) ->
-    join_lines([["  |  `- ", service_label(Service, VpnState)] || Service <- Services]).
+service_lines(Device, Services, VpnSummary) ->
+    join_lines([["  |  `- ", service_label(Device, Service, VpnSummary)] || Service <- Services]).
 
-service_label(#{id := vpn}, VpnState) ->
-    ["vpn (", atom_to_list(VpnState), ")"];
-service_label(Service, _VpnState) ->
+service_label(Device, #{id := vpn}, VpnSummary) ->
+    format_vpn_service(Device, VpnSummary);
+service_label(_Device, Service, _VpnSummary) ->
     value(maps:get(id, Service)).
 
-vpn_state({ok, Data}) when is_map(Data) ->
-    case running_count(vpn_peers(Data)) of
-        0 -> stopped;
-        _ -> running
+format_vpn_service(Device, VpnSummary) ->
+    PeerId = maps:get(vpn_peer, Device, undefined),
+    ["vpn -> ", value(PeerId), " -> ", atom_to_list(vpn_peer_status(PeerId, VpnSummary))].
+
+vpn_peer_status(undefined, _VpnSummary) ->
+    unknown;
+vpn_peer_status(_PeerId, {error, _Reason}) ->
+    unavailable;
+vpn_peer_status(PeerId, {ok, Data}) when is_map(Data) ->
+    case find_vpn_peer(PeerId, vpn_peers(Data)) of
+        undefined -> unknown;
+        Peer -> running_state(Peer)
     end;
-vpn_state({ok, _Data}) ->
-    offline;
-vpn_state({error, _Reason}) ->
-    offline.
+vpn_peer_status(_PeerId, _VpnSummary) ->
+    unavailable.
 
 vpn_peers(Data) ->
     case maps:get(<<"peers">>, Data, []) of
@@ -76,17 +82,20 @@ vpn_peers(Data) ->
         _ -> []
     end.
 
-running_count(Peers) ->
-    length([Peer || Peer <- Peers, running(Peer)]).
+find_vpn_peer(PeerId, Peers) ->
+    case [Peer || Peer <- Peers, maps:get(<<"id">>, Peer, undefined) =:= PeerId] of
+        [Peer | _] -> Peer;
+        [] -> undefined
+    end.
 
-running(Peer) ->
+running_state(Peer) ->
     case maps:get(<<"running">>, Peer, field(Peer, [running, is_running, status])) of
-        true -> true;
-        <<"running">> -> true;
-        <<"up">> -> true;
-        "running" -> true;
-        "up" -> true;
-        _ -> false
+        true -> running;
+        <<"running">> -> running;
+        <<"up">> -> running;
+        "running" -> running;
+        "up" -> running;
+        _ -> stopped
     end.
 
 field(Map, Keys) ->
