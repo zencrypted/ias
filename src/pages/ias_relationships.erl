@@ -62,7 +62,7 @@ service_label(_Device, Service, _VpnSummary) ->
 
 format_vpn_service(Device, VpnSummary) ->
     PeerId = maps:get(vpn_peer, Device, undefined),
-    ["vpn → ", value(PeerId), " → ", atom_to_list(vpn_peer_status(PeerId, VpnSummary))].
+    ["vpn : ", value(PeerId), " : ", atom_to_list(vpn_peer_status(PeerId, VpnSummary))].
 
 vpn_peer_status(undefined, _VpnSummary) ->
     unknown;
