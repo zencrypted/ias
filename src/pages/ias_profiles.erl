@@ -35,22 +35,7 @@ profile_name(Profile) ->
     ias_html:join([id(Profile), " - ", maps:get(name, Profile)]).
 
 certificate_claims(Profile) ->
-    ias_html:join(["role=", maps:get(certificate_role, Profile, undefined),
-                   "; services=", join_claim_values(maps:get(services, Profile, [])),
-                   "; attrs=", join_claim_values(maps:get(attributes, Profile, [])),
-                   "; trust=", maps:get(trust_level, Profile, undefined)]).
-
-join_claim_values([]) ->
-    <<"-">>;
-join_claim_values(Values) ->
-    join_claim_values(Values, []).
-
-join_claim_values([], Acc) ->
-    iolist_to_binary(lists:reverse(Acc));
-join_claim_values([Value], Acc) ->
-    join_claim_values([], [ias_html:text(Value) | Acc]);
-join_claim_values([Value | Rest], Acc) ->
-    join_claim_values(Rest, [<<",">>, ias_html:text(Value) | Acc]).
+    ias_policy:format_claims(ias_policy:certificate_claims(Profile)).
 
 header(Columns) ->
     [#tr{cells = [#th{body = ias_html:text(Column)} || Column <- Columns]}].
