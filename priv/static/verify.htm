@@ -1,0 +1,186 @@
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="IAS certificate verification" />
+    <meta name="author" content="IAS" />
+    <title>Verify Certificate</title>
+    <link rel="stylesheet" href="css/blank.css" />
+    <link rel="stylesheet" href="css/forms.css" />
+</head>
+<body>
+    <nav>
+        <a href="index.htm">IAS</a>
+        <a href="users.htm">Users</a>
+        <a href="devices.htm">Devices</a>
+        <a href="services.htm">Services</a>
+        <a href="certificates.htm">Certificates</a>
+        <a href="profiles.htm">Security Profiles</a>
+        <a href="relationships.htm">Relationships</a>
+        <a href="vpn.htm">VPN</a>
+        <a href="issue.htm">Issue Certificate</a>
+        <a href="verify.htm" style="background:#ededed;">Verify Certificate</a>
+    </nav>
+
+    <aside>
+        <article>
+            <section id="stand">
+                <h2>Certificate Verification</h2>
+                <p>Verify a certificate, resolve its authorization claims and evaluate service access.</p>
+
+                <div class="ias-status-card">
+                    <h3>Certificate Input</h3>
+                    <div>
+                        <span>Certificate: </span>
+                        <select id="verify_certificate" onchange="iasShowVerifyPreview(this.value)">
+                            <option value="peer_a" selected>peer_a</option>
+                            <option value="peer_b">peer_b</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="verify_previews">
+                    <div id="verify_preview_peer_a" class="ias-status-card ias-verify-preview" style="display:block;">
+                        <h3>Certificate: peer_a</h3>
+                        <h3>Certificate Details</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Subject CN</th><td>peer_a</td></tr>
+                                    <tr><th>Issuer CN</th><td>Zencrypted Dev CA</td></tr>
+                                    <tr><th>Role</th><td>admin</td></tr>
+                                    <tr><th>Services</th><td>vpn, ias</td></tr>
+                                    <tr><th>Attributes</th><td>admin, issue_certificates, revoke_certificates</td></tr>
+                                    <tr><th>Trust Level</th><td>elevated</td></tr>
+                                    <tr><th>Trusted</th><td>yes</td></tr>
+                                    <tr><th>Key Match</th><td>yes</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Resolved Identity</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Certificate Subject</th><td>peer_a</td></tr>
+                                    <tr><th>Assigned User</th><td>Alice</td></tr>
+                                    <tr><th>Resolved Security Profile</th><td>administrator</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Extracted Claims</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Role</th><td>admin</td></tr>
+                                    <tr><th>Services</th><td>vpn, ias</td></tr>
+                                    <tr><th>Attributes</th><td>admin, issue_certificates, revoke_certificates</td></tr>
+                                    <tr><th>Trust Level</th><td>elevated</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Authorization Check</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <thead>
+                                    <tr><th>Service</th><th>Decision</th><th>Reason</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>vpn</td><td>allow</td><td>certificate allows service</td></tr>
+                                    <tr><td>ias</td><td>allow</td><td>certificate allows service</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Consistency Check</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Profile Claims Match</th><td>yes</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div id="verify_preview_peer_b" class="ias-status-card ias-verify-preview" style="display:none;">
+                        <h3>Certificate: peer_b</h3>
+                        <h3>Certificate Details</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Subject CN</th><td>peer_b</td></tr>
+                                    <tr><th>Issuer CN</th><td>Zencrypted Dev CA</td></tr>
+                                    <tr><th>Role</th><td>peer</td></tr>
+                                    <tr><th>Services</th><td>vpn</td></tr>
+                                    <tr><th>Attributes</th><td>user, device, vpn_peer</td></tr>
+                                    <tr><th>Trust Level</th><td>standard</td></tr>
+                                    <tr><th>Trusted</th><td>yes</td></tr>
+                                    <tr><th>Key Match</th><td>yes</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Resolved Identity</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Certificate Subject</th><td>peer_b</td></tr>
+                                    <tr><th>Assigned User</th><td>Bob</td></tr>
+                                    <tr><th>Resolved Security Profile</th><td>default_user</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Extracted Claims</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Role</th><td>peer</td></tr>
+                                    <tr><th>Services</th><td>vpn</td></tr>
+                                    <tr><th>Attributes</th><td>user, device, vpn_peer</td></tr>
+                                    <tr><th>Trust Level</th><td>standard</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Authorization Check</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <thead>
+                                    <tr><th>Service</th><th>Decision</th><th>Reason</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>vpn</td><td>allow</td><td>certificate allows service</td></tr>
+                                    <tr><td>ias</td><td>deny</td><td>service not permitted by certificate</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Consistency Check</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Profile Claims Match</th><td>yes</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </article>
+    </aside>
+
+    <script>
+        function iasShowVerifyPreview(certificate) {
+            var panels = document.querySelectorAll('.ias-verify-preview');
+            for (var i = 0; i < panels.length; i++) { panels[i].style.display = 'none'; }
+            var selected = document.getElementById('verify_preview_' + certificate);
+            if (selected) { selected.style.display = 'block'; }
+        }
+    </script>
+    <script src="https://ws.n2o.dev/priv/utf8.js"></script>
+    <script src="https://ws.n2o.dev/priv/bert.js"></script>
+    <script src="https://ws.n2o.dev/priv/heart.js"></script>
+    <script src="https://ws.n2o.dev/priv/ieee754.js"></script>
+    <script src="https://ws.n2o.dev/priv/n2o.js"></script>
+    <script src="https://ws.n2o.dev/priv/ftp.js"></script>
+    <script src="https://nitro.n2o.dev/priv/js/nitro.js"></script>
+    <script>host = location.hostname; port = 8041;</script>
+    <script>protos = [$bert]; N2O_start();</script>
+</body>
+</html>

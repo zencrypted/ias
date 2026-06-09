@@ -1,7 +1,7 @@
 -module(ias_policy).
 -export([ca_signing_preview/1, certificate_claims/1, certificate_request/2,
-         certificate_request/3,
-         evaluate_service/2, evaluate_vpn/1, format_claims/1,
+         certificate_request/3, certificate_claims_match/2,
+         evaluate_certificate/2, evaluate_service/2, evaluate_vpn/1, format_claims/1,
          validate_certificate_request/2]).
 
 evaluate_service(Profile, Service) when is_map(Profile) ->
@@ -37,6 +37,23 @@ evaluate_vpn(_Profile) ->
       decision => deny,
       reason => <<"vpn not permitted by profile">>}.
 
+evaluate_certificate(Certificate, Service) when is_map(Certificate) ->
+    Claims = maps:get(claims, Certificate, #{}),
+    case lists:member(Service, maps:get(services, Claims, [])) of
+        true ->
+            #{authorized => true,
+              decision => allow,
+              reason => <<"certificate allows service">>};
+        false ->
+            #{authorized => false,
+              decision => deny,
+              reason => <<"service not permitted by certificate">>}
+    end;
+evaluate_certificate(_Certificate, _Service) ->
+    #{authorized => false,
+      decision => deny,
+      reason => <<"service not permitted by certificate">>}.
+
 certificate_claims(Profile) when is_map(Profile) ->
     #{role => maps:get(certificate_role, Profile, undefined),
       services => maps:get(services, Profile, []),
@@ -47,6 +64,15 @@ certificate_claims(_Profile) ->
       services => [],
       attributes => [],
       trust_level => undefined}.
+
+certificate_claims_match(ProfileClaims, CertificateClaims)
+  when is_map(ProfileClaims), is_map(CertificateClaims) ->
+    maps:get(role, ProfileClaims, undefined) =:= maps:get(role, CertificateClaims, undefined)
+        andalso maps:get(services, ProfileClaims, []) =:= maps:get(services, CertificateClaims, [])
+        andalso maps:get(attributes, ProfileClaims, []) =:= maps:get(attributes, CertificateClaims, [])
+        andalso maps:get(trust_level, ProfileClaims, undefined) =:= maps:get(trust_level, CertificateClaims, undefined);
+certificate_claims_match(_ProfileClaims, _CertificateClaims) ->
+    false.
 
 certificate_request(Profile, SubjectCN) ->
     certificate_request(undefined, Profile, SubjectCN).
