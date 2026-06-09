@@ -9,15 +9,16 @@ event(_) ->
     ok.
 
 content() ->
+    Users = ias_demo_data:users(),
     Profiles = ias_demo_data:profiles(),
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Certificate Issuance Preview")},
-        #p{body = ias_html:text("Preview the certificate claims that a future CA workflow would issue from a Security Profile.")},
-        selector(Profiles),
-        previews(Profiles)
+        #p{body = ias_html:text("Preview the certificate claims that a future CA workflow would issue for a user's assigned Security Profile.")},
+        selector(Users),
+        previews(Users, Profiles)
     ]}.
 
-selector(Profiles) ->
+selector(Users) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Issue Certificate")},
         #panel{body = [
@@ -29,36 +30,40 @@ selector(Profiles) ->
                    onchange = update_subject_js()}
         ]},
         #panel{body = [
-            #span{body = ias_html:text("Selected Profile: ")},
-            #select{id = <<"issue_profile">>,
+            #span{body = ias_html:text("Selected User: ")},
+            #select{id = <<"issue_user">>,
                     onchange = toggle_preview_js(),
-                    body = [option(Profile) || Profile <- Profiles]}
+                    body = [option(User) || User <- Users]}
         ]}
     ]}.
 
-option(Profile) ->
-    ProfileId = maps:get(id, Profile),
-    #option{value = ias_html:text(ProfileId),
-            selected = ProfileId =:= default_user,
-            body = ias_html:text(ProfileId)}.
+option(User) ->
+    UserId = maps:get(id, User),
+    #option{value = ias_html:text(UserId),
+            selected = UserId =:= alice,
+            body = ias_html:text(maps:get(name, User, UserId))}.
 
-previews(Profiles) ->
+previews(Users, Profiles) ->
     #panel{id = <<"issue_previews">>,
-           body = [preview(Profile) || Profile <- Profiles]}.
+           body = [preview(User, Profiles) || User <- Users]}.
 
-preview(Profile) ->
+preview(User, Profiles) ->
+    UserId = maps:get(id, User),
+    UserName = maps:get(name, User, UserId),
+    Profile = profile_for_user(User, Profiles),
     ProfileId = maps:get(id, Profile),
     Claims = ias_policy:certificate_claims(Profile),
-    Request = ias_policy:certificate_request(Profile, <<"peer_new">>),
+    Request = ias_policy:certificate_request(User, Profile, <<"peer_new">>),
     Validation = ias_policy:validate_certificate_request(Request, Profile),
     Signing = ias_policy:ca_signing_preview(Validation),
-    #panel{id = preview_id(ProfileId),
+    #panel{id = preview_id(UserId),
            class = <<"ias-status-card ias-issue-preview">>,
-           style = preview_style(ProfileId),
+           style = preview_style(UserId),
            body = [
-               #h3{body = ias_html:join(["Profile: ", ProfileId])},
+               #h3{body = ias_html:join(["User: ", UserName])},
                subject_field(),
-               field("Selected Profile", ProfileId),
+               field("Selected User", UserName),
+               field("Resolved Profile", ProfileId),
                #h3{body = ias_html:text("Certificate Request")},
                certificate_request_table(Request),
                #h3{body = ias_html:text("Request Validation")},
@@ -75,6 +80,7 @@ preview(Profile) ->
                #h3{body = ias_html:text("Certificate Preview")},
                key_value_table([
                    {"Subject CN", subject_output()},
+                   {"Issued To User", UserName},
                    {"Issuer CN", <<"Zencrypted Dev CA">>},
                    {"Role", maps:get(role, Claims, undefined)},
                    {"Services", ias_html:join_csv(maps:get(services, Claims, []))},
@@ -115,8 +121,9 @@ cell_body(Value) ->
 
 certificate_request_table(Request) ->
     key_value_table([
+        {"User", maps:get(user_name, Request, undefined)},
         {"Subject CN", subject_output()},
-        {"Selected Profile", maps:get(profile_id, Request, undefined)},
+        {"Resolved Profile", maps:get(profile_id, Request, undefined)},
         {"Requested Role", maps:get(requested_role, Request, undefined)},
         {"Requested Services", ias_html:join_csv(maps:get(requested_services, Request, []))},
         {"Requested Attributes", ias_html:join_csv(maps:get(requested_attributes, Request, []))},
@@ -179,6 +186,8 @@ policy_row(Profile, Service) ->
 
 check_label(profile_exists) ->
     <<"Profile exists">>;
+check_label(user_exists) ->
+    <<"User exists">>;
 check_label(subject_cn_present) ->
     <<"Subject CN present">>;
 check_label(requested_services_allowed) ->
@@ -195,20 +204,27 @@ result_text(true) ->
 result_text(false) ->
     <<"no">>.
 
-preview_id(ProfileId) ->
-    ias_html:join(["issue_preview_", ProfileId]).
+profile_for_user(User, Profiles) ->
+    ProfileId = maps:get(profile_id, User, undefined),
+    case [Profile || #{id := Id} = Profile <- Profiles, Id =:= ProfileId] of
+        [Profile | _] -> Profile;
+        [] -> #{}
+    end.
 
-preview_style(default_user) ->
+preview_id(UserId) ->
+    ias_html:join(["issue_preview_", UserId]).
+
+preview_style(alice) ->
     <<"display:block;">>;
-preview_style(_ProfileId) ->
+preview_style(_UserId) ->
     <<"display:none;">>.
 
 toggle_preview_js() ->
     <<
-        "var profile=this.value;",
+        "var user=this.value;",
         "var panels = document.querySelectorAll('.ias-issue-preview');",
         "for (var i = 0; i < panels.length; i++) { panels[i].style.display = 'none'; }",
-        "var selected = document.getElementById('issue_preview_' + profile);",
+        "var selected = document.getElementById('issue_preview_' + user);",
         "if (selected) { selected.style.display = 'block'; }",
         "return false;"
     >>.

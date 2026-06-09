@@ -1,5 +1,6 @@
 -module(ias_policy).
 -export([ca_signing_preview/1, certificate_claims/1, certificate_request/2,
+         certificate_request/3,
          evaluate_service/2, evaluate_vpn/1, format_claims/1,
          validate_certificate_request/2]).
 
@@ -48,8 +49,13 @@ certificate_claims(_Profile) ->
       trust_level => undefined}.
 
 certificate_request(Profile, SubjectCN) ->
+    certificate_request(undefined, Profile, SubjectCN).
+
+certificate_request(User, Profile, SubjectCN) ->
     Claims = certificate_claims(Profile),
     #{subject_cn => ias_html:text(SubjectCN),
+      user_id => user_id(User),
+      user_name => user_name(User),
       profile_id => profile_id(Profile),
       requested_role => maps:get(role, Claims, undefined),
       requested_services => maps:get(services, Claims, []),
@@ -58,7 +64,8 @@ certificate_request(Profile, SubjectCN) ->
 
 validate_certificate_request(Request, Profile) when is_map(Request), is_map(Profile) ->
     Claims = certificate_claims(Profile),
-    [validation(profile_exists, true, <<"profile found">>),
+    [validation(user_exists, user_exists(Request), <<"user found">>, <<"user not found">>),
+     validation(profile_exists, profile_exists(Profile), <<"profile found">>, <<"profile not found">>),
      validation(subject_cn_present, subject_present(maps:get(subject_cn, Request, <<>>)),
                 <<"subject is set">>, <<"subject is required">>),
      validation(requested_services_allowed,
@@ -71,7 +78,8 @@ validate_certificate_request(Request, Profile) when is_map(Request), is_map(Prof
                 maps:get(requested_role, Request, undefined) =:= maps:get(role, Claims, undefined),
                 <<"request matches profile role">>, <<"request role differs from profile">>)];
 validate_certificate_request(_Request, _Profile) ->
-    [validation(profile_exists, false, <<"profile not found">>)].
+    [validation(user_exists, false, <<"user not found">>),
+     validation(profile_exists, false, <<"profile not found">>)].
 
 ca_signing_preview(Validation) when is_list(Validation) ->
     case lists:all(fun(#{result := Result}) -> Result end, Validation) of
@@ -111,6 +119,22 @@ profile_id(Profile) when is_map(Profile) ->
     maps:get(id, Profile, undefined);
 profile_id(_Profile) ->
     undefined.
+
+profile_exists(Profile) ->
+    profile_id(Profile) =/= undefined.
+
+user_id(User) when is_map(User) ->
+    maps:get(id, User, undefined);
+user_id(_User) ->
+    undefined.
+
+user_name(User) when is_map(User) ->
+    maps:get(name, User, user_id(User));
+user_name(_User) ->
+    undefined.
+
+user_exists(Request) ->
+    maps:get(user_id, Request, undefined) =/= undefined.
 
 subject_present(SubjectCN) ->
     ias_html:text(string:trim(binary_to_list(ias_html:text(SubjectCN)))) =/= <<>>.
