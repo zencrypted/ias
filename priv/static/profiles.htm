@@ -34,6 +34,7 @@
                                 <th>Profile</th>
                                 <th>Services</th>
                                 <th>Attributes</th>
+                                <th>Certificate Claims</th>
                                 <th>Certificate Role</th>
                                 <th>Trust Level</th>
                             </tr>
@@ -43,6 +44,7 @@
                                 <td>default_user - Default User</td>
                                 <td>vpn</td>
                                 <td>user, device, vpn_peer</td>
+                                <td>role=peer; services=vpn; attrs=user,device,vpn_peer; trust=standard</td>
                                 <td>peer</td>
                                 <td>standard</td>
                             </tr>
@@ -50,6 +52,7 @@
                                 <td>administrator - Administrator</td>
                                 <td>vpn, ias</td>
                                 <td>admin, issue_certificates, revoke_certificates</td>
+                                <td>role=admin; services=vpn,ias; attrs=admin,issue_certificates,revoke_certificates; trust=elevated</td>
                                 <td>admin</td>
                                 <td>elevated</td>
                             </tr>
@@ -57,6 +60,7 @@
                                 <td>service_account - Service Account</td>
                                 <td>vpn</td>
                                 <td>machine, automation</td>
+                                <td>role=service; services=vpn; attrs=machine,automation; trust=restricted</td>
                                 <td>service</td>
                                 <td>restricted</td>
                             </tr>
