@@ -49,7 +49,6 @@ previews(Profiles) ->
 preview(Profile) ->
     ProfileId = maps:get(id, Profile),
     Claims = ias_policy:certificate_claims(Profile),
-    Decision = ias_policy:evaluate_vpn(Profile),
     #panel{id = preview_id(ProfileId),
            class = <<"ias-status-card ias-issue-preview">>,
            style = preview_style(ProfileId),
@@ -75,8 +74,8 @@ preview(Profile) ->
                    {"Trusted", true},
                    {"Key Match", true}
                ]),
-               #h3{body = ias_html:text("Authorization Result")},
-               field("VPN", authorization(Decision))
+               #h3{body = ias_html:text("Policy Evaluation")},
+               policy_table(Profile)
            ]}.
 
 field(Label, Value) ->
@@ -105,10 +104,24 @@ cell_body(#span{} = Span) ->
 cell_body(Value) ->
     ias_html:text(Value).
 
-authorization(#{authorized := true}) ->
-    <<"allowed">>;
-authorization(_Decision) ->
-    <<"denied">>.
+policy_table(Profile) ->
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               header = [#tr{cells = [
+                   #th{body = ias_html:text("Service")},
+                   #th{body = ias_html:text("Decision")},
+                   #th{body = ias_html:text("Reason")}
+               ]}],
+               body = #tbody{body = [policy_row(Profile, Service) || Service <- [vpn, ias]]}}
+    ]}.
+
+policy_row(Profile, Service) ->
+    Decision = ias_policy:evaluate_service(Profile, Service),
+    #tr{cells = [
+        #td{body = ias_html:text(Service)},
+        #td{body = ias_html:text(maps:get(decision, Decision, deny))},
+        #td{body = ias_html:text(maps:get(reason, Decision, undefined))}
+    ]}.
 
 preview_id(ProfileId) ->
     ias_html:join(["issue_preview_", ProfileId]).

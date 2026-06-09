@@ -1,18 +1,37 @@
 -module(ias_policy).
--export([certificate_claims/1, evaluate_vpn/1, format_claims/1]).
+-export([certificate_claims/1, evaluate_service/2, evaluate_vpn/1, format_claims/1]).
 
-evaluate_vpn(Profile) when is_map(Profile) ->
+evaluate_service(Profile, Service) when is_map(Profile) ->
     Claims = certificate_claims(Profile),
-    case lists:member(vpn, maps:get(services, Claims, [])) of
+    case lists:member(Service, maps:get(services, Claims, [])) of
         true ->
             #{authorized => true,
-              reason => <<"profile allows vpn">>};
+              decision => allow,
+              reason => <<"profile allows service">>};
         false ->
             #{authorized => false,
+              decision => deny,
+              reason => <<"service not permitted">>}
+    end;
+evaluate_service(_Profile, _Service) ->
+    #{authorized => false,
+      decision => deny,
+      reason => <<"service not permitted">>}.
+
+evaluate_vpn(Profile) when is_map(Profile) ->
+    case evaluate_service(Profile, vpn) of
+        #{authorized := true} ->
+            #{authorized => true,
+              decision => allow,
+              reason => <<"profile allows vpn">>};
+        _ ->
+            #{authorized => false,
+              decision => deny,
               reason => <<"vpn not permitted by profile">>}
     end;
 evaluate_vpn(_Profile) ->
     #{authorized => false,
+      decision => deny,
       reason => <<"vpn not permitted by profile">>}.
 
 certificate_claims(Profile) when is_map(Profile) ->
