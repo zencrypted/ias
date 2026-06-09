@@ -20,7 +20,14 @@ content() ->
 selector(Profiles) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Issue Certificate")},
-        #p{body = ias_html:text("Subject CN: peer_new")},
+        #panel{body = [
+            #span{body = ias_html:text("Subject CN: ")},
+            #input{id = <<"issue_subject">>,
+                   type = <<"text">>,
+                   value = <<"peer_new">>,
+                   onkeyup = update_subject_js(),
+                   onchange = update_subject_js()}
+        ]},
         #panel{body = [
             #span{body = ias_html:text("Selected Profile: ")},
             #select{id = <<"issue_profile">>,
@@ -48,13 +55,26 @@ preview(Profile) ->
            style = preview_style(ProfileId),
            body = [
                #h3{body = ias_html:join(["Profile: ", ProfileId])},
-               field("Subject CN", <<"peer_new">>),
+               subject_field(),
                field("Selected Profile", ProfileId),
                #h3{body = ias_html:text("Generated Claims")},
-               claim_field("role", maps:get(role, Claims, undefined)),
-               claim_field("services", ias_html:join_csv(maps:get(services, Claims, []))),
-               claim_field("attrs", ias_html:join_csv(maps:get(attributes, Claims, []))),
-               claim_field("trust", maps:get(trust_level, Claims, undefined)),
+               key_value_table([
+                   {"Role", maps:get(role, Claims, undefined)},
+                   {"Services", ias_html:join_csv(maps:get(services, Claims, []))},
+                   {"Attributes", ias_html:join_csv(maps:get(attributes, Claims, []))},
+                   {"Trust Level", maps:get(trust_level, Claims, undefined)}
+               ]),
+               #h3{body = ias_html:text("Certificate Preview")},
+               key_value_table([
+                   {"Subject CN", subject_output()},
+                   {"Issuer CN", <<"Zencrypted Dev CA">>},
+                   {"Role", maps:get(role, Claims, undefined)},
+                   {"Services", ias_html:join_csv(maps:get(services, Claims, []))},
+                   {"Attributes", ias_html:join_csv(maps:get(attributes, Claims, []))},
+                   {"Trust Level", maps:get(trust_level, Claims, undefined)},
+                   {"Trusted", true},
+                   {"Key Match", true}
+               ]),
                #h3{body = ias_html:text("Authorization Result")},
                field("VPN", authorization(Decision))
            ]}.
@@ -62,8 +82,28 @@ preview(Profile) ->
 field(Label, Value) ->
     #p{body = ias_html:join([Label, ": ", Value])}.
 
-claim_field(Label, Value) ->
-    #p{body = ias_html:join([Label, "=", Value])}.
+subject_field() ->
+    #p{body = [ias_html:text("Subject CN: "), subject_output()]}.
+
+subject_output() ->
+    #span{class = <<"ias-issue-subject">>, body = ias_html:text("peer_new")}.
+
+key_value_table(Rows) ->
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [key_value_row(Label, Value) || {Label, Value} <- Rows]}}
+    ]}.
+
+key_value_row(Label, Value) ->
+    #tr{cells = [
+        #th{body = ias_html:text(Label)},
+        #td{body = cell_body(Value)}
+    ]}.
+
+cell_body(#span{} = Span) ->
+    Span;
+cell_body(Value) ->
+    ias_html:text(Value).
 
 authorization(#{authorized := true}) ->
     <<"allowed">>;
@@ -85,5 +125,13 @@ toggle_preview_js() ->
         "for (var i = 0; i < panels.length; i++) { panels[i].style.display = 'none'; }",
         "var selected = document.getElementById('issue_preview_' + profile);",
         "if (selected) { selected.style.display = 'block'; }",
+        "return false;"
+    >>.
+
+update_subject_js() ->
+    <<
+        "var subject=this.value || 'peer_new';",
+        "var outputs=document.querySelectorAll('.ias-issue-subject');",
+        "for (var i=0; i<outputs.length; i++) { outputs[i].textContent = subject; }",
         "return false;"
     >>.
