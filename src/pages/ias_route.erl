@@ -21,4 +21,5 @@ route(<<"app/certificates", _/binary>>) -> ias_certificates;
 route(<<"app/profiles",     _/binary>>) -> ias_profiles;
 route(<<"app/relationships", _/binary>>) -> ias_relationships;
 route(<<"app/vpn",          _/binary>>) -> ias_vpn;
+route(<<"app/issue",        _/binary>>) -> ias_issue_cert;
 route(_)                                 -> ias_index.

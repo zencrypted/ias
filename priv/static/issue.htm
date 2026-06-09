@@ -1,0 +1,106 @@
+<html>
+<head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="IAS certificate issuance preview" />
+    <meta name="author" content="IAS" />
+    <title>Issue Certificate</title>
+    <link rel="stylesheet" href="css/blank.css" />
+    <link rel="stylesheet" href="css/forms.css" />
+</head>
+<body>
+    <nav>
+        <a href="index.htm">IAS</a>
+        <a href="users.htm">Users</a>
+        <a href="devices.htm">Devices</a>
+        <a href="services.htm">Services</a>
+        <a href="certificates.htm">Certificates</a>
+        <a href="profiles.htm">Security Profiles</a>
+        <a href="relationships.htm">Relationships</a>
+        <a href="vpn.htm">VPN</a>
+        <a href="issue.htm" style="background:#ededed;">Issue Certificate</a>
+    </nav>
+
+    <aside>
+        <article>
+            <section id="stand">
+                <h2>Certificate Issuance Preview</h2>
+                <p>Preview the certificate claims that a future CA workflow would issue from a Security Profile.</p>
+
+                <div class="ias-status-card">
+                    <h3>Issue Certificate</h3>
+                    <p>Subject CN: peer_new</p>
+                    <div>
+                        <span>Selected Profile: </span>
+                        <select id="issue_profile" onchange="iasShowIssuePreview(this.value)">
+                            <option value="default_user" selected>default_user</option>
+                            <option value="administrator">administrator</option>
+                            <option value="service_account">service_account</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div id="issue_previews">
+                    <div id="issue_preview_default_user" class="ias-status-card ias-issue-preview" style="display:block;">
+                        <h3>Profile: default_user</h3>
+                        <p>Subject CN: peer_new</p>
+                        <p>Selected Profile: default_user</p>
+                        <h3>Generated Claims</h3>
+                        <p>role=peer</p>
+                        <p>services=vpn</p>
+                        <p>attrs=user, device, vpn_peer</p>
+                        <p>trust=standard</p>
+                        <h3>Authorization Result</h3>
+                        <p>VPN: allowed</p>
+                    </div>
+
+                    <div id="issue_preview_administrator" class="ias-status-card ias-issue-preview" style="display:none;">
+                        <h3>Profile: administrator</h3>
+                        <p>Subject CN: peer_new</p>
+                        <p>Selected Profile: administrator</p>
+                        <h3>Generated Claims</h3>
+                        <p>role=admin</p>
+                        <p>services=vpn, ias</p>
+                        <p>attrs=admin, issue_certificates, revoke_certificates</p>
+                        <p>trust=elevated</p>
+                        <h3>Authorization Result</h3>
+                        <p>VPN: allowed</p>
+                    </div>
+
+                    <div id="issue_preview_service_account" class="ias-status-card ias-issue-preview" style="display:none;">
+                        <h3>Profile: service_account</h3>
+                        <p>Subject CN: peer_new</p>
+                        <p>Selected Profile: service_account</p>
+                        <h3>Generated Claims</h3>
+                        <p>role=service</p>
+                        <p>services=vpn</p>
+                        <p>attrs=machine, automation</p>
+                        <p>trust=restricted</p>
+                        <h3>Authorization Result</h3>
+                        <p>VPN: allowed</p>
+                    </div>
+                </div>
+            </section>
+        </article>
+    </aside>
+
+    <script>
+        function iasShowIssuePreview(profile) {
+            var panels = document.querySelectorAll('.ias-issue-preview');
+            for (var i = 0; i < panels.length; i++) { panels[i].style.display = 'none'; }
+            var selected = document.getElementById('issue_preview_' + profile);
+            if (selected) { selected.style.display = 'block'; }
+        }
+    </script>
+    <script src="https://ws.n2o.dev/priv/utf8.js"></script>
+    <script src="https://ws.n2o.dev/priv/bert.js"></script>
+    <script src="https://ws.n2o.dev/priv/heart.js"></script>
+    <script src="https://ws.n2o.dev/priv/ieee754.js"></script>
+    <script src="https://ws.n2o.dev/priv/n2o.js"></script>
+    <script src="https://ws.n2o.dev/priv/ftp.js"></script>
+    <script src="https://nitro.n2o.dev/priv/js/nitro.js"></script>
+    <script>host = location.hostname; port = 8041;</script>
+    <script>protos = [$bert]; N2O_start();</script>
+</body>
+</html>
