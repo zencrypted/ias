@@ -15,13 +15,14 @@ content() ->
     Devices = ias_demo_data:devices(),
     Certificates = ias_demo_data:certificates(),
     Services = ias_demo_data:services(),
+    Profiles = ias_demo_data:profiles(),
     VpnSummary = ias_vpn_runtime:summary(),
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = "Relationships"},
         #p{body = "User to device, certificate and service relationships."},
         counters(Users, Devices, Certificates, Services),
         #panel{class = <<"ias-relationship-tree">>,
-               body = hierarchy(Users, Devices, Certificates, Services, VpnSummary)}
+               body = hierarchy(Users, Devices, Certificates, Services, Profiles, VpnSummary)}
     ]}.
 
 counters(Users, Devices, Certificates, Services) ->
@@ -36,35 +37,42 @@ summary(Label, Rows) ->
     #panel{class = <<"ias-summary-item">>,
            body = [Label, ": ", integer_to_list(length(Rows))]}.
 
-hierarchy(Users, Devices, Certificates, Services, VpnSummary) ->
-    join_blocks([user_tree(User, Devices, Certificates, Services, VpnSummary) || User <- Users]).
+hierarchy(Users, Devices, Certificates, Services, Profiles, VpnSummary) ->
+    join_blocks([user_tree(User, Devices, Certificates, Services, Profiles, VpnSummary) || User <- Users]).
 
-user_tree(User, Devices, Certificates, Services, VpnSummary) ->
+user_tree(User, Devices, Certificates, Services, Profiles, VpnSummary) ->
     UserDevices = [find(DeviceId, Devices) || DeviceId <- maps:get(devices, User, [])],
     [tree_line(value(maps:get(name, User))),
-     device_lines(UserDevices, Certificates, Services, VpnSummary)].
+     device_lines(UserDevices, Certificates, Services, Profiles, VpnSummary)].
 
-device_lines(Devices, Certificates, Services, VpnSummary) ->
-    lists:append([device_tree(Device, Certificates, Services, VpnSummary) || Device <- Devices]).
+device_lines(Devices, Certificates, Services, Profiles, VpnSummary) ->
+    lists:append([device_tree(Device, Certificates, Services, Profiles, VpnSummary) || Device <- Devices]).
 
-device_tree(Device, Certificates, Services, VpnSummary) ->
+device_tree(Device, Certificates, Services, Profiles, VpnSummary) ->
     Certificate = find(maps:get(certificate, Device), Certificates),
     DeviceServices = [find(ServiceId, Services) || ServiceId <- maps:get(services, Device, [])],
     [tree_line(["  +- ", value(maps:get(id, Device))]),
      tree_line(["  |  +- ", value(maps:get(id, Certificate))])
-     | service_lines(Device, DeviceServices, VpnSummary)].
+     | service_lines(Device, DeviceServices, Profiles, VpnSummary)].
 
-service_lines(Device, Services, VpnSummary) ->
-    [tree_line(["  |  `- ", service_label(Device, Service, VpnSummary)]) || Service <- Services].
+service_lines(Device, Services, Profiles, VpnSummary) ->
+    lists:append([service_tree(Device, Service, Profiles, VpnSummary) || Service <- Services]).
 
-service_label(Device, #{id := vpn}, VpnSummary) ->
-    format_vpn_service(Device, VpnSummary);
-service_label(_Device, Service, _VpnSummary) ->
-    value(maps:get(id, Service)).
+service_tree(Device, #{id := vpn}, Profiles, VpnSummary) ->
+    vpn_service_lines(Device, Profiles, VpnSummary);
+service_tree(_Device, Service, _Profiles, _VpnSummary) ->
+    [tree_line(["  |  `- ", value(maps:get(id, Service))])].
 
-format_vpn_service(Device, VpnSummary) ->
+vpn_service_lines(Device, Profiles, VpnSummary) ->
     PeerId = maps:get(vpn_peer, Device, undefined),
-    ["vpn : ", value(PeerId), " : ", atom_to_list(vpn_peer_status(PeerId, VpnSummary))].
+    ProfileId = maps:get(profile_id, Device, undefined),
+    Profile = profile(ProfileId, Profiles),
+    Policy = ias_policy:evaluate_vpn(Profile),
+    [tree_line(["  |  `- vpn -> ", value(PeerId), " -> ",
+                atom_to_list(vpn_peer_status(PeerId, VpnSummary))]),
+     tree_line(["  |      profile: ", value(ProfileId)]),
+     tree_line(["  |      authorized: ", value(maps:get(authorized, Policy, false))]),
+     tree_line(["  |      reason: ", value(maps:get(reason, Policy, undefined))])].
 
 vpn_peer_status(undefined, _VpnSummary) ->
     unknown;
@@ -77,6 +85,14 @@ vpn_peer_status(PeerId, {ok, Data}) when is_map(Data) ->
     end;
 vpn_peer_status(_PeerId, _VpnSummary) ->
     unavailable.
+
+profile(undefined, _Profiles) ->
+    #{};
+profile(ProfileId, Profiles) ->
+    case [Profile || Profile <- Profiles, maps:get(id, Profile) =:= ProfileId] of
+        [Profile | _] -> Profile;
+        [] -> #{}
+    end.
 
 find(Id, Rows) ->
     case [Row || Row <- Rows, maps:get(id, Row) =:= Id] of
@@ -116,6 +132,12 @@ is_charlist([Char | Rest]) when is_integer(Char), Char >= 0 ->
 is_charlist(_) ->
     false.
 
+value(undefined) ->
+    "-";
+value(true) ->
+    "yes";
+value(false) ->
+    "no";
 value(Value) when is_atom(Value) ->
     atom_to_list(Value);
 value(Value) ->

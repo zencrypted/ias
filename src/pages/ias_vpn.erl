@@ -117,6 +117,8 @@ header(Columns) ->
 row(Values) ->
     #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
 
+%% TODO:
+%% Replace local value conversion with shared ias_html:text/1.
 value(undefined) ->
     "-";
 value(true) ->
