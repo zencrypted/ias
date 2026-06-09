@@ -49,6 +49,9 @@ previews(Profiles) ->
 preview(Profile) ->
     ProfileId = maps:get(id, Profile),
     Claims = ias_policy:certificate_claims(Profile),
+    Request = ias_policy:certificate_request(Profile, <<"peer_new">>),
+    Validation = ias_policy:validate_certificate_request(Request, Profile),
+    Signing = ias_policy:ca_signing_preview(Validation),
     #panel{id = preview_id(ProfileId),
            class = <<"ias-status-card ias-issue-preview">>,
            style = preview_style(ProfileId),
@@ -56,6 +59,12 @@ preview(Profile) ->
                #h3{body = ias_html:join(["Profile: ", ProfileId])},
                subject_field(),
                field("Selected Profile", ProfileId),
+               #h3{body = ias_html:text("Certificate Request")},
+               certificate_request_table(Request),
+               #h3{body = ias_html:text("Request Validation")},
+               validation_table(Validation),
+               #h3{body = ias_html:text("CA Signing Preview")},
+               signing_table(Signing),
                #h3{body = ias_html:text("Generated Claims")},
                key_value_table([
                    {"Role", maps:get(role, Claims, undefined)},
@@ -104,6 +113,51 @@ cell_body(#span{} = Span) ->
 cell_body(Value) ->
     ias_html:text(Value).
 
+certificate_request_table(Request) ->
+    key_value_table([
+        {"Subject CN", subject_output()},
+        {"Selected Profile", maps:get(profile_id, Request, undefined)},
+        {"Requested Role", maps:get(requested_role, Request, undefined)},
+        {"Requested Services", ias_html:join_csv(maps:get(requested_services, Request, []))},
+        {"Requested Attributes", ias_html:join_csv(maps:get(requested_attributes, Request, []))},
+        {"Requested Trust Level", maps:get(requested_trust_level, Request, undefined)}
+    ]).
+
+validation_table(Validation) ->
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               header = [#tr{cells = [
+                   #th{body = ias_html:text("Check")},
+                   #th{body = ias_html:text("Result")},
+                   #th{body = ias_html:text("Reason")}
+               ]}],
+               body = #tbody{body = [validation_row(Check) || Check <- Validation]}}
+    ]}.
+
+validation_row(#{check := subject_cn_present} = Check) ->
+    #tr{cells = [
+        #td{body = ias_html:text("Subject CN present")},
+        #td{body = #span{class = <<"ias-issue-subject-valid">>,
+                         body = result_text(maps:get(result, Check, false))}},
+        #td{body = #span{class = <<"ias-issue-subject-reason">>,
+                         body = ias_html:text(maps:get(reason, Check, undefined))}}
+    ]};
+validation_row(Check) ->
+    #tr{cells = [
+        #td{body = ias_html:text(check_label(maps:get(check, Check, undefined)))},
+        #td{body = result_text(maps:get(result, Check, false))},
+        #td{body = ias_html:text(maps:get(reason, Check, undefined))}
+    ]}.
+
+signing_table(Signing) ->
+    key_value_table([
+        {"CA", maps:get(ca, Signing, undefined)},
+        {"Decision", #span{class = <<"ias-issue-ca-decision">>,
+                           body = ias_html:text(maps:get(decision, Signing, undefined))}},
+        {"Reason", #span{class = <<"ias-issue-ca-reason">>,
+                         body = ias_html:text(maps:get(reason, Signing, undefined))}}
+    ]).
+
 policy_table(Profile) ->
     #panel{class = <<"ias-table-container">>, body = [
         #table{class = <<"ias-table">>,
@@ -122,6 +176,24 @@ policy_row(Profile, Service) ->
         #td{body = ias_html:text(maps:get(decision, Decision, deny))},
         #td{body = ias_html:text(maps:get(reason, Decision, undefined))}
     ]}.
+
+check_label(profile_exists) ->
+    <<"Profile exists">>;
+check_label(subject_cn_present) ->
+    <<"Subject CN present">>;
+check_label(requested_services_allowed) ->
+    <<"Requested services allowed">>;
+check_label(requested_attributes_allowed) ->
+    <<"Requested attributes allowed">>;
+check_label(certificate_role_allowed) ->
+    <<"Certificate role allowed">>;
+check_label(Check) ->
+    Check.
+
+result_text(true) ->
+    <<"yes">>;
+result_text(false) ->
+    <<"no">>.
 
 preview_id(ProfileId) ->
     ias_html:join(["issue_preview_", ProfileId]).
@@ -143,8 +215,18 @@ toggle_preview_js() ->
 
 update_subject_js() ->
     <<
-        "var subject=this.value || 'peer_new';",
+        "var raw=this.value;",
+        "var subject=raw || 'peer_new';",
+        "var valid=raw.trim().length > 0;",
         "var outputs=document.querySelectorAll('.ias-issue-subject');",
         "for (var i=0; i<outputs.length; i++) { outputs[i].textContent = subject; }",
+        "var validOutputs=document.querySelectorAll('.ias-issue-subject-valid');",
+        "for (var j=0; j<validOutputs.length; j++) { validOutputs[j].textContent = valid ? 'yes' : 'no'; }",
+        "var reasonOutputs=document.querySelectorAll('.ias-issue-subject-reason');",
+        "for (var k=0; k<reasonOutputs.length; k++) { reasonOutputs[k].textContent = valid ? 'subject is set' : 'subject is required'; }",
+        "var decisionOutputs=document.querySelectorAll('.ias-issue-ca-decision');",
+        "for (var l=0; l<decisionOutputs.length; l++) { decisionOutputs[l].textContent = valid ? 'would sign' : 'would reject'; }",
+        "var caReasonOutputs=document.querySelectorAll('.ias-issue-ca-reason');",
+        "for (var m=0; m<caReasonOutputs.length; m++) { caReasonOutputs[m].textContent = valid ? 'request matches selected profile' : 'validation failed'; }",
         "return false;"
     >>.

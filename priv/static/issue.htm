@@ -49,6 +49,44 @@
                         <h3>Profile: default_user</h3>
                         <p>Subject CN: <span class="ias-issue-subject">peer_new</span></p>
                         <p>Selected Profile: default_user</p>
+                        <h3>Certificate Request</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Subject CN</th><td><span class="ias-issue-subject">peer_new</span></td></tr>
+                                    <tr><th>Selected Profile</th><td>default_user</td></tr>
+                                    <tr><th>Requested Role</th><td>peer</td></tr>
+                                    <tr><th>Requested Services</th><td>vpn</td></tr>
+                                    <tr><th>Requested Attributes</th><td>user, device, vpn_peer</td></tr>
+                                    <tr><th>Requested Trust Level</th><td>standard</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Request Validation</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <thead>
+                                    <tr><th>Check</th><th>Result</th><th>Reason</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Profile exists</td><td>yes</td><td>profile found</td></tr>
+                                    <tr><td>Subject CN present</td><td><span class="ias-issue-subject-valid">yes</span></td><td><span class="ias-issue-subject-reason">subject is set</span></td></tr>
+                                    <tr><td>Requested services allowed</td><td>yes</td><td>request matches profile services</td></tr>
+                                    <tr><td>Requested attributes allowed</td><td>yes</td><td>request matches profile attributes</td></tr>
+                                    <tr><td>Certificate role allowed</td><td>yes</td><td>request matches profile role</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>CA Signing Preview</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>CA</th><td>Zencrypted Dev CA</td></tr>
+                                    <tr><th>Decision</th><td><span class="ias-issue-ca-decision">would sign</span></td></tr>
+                                    <tr><th>Reason</th><td><span class="ias-issue-ca-reason">request matches selected profile</span></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                         <h3>Generated Claims</h3>
                         <div class="ias-table-container">
                             <table class="ias-table">
@@ -93,6 +131,44 @@
                         <h3>Profile: administrator</h3>
                         <p>Subject CN: <span class="ias-issue-subject">peer_new</span></p>
                         <p>Selected Profile: administrator</p>
+                        <h3>Certificate Request</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Subject CN</th><td><span class="ias-issue-subject">peer_new</span></td></tr>
+                                    <tr><th>Selected Profile</th><td>administrator</td></tr>
+                                    <tr><th>Requested Role</th><td>admin</td></tr>
+                                    <tr><th>Requested Services</th><td>vpn, ias</td></tr>
+                                    <tr><th>Requested Attributes</th><td>admin, issue_certificates, revoke_certificates</td></tr>
+                                    <tr><th>Requested Trust Level</th><td>elevated</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Request Validation</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <thead>
+                                    <tr><th>Check</th><th>Result</th><th>Reason</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Profile exists</td><td>yes</td><td>profile found</td></tr>
+                                    <tr><td>Subject CN present</td><td><span class="ias-issue-subject-valid">yes</span></td><td><span class="ias-issue-subject-reason">subject is set</span></td></tr>
+                                    <tr><td>Requested services allowed</td><td>yes</td><td>request matches profile services</td></tr>
+                                    <tr><td>Requested attributes allowed</td><td>yes</td><td>request matches profile attributes</td></tr>
+                                    <tr><td>Certificate role allowed</td><td>yes</td><td>request matches profile role</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>CA Signing Preview</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>CA</th><td>Zencrypted Dev CA</td></tr>
+                                    <tr><th>Decision</th><td><span class="ias-issue-ca-decision">would sign</span></td></tr>
+                                    <tr><th>Reason</th><td><span class="ias-issue-ca-reason">request matches selected profile</span></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                         <h3>Generated Claims</h3>
                         <div class="ias-table-container">
                             <table class="ias-table">
@@ -137,6 +213,44 @@
                         <h3>Profile: service_account</h3>
                         <p>Subject CN: <span class="ias-issue-subject">peer_new</span></p>
                         <p>Selected Profile: service_account</p>
+                        <h3>Certificate Request</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>Subject CN</th><td><span class="ias-issue-subject">peer_new</span></td></tr>
+                                    <tr><th>Selected Profile</th><td>service_account</td></tr>
+                                    <tr><th>Requested Role</th><td>service</td></tr>
+                                    <tr><th>Requested Services</th><td>vpn</td></tr>
+                                    <tr><th>Requested Attributes</th><td>machine, automation</td></tr>
+                                    <tr><th>Requested Trust Level</th><td>restricted</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>Request Validation</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <thead>
+                                    <tr><th>Check</th><th>Result</th><th>Reason</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>Profile exists</td><td>yes</td><td>profile found</td></tr>
+                                    <tr><td>Subject CN present</td><td><span class="ias-issue-subject-valid">yes</span></td><td><span class="ias-issue-subject-reason">subject is set</span></td></tr>
+                                    <tr><td>Requested services allowed</td><td>yes</td><td>request matches profile services</td></tr>
+                                    <tr><td>Requested attributes allowed</td><td>yes</td><td>request matches profile attributes</td></tr>
+                                    <tr><td>Certificate role allowed</td><td>yes</td><td>request matches profile role</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <h3>CA Signing Preview</h3>
+                        <div class="ias-table-container">
+                            <table class="ias-table">
+                                <tbody>
+                                    <tr><th>CA</th><td>Zencrypted Dev CA</td></tr>
+                                    <tr><th>Decision</th><td><span class="ias-issue-ca-decision">would sign</span></td></tr>
+                                    <tr><th>Reason</th><td><span class="ias-issue-ca-reason">request matches selected profile</span></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
                         <h3>Generated Claims</h3>
                         <div class="ias-table-container">
                             <table class="ias-table">
@@ -190,8 +304,17 @@
         }
         function iasUpdateSubject(value) {
             var subject = value || 'peer_new';
+            var valid = value.trim().length > 0;
             var outputs = document.querySelectorAll('.ias-issue-subject');
             for (var i = 0; i < outputs.length; i++) { outputs[i].textContent = subject; }
+            var validOutputs = document.querySelectorAll('.ias-issue-subject-valid');
+            for (var j = 0; j < validOutputs.length; j++) { validOutputs[j].textContent = valid ? 'yes' : 'no'; }
+            var reasonOutputs = document.querySelectorAll('.ias-issue-subject-reason');
+            for (var k = 0; k < reasonOutputs.length; k++) { reasonOutputs[k].textContent = valid ? 'subject is set' : 'subject is required'; }
+            var decisionOutputs = document.querySelectorAll('.ias-issue-ca-decision');
+            for (var l = 0; l < decisionOutputs.length; l++) { decisionOutputs[l].textContent = valid ? 'would sign' : 'would reject'; }
+            var caReasonOutputs = document.querySelectorAll('.ias-issue-ca-reason');
+            for (var m = 0; m < caReasonOutputs.length; m++) { caReasonOutputs[m].textContent = valid ? 'request matches selected profile' : 'validation failed'; }
         }
     </script>
     <script src="https://ws.n2o.dev/priv/utf8.js"></script>
