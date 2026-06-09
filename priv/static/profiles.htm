@@ -25,14 +25,41 @@
         <article>
             <section id="stand">
                 <h2>Security Profiles</h2>
-                <p>Define reusable security posture templates when policy support is added.</p>
-                <h3>Profiles: 2</h3>
+                <p>Security profiles define attributes and permissions that will later be embedded into issued certificates.</p>
+                <h3>Profiles: 3</h3>
                 <div class="ias-table-container">
                     <table class="ias-table">
-                        <thead><tr><th>ID</th><th>Description</th></tr></thead>
+                        <thead>
+                            <tr>
+                                <th>Profile</th>
+                                <th>Services</th>
+                                <th>Attributes</th>
+                                <th>Certificate Role</th>
+                                <th>Trust Level</th>
+                            </tr>
+                        </thead>
                         <tbody>
-                            <tr><td>default_user</td><td>Default user profile</td></tr>
-                            <tr><td>administrator</td><td>Administrator profile</td></tr>
+                            <tr>
+                                <td>default_user - Default User</td>
+                                <td>vpn</td>
+                                <td>user, device, vpn_peer</td>
+                                <td>peer</td>
+                                <td>standard</td>
+                            </tr>
+                            <tr>
+                                <td>administrator - Administrator</td>
+                                <td>vpn, ias</td>
+                                <td>admin, issue_certificates, revoke_certificates</td>
+                                <td>admin</td>
+                                <td>elevated</td>
+                            </tr>
+                            <tr>
+                                <td>service_account - Service Account</td>
+                                <td>vpn</td>
+                                <td>machine, automation</td>
+                                <td>service</td>
+                                <td>restricted</td>
+                            </tr>
                         </tbody>
                     </table>
                 </div>

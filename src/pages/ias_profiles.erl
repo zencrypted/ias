@@ -16,7 +16,7 @@ content() ->
         #h3{body = count("Profiles", Profiles)},
         table([
             #table{class = <<"ias-table">>,
-                   header = header(["Profile", "Services", "Certificate Role", "Trust Level", "Attributes"]),
+                   header = header(["Profile", "Services", "Attributes", "Certificate Role", "Trust Level"]),
                    body = #tbody{body =
                        [profile_row(Profile) || Profile <- Profiles]}}
         ])
@@ -25,9 +25,9 @@ content() ->
 profile_row(Profile) ->
     row([profile_name(Profile),
          ias_html:join_csv(maps:get(services, Profile, [])),
+         ias_html:join_csv(maps:get(attributes, Profile, [])),
          maps:get(certificate_role, Profile),
-         maps:get(trust_level, Profile),
-         ias_html:join_csv(maps:get(attributes, Profile, []))]).
+         maps:get(trust_level, Profile)]).
 
 profile_name(Profile) ->
     ias_html:join([id(Profile), " - ", maps:get(name, Profile)]).
