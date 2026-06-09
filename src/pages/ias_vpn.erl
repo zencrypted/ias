@@ -92,16 +92,7 @@ policy_decision(Peer, Devices, Profiles) ->
     PeerId = ias_vpn_runtime:field(Peer, [<<"id">>, id, peer, name]),
     ProfileId = profile_id(PeerId, Devices),
     Profile = profile(ProfileId, Profiles),
-    case profile_allows_vpn(Profile) of
-        true ->
-            #{profile_id => ProfileId,
-              authorized => true,
-              reason => <<"profile allows vpn">>};
-        false ->
-            #{profile_id => ProfileId,
-              authorized => false,
-              reason => <<"vpn not permitted by profile">>}
-    end.
+    (ias_policy:evaluate_vpn(Profile))#{profile_id => ProfileId}.
 
 profile_id(undefined, _Devices) ->
     undefined;
@@ -119,9 +110,6 @@ profile(ProfileId, Profiles) ->
         [Profile | _] -> Profile;
         [] -> #{}
     end.
-
-profile_allows_vpn(Profile) ->
-    lists:member(vpn, maps:get(services, Profile, [])).
 
 header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
