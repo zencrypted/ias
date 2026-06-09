@@ -1,12 +1,20 @@
 -module(ias_html).
 -export([text/1, join/1, join_csv/1]).
 
+text(undefined) ->
+    <<"-">>;
+text(true) ->
+    <<"yes">>;
+text(false) ->
+    <<"no">>;
 text(Value) when is_binary(Value) ->
     Value;
 text(Value) when is_atom(Value) ->
     atom_to_binary(Value, utf8);
 text(Value) when is_integer(Value) ->
     integer_to_binary(Value);
+text(Value) when is_float(Value) ->
+    iolist_to_binary(io_lib:format("~p", [Value]));
 text(Value) when is_list(Value) ->
     case is_charlist(Value) of
         true -> unicode:characters_to_binary(Value);

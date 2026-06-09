@@ -56,7 +56,7 @@ counters(Counts, Peers) ->
 summary(Label, undefined) ->
     #panel{class = <<"ias-summary-item">>, body = [Label, ": -"]};
 summary(Label, Value) ->
-    #panel{class = <<"ias-summary-item">>, body = [Label, ": ", value(Value)]}.
+    #panel{class = <<"ias-summary-item">>, body = ias_html:join([Label, ": ", Value])}.
 
 peers_table([]) ->
     #panel{class = <<"ias-status-card">>, body = "No VPN peers reported."};
@@ -115,21 +115,4 @@ header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
 
 row(Values) ->
-    #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
-
-%% TODO:
-%% Replace local value conversion with shared ias_html:text/1.
-value(undefined) ->
-    "-";
-value(true) ->
-    "yes";
-value(false) ->
-    "no";
-value(Value) when is_atom(Value) ->
-    atom_to_list(Value);
-value(Value) when is_integer(Value) ->
-    integer_to_list(Value);
-value(Value) when is_float(Value) ->
-    io_lib:format("~p", [Value]);
-value(Value) ->
-    Value.
+    #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.

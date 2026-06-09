@@ -42,7 +42,7 @@ hierarchy(Users, Devices, Certificates, Services, Profiles, VpnSummary) ->
 
 user_tree(User, Devices, Certificates, Services, Profiles, VpnSummary) ->
     UserDevices = [find(DeviceId, Devices) || DeviceId <- maps:get(devices, User, [])],
-    [tree_line(value(maps:get(name, User))),
+    [tree_line(ias_html:text(maps:get(name, User))),
      device_lines(UserDevices, Certificates, Services, Profiles, VpnSummary)].
 
 device_lines(Devices, Certificates, Services, Profiles, VpnSummary) ->
@@ -51,8 +51,8 @@ device_lines(Devices, Certificates, Services, Profiles, VpnSummary) ->
 device_tree(Device, Certificates, Services, Profiles, VpnSummary) ->
     Certificate = find(maps:get(certificate, Device), Certificates),
     DeviceServices = [find(ServiceId, Services) || ServiceId <- maps:get(services, Device, [])],
-    [tree_line(["  +- ", value(maps:get(id, Device))]),
-     tree_line(["  |  +- ", value(maps:get(id, Certificate))])
+    [tree_line(["  +- ", ias_html:text(maps:get(id, Device))]),
+     tree_line(["  |  +- ", ias_html:text(maps:get(id, Certificate))])
      | service_lines(Device, DeviceServices, Profiles, VpnSummary)].
 
 service_lines(Device, Services, Profiles, VpnSummary) ->
@@ -61,18 +61,18 @@ service_lines(Device, Services, Profiles, VpnSummary) ->
 service_tree(Device, #{id := vpn}, Profiles, VpnSummary) ->
     vpn_service_lines(Device, Profiles, VpnSummary);
 service_tree(_Device, Service, _Profiles, _VpnSummary) ->
-    [tree_line(["  |  `- ", value(maps:get(id, Service))])].
+    [tree_line(["  |  `- ", ias_html:text(maps:get(id, Service))])].
 
 vpn_service_lines(Device, Profiles, VpnSummary) ->
     PeerId = maps:get(vpn_peer, Device, undefined),
     ProfileId = maps:get(profile_id, Device, undefined),
     Profile = profile(ProfileId, Profiles),
     Policy = ias_policy:evaluate_vpn(Profile),
-    [tree_line(["  |  `- vpn -> ", value(PeerId), " -> ",
+    [tree_line(["  |  `- vpn -> ", ias_html:text(PeerId), " -> ",
                 atom_to_list(vpn_peer_status(PeerId, VpnSummary))]),
-     tree_line(["  |      profile: ", value(ProfileId)]),
-     tree_line(["  |      authorized: ", value(maps:get(authorized, Policy, false))]),
-     tree_line(["  |      reason: ", value(maps:get(reason, Policy, undefined))])].
+     tree_line(["  |      profile: ", ias_html:text(ProfileId)]),
+     tree_line(["  |      authorized: ", ias_html:text(maps:get(authorized, Policy, false))]),
+     tree_line(["  |      reason: ", ias_html:text(maps:get(reason, Policy, undefined))])].
 
 vpn_peer_status(undefined, _VpnSummary) ->
     unknown;
@@ -131,14 +131,3 @@ is_charlist([Char | Rest]) when is_integer(Char), Char >= 0 ->
     is_charlist(Rest);
 is_charlist(_) ->
     false.
-
-value(undefined) ->
-    "-";
-value(true) ->
-    "yes";
-value(false) ->
-    "no";
-value(Value) when is_atom(Value) ->
-    atom_to_list(Value);
-value(Value) ->
-    Value.

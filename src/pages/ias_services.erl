@@ -47,19 +47,10 @@ header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
 
 row(Values) ->
-    #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
+    #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.
 
 count(Label, Rows) ->
     [Label, ": ", integer_to_list(length(Rows))].
-
-value(undefined) ->
-    "-";
-value(Value) when is_atom(Value) ->
-    atom_to_list(Value);
-value(Value) when is_integer(Value) ->
-    integer_to_list(Value);
-value(Value) ->
-    Value.

@@ -82,19 +82,10 @@ header(Columns) ->
     [#tr{cells = [#th{body = ias_html:text(Column)} || Column <- Columns]}].
 
 row(Values) ->
-    #tr{cells = [#td{body = value(Value)} || Value <- Values]}.
+    #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.
 
 count(Label, Rows) ->
     ias_html:join([Label, ": ", length(Rows)]).
-
-value(undefined) ->
-    ias_html:text("-");
-value(Value) when is_atom(Value) ->
-    ias_html:text(Value);
-value(Value) when is_integer(Value) ->
-    ias_html:text(Value);
-value(Value) ->
-    ias_html:text(Value).
