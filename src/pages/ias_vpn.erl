@@ -61,15 +61,23 @@ summary(Label, Value) ->
 peers_table([]) ->
     #panel{class = <<"ias-status-card">>, body = "No VPN peers reported."};
 peers_table(Peers) ->
+    Devices = ias_demo_data:devices(),
+    Profiles = ias_demo_data:profiles(),
     #panel{class = <<"ias-table-container">>, body = [
         #table{class = <<"ias-table">>,
-               header = header(["Peer", "Running", "Mode", "IP", "Remote Peer", "Trusted",
+               header = header(["Peer", "State", "Profile", "Authorized", "Reason",
+                                "Running", "Mode", "IP", "Remote Peer", "Trusted",
                                 "Key Match", "Expires", "Crypto Failures", "Frames Rejected"]),
-               body = #tbody{body = [peer_row(Peer) || Peer <- Peers]}}
+               body = #tbody{body = [peer_row(Peer, Devices, Profiles) || Peer <- Peers]}}
     ]}.
 
-peer_row(Peer) ->
+peer_row(Peer, Devices, Profiles) ->
+    Policy = policy_decision(Peer, Devices, Profiles),
     row([ias_vpn_runtime:field(Peer, [peer, id, name]),
+         ias_vpn_runtime:state(Peer),
+         maps:get(profile_id, Policy, undefined),
+         maps:get(authorized, Policy, false),
+         maps:get(reason, Policy, undefined),
          ias_vpn_runtime:field(Peer, [<<"running">>, running, is_running, status]),
          ias_vpn_runtime:field(Peer, [mode]),
          ias_vpn_runtime:field(Peer, [ip, address]),
@@ -79,6 +87,41 @@ peer_row(Peer) ->
          ias_vpn_runtime:certificate_field(Peer, [not_after, expires, expires_at]),
          ias_vpn_runtime:field(Peer, [crypto_failures]),
          ias_vpn_runtime:field(Peer, [frames_rejected])]).
+
+policy_decision(Peer, Devices, Profiles) ->
+    PeerId = ias_vpn_runtime:field(Peer, [<<"id">>, id, peer, name]),
+    ProfileId = profile_id(PeerId, Devices),
+    Profile = profile(ProfileId, Profiles),
+    case profile_allows_vpn(Profile) of
+        true ->
+            #{profile_id => ProfileId,
+              authorized => true,
+              reason => <<"profile allows vpn">>};
+        false ->
+            #{profile_id => ProfileId,
+              authorized => false,
+              reason => <<"vpn not permitted by profile">>}
+    end.
+
+profile_id(undefined, _Devices) ->
+    undefined;
+profile_id(PeerId, Devices) ->
+    case [Device || Device <- Devices,
+                    maps:get(vpn_peer, Device, undefined) =:= PeerId] of
+        [#{profile_id := ProfileId} | _] -> ProfileId;
+        _ -> undefined
+    end.
+
+profile(undefined, _Profiles) ->
+    #{};
+profile(ProfileId, Profiles) ->
+    case [Profile || Profile <- Profiles, maps:get(id, Profile) =:= ProfileId] of
+        [Profile | _] -> Profile;
+        [] -> #{}
+    end.
+
+profile_allows_vpn(Profile) ->
+    lists:member(vpn, maps:get(services, Profile, [])).
 
 header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
