@@ -1,77 +1,86 @@
 # IAS Runtime Modes
 
-IAS has two intentional operating modes:
+IAS deliberately has two operating modes:
 
-1. Static Preview Mode, served from `priv/static/*.htm`.
-2. Live Runtime Mode, rendered by Erlang, N2O and Nitro.
+1. **Static Preview Mode** served from `priv/static/*.htm`.
+2. **Live Runtime Mode** served by the Erlang/N2O/Nitro application.
 
-These modes must stay separate. Static preview is a distributable demo surface.
-Live runtime is the authoritative service surface for events, integrations and
-future certificate authority work.
+These modes must stay separate. Static Preview Mode is a distributable demo and
+review surface. Live Runtime Mode is the authoritative service surface for
+server-side eventing, integrations, validation, policy decisions and future CA,
+LDAP and NS workflows.
+
+## Why This Exists
+
+Static HTML previews are useful for IAS because the product flow can be reviewed
+without starting an Erlang node, a WebSocket session, VPN, CA or LDAP. This makes
+IAS easy to publish through GitHub Pages, inspect during code review and show as
+a serverless prototype.
+
+Live Runtime Mode is still required because the real product depends on behavior
+that static HTML cannot provide: server-side events, runtime service calls,
+validation, authorization, VPN integration and future CA/LDAP/NS workflows.
+
+The static mode is therefore a **preview artifact**. The live mode is the
+**runtime system**.
 
 ## Static Preview Mode
 
 Static Preview Mode is the standalone HTML prototype under `priv/static/*.htm`.
-It does not require an Erlang node, WebSocket session, N2O event loop or runtime
-backend services.
+It must be safe to open directly as HTML and to publish through GitHub Pages.
 
-Static preview should work as:
+Static Preview Mode should support:
 
-- A GitHub Pages demo.
-- A visual and navigation prototype for the IAS flows.
-- A static representation of demo users, devices, services, certificates,
-  security profiles, relationships and VPN status.
-- A static preview of certificate claim, certificate request, validation,
-  signing preview, certificate preview and policy evaluation screens.
-- A static preview of the reverse certificate-to-claims-to-authorization flow.
+- GitHub Pages publication.
+- Navigation between IAS prototype pages without an Erlang server.
+- Visual review of Users, Devices, Services, Certificates, Security Profiles,
+  Relationships, VPN, Issue Certificate and Verify Certificate screens.
+- Fixed demo data for IAS flows.
+- Non-authoritative static previews of:
+  - certificate claims;
+  - certificate request validation;
+  - CA signing preview;
+  - certificate preview;
+  - policy evaluation;
+  - certificate verification.
 
-Static preview may contain demo data, fixed tables and non-authoritative status
-text. It must remain safe to open directly as static HTML.
-
-Static preview should not be treated as an authoritative runtime because it does
-not own backend state, perform live validation, handle events, call the VPN
-admin API, issue certificates, verify private keys, enforce policy decisions or
-communicate with future CA and LDAP integrations.
+Static Preview Mode must not be treated as authoritative runtime behavior. It
+does not own backend state, perform live validation, read the VPN admin API,
+issue certificates, verify keys, enforce policies or communicate with future CA,
+LDAP or NS services.
 
 ## Live Runtime Mode
 
-Live Runtime Mode is the Erlang + N2O/Nitro application runtime. In the current
-source tree the live page implementations are Erlang modules under `src/pages`.
-The architectural runtime surface is the live IAS application, including the
-`/app/*.htm` routes when deployed through N2O.
+Live Runtime Mode is the Erlang + N2O/Nitro application runtime. The current live
+page implementations are Erlang modules under `src/pages`, exposed through the
+IAS application routes such as `/app/*.htm` when served by N2O.
 
-Live runtime is responsible for:
+Live Runtime Mode is responsible for:
 
-- N2O eventing and WebSocket updates.
+- N2O server-side eventing and WebSocket updates.
 - Nitro rendering.
 - Runtime navigation and page state.
-- VPN integration through the VPN admin API.
+- Runtime VPN integration through the VPN admin API.
 - Live VPN status and peer metadata.
-- Future CA integration.
-- Future LDAP integration.
 - Authoritative request validation and policy evaluation.
+- Future CA integration.
+- Future LDAP-backed identity/profile lookup.
+- Future NS/discovery integration.
 - Future certificate issuance workflows.
+- Future configuration import workflows such as OVPN import.
 
-All live-rendered text must continue to follow `docs/NITRO-RENDERING.md`.
-In particular, atoms and mixed text values must be converted before they are
-placed into Nitro bodies, text iolists must be collapsed explicitly, JavaScript
-HTML updates must be escaped correctly, and render paths such as `#replace{}`
-must keep binary/string/iolist handling explicit.
+All live-rendered text must follow `docs/NITRO-RENDERING.md`. In particular:
 
-## Why Both Modes Exist
+- atoms must be converted before rendering;
+- mixed text values must be collapsed to binaries before being passed to Nitro
+  element bodies;
+- lists in Nitro bodies must only be used intentionally for child elements;
+- multiline HTML sent through JavaScript updates must be escaped with
+  `nitro:js_escape/1`;
+- `#replace{}` and other render paths must keep binary/string/iolist handling
+  explicit.
 
-IAS needs a static preview because the product flow should be reviewable without
-starting an Erlang node or connecting runtime services. This makes the prototype
-easy to publish, inspect and share through GitHub Pages.
-
-IAS also needs a live runtime because the real product depends on behavior that
-static HTML cannot provide: event handling, runtime service calls, validation,
-authorization, VPN integration and future CA/LDAP workflows.
-
-The static mode is therefore a preview and demo artifact. The live mode is the
-service runtime.
-
-## Current IAS Flow
+## Current IAS Architecture Slice
 
 The forward IAS flow is:
 
@@ -94,50 +103,46 @@ Certificate
 -> Authorization
 ```
 
-Both flows may be represented in static preview, but runtime validation,
-eventing, integration and authorization semantics belong to live runtime.
+Both flows may be represented in Static Preview Mode, but runtime validation,
+eventing, integration and authorization semantics belong to Live Runtime Mode.
 
 ## Static vs Live Responsibilities
 
-Static Preview Mode should support:
+| Responsibility | Static Preview | Live Runtime |
+| --- | --- | --- |
+| Open without Erlang server | yes | no |
+| GitHub Pages demo | yes | no |
+| Fixed demo navigation | yes | yes |
+| Runtime N2O events | no | yes |
+| VPN admin API calls | no | yes |
+| Live VPN peer status | no | yes |
+| Request validation semantics | preview only | authoritative |
+| Policy evaluation semantics | preview only | authoritative |
+| Certificate issuance | no | future |
+| LDAP identity/profile lookup | no | future |
+| NS/discovery integration | no | future |
+| OVPN upload/parse/import | no | future |
 
-- Opening `priv/static/*.htm` without an Erlang server.
-- Demo navigation across IAS pages.
-- Static demo data for users, devices, services, certificates and profiles.
-- Static relationship views.
-- Static certificate issue and verification previews.
-- Static GitHub Pages publication.
-
-Live Runtime Mode should support:
-
-- Event-driven interactions.
-- Runtime data loading.
-- Runtime VPN status.
-- Mapping demo IAS records to live VPN peers.
-- Future CA signing and certificate issuance.
-- Future LDAP-backed identity/profile lookup.
-- Authoritative policy and authorization checks.
-
-Features that depend on backend state or external systems must be implemented in
-Live Runtime Mode first. Static Preview Mode may mirror the shape of those
-features only as non-authoritative demo HTML.
+Features that depend on backend state, external services or untrusted input must
+be implemented in Live Runtime Mode first. Static Preview Mode may mirror their
+shape only as fixed, non-authoritative demo HTML.
 
 ## GitHub Pages Demo
 
 The GitHub Pages demo should publish Static Preview Mode from `priv/static`.
-This is intentional and is not a runtime bug. The demo is useful for presenting
-the IAS information architecture and user journey without requiring deployment
-of Erlang, N2O, Nitro, VPN, CA or LDAP services.
+This is intentional. It is not a runtime bug if static `.htm` files can be opened
+and navigated without the Erlang VM.
 
-Any GitHub Pages content must avoid implying that static preview is performing
-live validation, issuing certificates, reading VPN state or enforcing policy.
+GitHub Pages content must not imply that the static preview is performing live
+validation, issuing certificates, reading VPN state, importing configurations or
+enforcing policy.
 
 ## Future Runtime Work
 
 ### OVPN Import Preview
 
-OVPN import is a future Live Runtime workflow. It must not be implemented as
-part of this document-only planning step.
+OVPN import is a future **Live Runtime Mode** workflow. It must not be
+implemented as static-only behavior.
 
 Planned flow:
 
@@ -151,20 +156,42 @@ Planned flow:
 -> map to VPN Service
 ```
 
-The future implementation should treat `.ovpn` input as untrusted runtime data.
-The parser should extract the OpenVPN configuration fields needed for an IAS
-preview, including CA material, client certificate material, private key
-presence, remote endpoints and routes.
+The implementation should treat `.ovpn` input as untrusted runtime data. The
+parser should extract only the data needed for preview and later import:
 
-The preview should then map extracted data to IAS concepts:
+- remote endpoint and port;
+- protocol intent;
+- route intent;
+- CA material presence;
+- client certificate identity and metadata;
+- private key presence, without persisting secret material during preview.
 
-- IAS Device: the client endpoint or peer identity represented by the config.
-- IAS Certificate: the certificate claims and certificate metadata extracted
-  from the config.
-- VPN Service: the OpenVPN service, remote endpoint and route intent represented
+The preview should map extracted data to IAS concepts:
+
+- **IAS Device**: client endpoint or peer identity represented by the config.
+- **IAS Certificate**: certificate identity and metadata derived from the config.
+- **VPN Service**: OpenVPN service, remote endpoint and route intent represented
   by the config.
 
-The import preview should remain a preview until live runtime validation,
-authorization rules and certificate/key handling semantics are defined. Static
-preview may later show a fixed demonstration of the flow, but authoritative
-parsing and mapping belong to Live Runtime Mode.
+OVPN files usually do not directly contain IAS policy claims. Claims should be
+resolved later by IAS through Security Profiles, certificate metadata and policy
+rules.
+
+The import workflow should remain a preview until validation, authorization and
+secret-handling semantics are defined. Static Preview Mode may later show a fixed
+demonstration of the flow, but authoritative parsing and mapping belong to Live
+Runtime Mode.
+
+### JSON Compatibility
+
+IAS currently uses `jiffy` because OTP 25 is still supported. If JSON handling
+needs to change for newer OTP versions, add a small compatibility layer such as
+`ias_json` and route JSON encode/decode calls through it. Do not scatter direct
+JSON library calls across page modules.
+
+### Runtime Composition
+
+IAS should communicate with VPN through runtime APIs/events rather than requiring
+VPN as a hard Erlang dependency. A future development launcher or deployment
+profile may start IAS, VPN, CA, LDAP and NS together, but service coupling should
+remain explicit.
