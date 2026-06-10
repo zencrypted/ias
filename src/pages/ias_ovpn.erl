@@ -52,6 +52,14 @@ preview_panel(Preview) ->
                    {"Has inline Certificate block", maps:get(has_cert, Preview, false)},
                    {"Has inline Private Key block", maps:get(has_key, Preview, false)}
                ]),
+               #h3{body = ias_html:text("Extracted Config")},
+               key_value_table([
+                   {"Remote Host", missing_text(maps:get(remote_host, Preview, not_found))},
+                   {"Remote Port", missing_text(maps:get(remote_port, Preview, not_found))},
+                   {"Protocol", missing_text(maps:get(proto, Preview, not_found))},
+                   {"Device", missing_text(maps:get(dev, Preview, not_found))},
+                   {"Route Count", maps:get(route_count, Preview, 0)}
+               ]),
                #h3{body = ias_html:text("Future Mapping")},
                key_value_table([
                    {"IAS Device Preview", pending},
@@ -71,3 +79,8 @@ key_value_row(Label, Value) ->
         #th{body = ias_html:text(Label)},
         #td{body = ias_html:text(Value)}
     ]}.
+
+missing_text(not_found) ->
+    <<"not found">>;
+missing_text(Value) ->
+    Value.

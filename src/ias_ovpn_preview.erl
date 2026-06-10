@@ -7,7 +7,12 @@ analyze(Input) ->
       lines => line_count(Text),
       has_ca => has_block(Text, <<"ca">>),
       has_cert => has_block(Text, <<"cert">>),
-      has_key => has_block(Text, <<"key">>)}.
+      has_key => has_block(Text, <<"key">>),
+      remote_host => remote_host(Text),
+      remote_port => remote_port(Text),
+      proto => first_directive_value(Text, <<"proto">>),
+      dev => first_directive_value(Text, <<"dev">>),
+      route_count => route_count(Text)}.
 
 input_text(undefined) ->
     <<>>;
@@ -20,6 +25,57 @@ detected(Text) ->
 has_directive_line(Text) ->
     nomatch =/= re:run(Text, <<"(?im)^\\s*(remote|proto|dev|client)(\\s|$)">>,
                        [{capture, none}]).
+
+remote_host(Text) ->
+    case remote_parts(Text) of
+        [Host | _] -> Host;
+        _ -> not_found
+    end.
+
+remote_port(Text) ->
+    case remote_parts(Text) of
+        [_Host, Port | _] -> Port;
+        _ -> not_found
+    end.
+
+remote_parts(Text) ->
+    case first_directive_parts(Text, <<"remote">>) of
+        not_found -> [];
+        Parts -> Parts
+    end.
+
+first_directive_value(Text, Directive) ->
+    case first_directive_parts(Text, Directive) of
+        [Value | _] -> Value;
+        _ -> not_found
+    end.
+
+first_directive_parts(Text, Directive) ->
+    Lines = binary:split(normalize_newlines(Text), <<"\n">>, [global]),
+    first_directive_parts_from_lines(Lines, Directive).
+
+first_directive_parts_from_lines([], _Directive) ->
+    not_found;
+first_directive_parts_from_lines([Line | Rest], Directive) ->
+    case directive_parts(Line, Directive) of
+        not_found -> first_directive_parts_from_lines(Rest, Directive);
+        Parts -> Parts
+    end.
+
+directive_parts(Line, Directive) ->
+    Clean = strip_inline_comment(Line),
+    Parts = binary:split(string:trim(Clean), <<" ">>, [global, trim_all]),
+    case Parts of
+        [Directive | Values] when Values =/= [] -> Values;
+        _ -> not_found
+    end.
+
+strip_inline_comment(Line) ->
+    hd(binary:split(Line, <<"#">>)).
+
+route_count(Text) ->
+    Lines = binary:split(normalize_newlines(Text), <<"\n">>, [global]),
+    length([Line || Line <- Lines, directive_parts(Line, <<"route">>) =/= not_found]).
 
 has_any_inline_block(Text) ->
     has_block(Text, <<"ca">>) orelse has_block(Text, <<"cert">>) orelse
