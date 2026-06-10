@@ -28,10 +28,10 @@ form_panel() ->
                   placeholder = ias_html:text("Paste .ovpn content here"),
                   body = ias_html:text("")},
         #panel{body = [
-            #input{id = ovpn_upload_placeholder,
-                   type = <<"button">>,
-                   value = ias_html:text("Upload .ovpn (coming later)"),
-                   disabled = true},
+            #input{id = ovpn_file,
+                   type = <<"file">>,
+                   accept = <<".ovpn,text/plain">>,
+                   onchange = file_upload_js()},
             #link{id = ovpn_preview_button,
                   class = [button, sgreen],
                   body = ias_html:text("Preview"),
@@ -87,3 +87,16 @@ missing_text(not_found) ->
     <<"not found">>;
 missing_text(Value) ->
     Value.
+
+file_upload_js() ->
+    <<
+        "var file=this.files && this.files[0];",
+        "if (!file) { return false; }",
+        "var reader=new FileReader();",
+        "reader.onload=function(e) {",
+        "var target=document.getElementById('ovpn_text');",
+        "if (target) { target.value=e.target.result || ''; }",
+        "};",
+        "reader.readAsText(file);",
+        "return false;"
+    >>.
