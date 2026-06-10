@@ -63,11 +63,28 @@ preview_panel(Preview) ->
                    {"Cipher", missing_text(maps:get(cipher, Preview, not_found))},
                    {"Compression", maps:get(compression, Preview, false)}
                ]),
-               #h3{body = ias_html:text("Future Mapping")},
+               #h3{body = ias_html:text("IAS Device Preview")},
                key_value_table([
-                   {"IAS Device Preview", pending},
-                   {"IAS Certificate Preview", pending},
-                   {"VPN Service Preview", pending}
+                   {"Type", <<"vpn-client">>},
+                   {"Endpoint", endpoint(Preview)},
+                   {"Transport", missing_text(maps:get(proto, Preview, not_found))},
+                   {"Tunnel Device", missing_text(maps:get(dev, Preview, not_found))}
+               ]),
+               #h3{body = ias_html:text("IAS Certificate Preview")},
+               key_value_table([
+                   {"CA", presence(maps:get(has_ca, Preview, false))},
+                   {"Client Certificate", presence(maps:get(has_cert, Preview, false))},
+                   {"Private Key", presence(maps:get(has_key, Preview, false))},
+                   {"TLS Auth", presence(maps:get(tls_auth, Preview, false))}
+               ]),
+               #h3{body = ias_html:text("VPN Service Preview")},
+               key_value_table([
+                   {"Service", <<"OpenVPN">>},
+                   {"Remote", endpoint(Preview)},
+                   {"Protocol", missing_text(maps:get(proto, Preview, not_found))},
+                   {"Cipher", missing_text(maps:get(cipher, Preview, not_found))},
+                   {"Compression", compression(maps:get(compression, Preview, false))},
+                   {"Routes", maps:get(route_count, Preview, 0)}
                ])
            ]}.
 
@@ -87,6 +104,25 @@ missing_text(not_found) ->
     <<"not found">>;
 missing_text(Value) ->
     Value.
+
+endpoint(Preview) ->
+    Host = maps:get(remote_host, Preview, not_found),
+    Port = maps:get(remote_port, Preview, not_found),
+    case {Host, Port} of
+        {not_found, _} -> <<"not found">>;
+        {_, not_found} -> <<"not found">>;
+        _ -> ias_html:join([Host, <<":">>, Port])
+    end.
+
+presence(true) ->
+    <<"present">>;
+presence(false) ->
+    <<"missing">>.
+
+compression(true) ->
+    <<"enabled">>;
+compression(false) ->
+    <<"disabled">>.
 
 file_upload_js() ->
     <<
