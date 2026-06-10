@@ -137,6 +137,8 @@ file_upload_js() ->
         "reader.onload=function(e) {",
         "var target=document.getElementById('ovpn_text');",
         "if (target) { target.value=e.target.result || ''; }",
+        "var preview=document.getElementById('ovpn_preview_button');",
+        "if (preview) { preview.click(); }",
         "};",
         "reader.readAsText(file);",
         "return false;"
