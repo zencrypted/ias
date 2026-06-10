@@ -58,7 +58,10 @@ preview_panel(Preview) ->
                    {"Remote Port", missing_text(maps:get(remote_port, Preview, not_found))},
                    {"Protocol", missing_text(maps:get(proto, Preview, not_found))},
                    {"Device", missing_text(maps:get(dev, Preview, not_found))},
-                   {"Route Count", maps:get(route_count, Preview, 0)}
+                   {"Route Count", maps:get(route_count, Preview, 0)},
+                   {"TLS Auth", maps:get(tls_auth, Preview, false)},
+                   {"Cipher", missing_text(maps:get(cipher, Preview, not_found))},
+                   {"Compression", maps:get(compression, Preview, false)}
                ]),
                #h3{body = ias_html:text("Future Mapping")},
                key_value_table([

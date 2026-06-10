@@ -12,7 +12,10 @@ analyze(Input) ->
       remote_port => remote_port(Text),
       proto => first_directive_value(Text, <<"proto">>),
       dev => first_directive_value(Text, <<"dev">>),
-      route_count => route_count(Text)}.
+      route_count => route_count(Text),
+      tls_auth => directive_exists(Text, <<"tls-auth">>),
+      cipher => first_directive_value(Text, <<"cipher">>),
+      compression => directive_exists(Text, <<"comp-lzo">>)}.
 
 input_text(undefined) ->
     <<>>;
@@ -35,7 +38,7 @@ remote_host(Text) ->
 remote_port(Text) ->
     case remote_parts(Text) of
         [_Host, Port | _] -> Port;
-        _ -> not_found
+        _ -> first_directive_value(Text, <<"port">>)
     end.
 
 remote_parts(Text) ->
@@ -76,6 +79,18 @@ strip_inline_comment(Line) ->
 route_count(Text) ->
     Lines = binary:split(normalize_newlines(Text), <<"\n">>, [global]),
     length([Line || Line <- Lines, directive_parts(Line, <<"route">>) =/= not_found]).
+
+directive_exists(Text, Directive) ->
+    Lines = binary:split(normalize_newlines(Text), <<"\n">>, [global]),
+    lists:any(fun(Line) -> directive_present(Line, Directive) end, Lines).
+
+directive_present(Line, Directive) ->
+    Clean = strip_inline_comment(Line),
+    Parts = binary:split(string:trim(Clean), <<" ">>, [global, trim_all]),
+    case Parts of
+        [Directive | _] -> true;
+        _ -> false
+    end.
 
 has_any_inline_block(Text) ->
     has_block(Text, <<"ca">>) orelse has_block(Text, <<"cert">>) orelse
