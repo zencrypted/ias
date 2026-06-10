@@ -29,14 +29,14 @@ form_panel() ->
                   body = ias_html:text("")},
         #panel{body = [
             #input{id = ovpn_file,
-                   type = <<"file">>,
-                   accept = <<".ovpn,text/plain">>,
-                   onchange = file_upload_js()},
+                type = <<"file">>,
+                accept = <<".ovpn">>,
+                onchange = file_upload_js()},
             #link{id = ovpn_preview_button,
-                  class = [button, sgreen],
-                  body = ias_html:text("Preview"),
-                  source = [ovpn_text],
-                  postback = preview}
+                class = [button, sgreen],
+                body = ias_html:text("Preview"),
+                source = [ovpn_text],
+                postback = preview}
         ]}
     ]}.
 
@@ -92,6 +92,11 @@ file_upload_js() ->
     <<
         "var file=this.files && this.files[0];",
         "if (!file) { return false; }",
+        "if (!file.name || !file.name.toLowerCase().endsWith('.ovpn')) {",
+        "alert('Please select an .ovpn file.');",
+        "this.value='';",
+        "return false;",
+        "}",
         "var reader=new FileReader();",
         "reader.onload=function(e) {",
         "var target=document.getElementById('ovpn_text');",
