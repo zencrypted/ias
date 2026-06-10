@@ -99,6 +99,23 @@ preview_panel(Preview) ->
                    {"Cipher", missing_text(maps:get(cipher, Preview, not_found))},
                    {"Compression", compression(maps:get(compression, Preview, false))},
                    {"Routes", maps:get(route_count, Preview, 0)}
+               ]),
+               #h3{body = ias_html:text("Import Plan Preview")},
+               key_value_table([
+                   {"Device Action", <<"create preview">>},
+                   {"Device Type", <<"vpn-client">>},
+                   {"Device Endpoint", endpoint(Preview)},
+                   {"Certificate Action", <<"register preview">>},
+                   {"CA", presence(maps:get(has_ca, Preview, false))},
+                   {"Client Certificate", presence(maps:get(has_cert, Preview, false))},
+                   {"Private Key", private_key_plan(maps:get(has_key, Preview, false))},
+                   {"TLS Auth", presence(maps:get(tls_auth, Preview, false))},
+                   {"VPN Service Action", <<"bind preview">>},
+                   {"VPN Service", <<"OpenVPN">>},
+                   {"VPN Remote", endpoint(Preview)},
+                   {"VPN Protocol", missing_text(maps:get(proto, Preview, not_found))},
+                   {"VPN Cipher", missing_text(maps:get(cipher, Preview, not_found))},
+                   {"Status", <<"preview only - no changes were applied">>}
                ])
            ]}.
 
@@ -137,6 +154,11 @@ compression(true) ->
     <<"enabled">>;
 compression(false) ->
     <<"disabled">>.
+
+private_key_plan(true) ->
+    <<"present but not stored">>;
+private_key_plan(false) ->
+    <<"missing">>.
 
 file_upload_js() ->
     <<
