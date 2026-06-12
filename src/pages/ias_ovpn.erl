@@ -10,7 +10,7 @@ event(preview) ->
     nitro:update(ovpn_preview_result, preview_panel(Preview));
 event(import_demo) ->
     Preview = ias_ovpn_preview:analyze(nitro:q(ovpn_text)),
-    nitro:update(ovpn_preview_result, preview_panel(Preview, demo_import_panel(Preview)));
+    nitro:update(ovpn_preview_result, preview_panel(Preview, [demo_import_panel(Preview)]));
 event(_) ->
     ok.
 
