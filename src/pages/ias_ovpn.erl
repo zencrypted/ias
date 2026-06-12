@@ -154,11 +154,17 @@ demo_import_panel(Preview) ->
                ]),
                #panel{style = <<"display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">>,
                       body = [
-                          #link{class = [button], url = <<"/app/devices.htm">>, body = ias_html:text("View Devices")},
-                          #link{class = [button], url = <<"/app/certificates.htm">>, body = ias_html:text("View Certificates")},
-                          #link{class = [button], url = <<"/app/services.htm">>, body = ias_html:text("View Services")}
+                          demo_result_link(<<"/app/devices.htm">>, "View Devices"),
+                          demo_result_link(<<"/app/certificates.htm">>, "View Certificates"),
+                          demo_result_link(<<"/app/services.htm">>, "View Services")
                       ]}
            ]}.
+
+
+demo_result_link(Url, Label) ->
+    #link{url = Url,
+          style = <<"display:inline-block;padding:7px 10px;border:1px solid #93c5fd;border-radius:5px;background:#ffffff;color:#1d4ed8;text-decoration:none;font-size:12px;font-weight:600;">>,
+          body = ias_html:text(Label)}.
 
 certificate_result(Preview) ->
     ias_html:join([
