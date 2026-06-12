@@ -8,6 +8,9 @@ event(init) ->
 event(preview) ->
     Preview = ias_ovpn_preview:analyze(nitro:q(ovpn_text)),
     nitro:update(ovpn_preview_result, preview_panel(Preview));
+event(import_demo) ->
+    Preview = ias_ovpn_preview:analyze(nitro:q(ovpn_text)),
+    nitro:update(ovpn_preview_result, preview_panel(Preview, demo_import_panel(Preview)));
 event(_) ->
     ok.
 
@@ -55,6 +58,9 @@ form_panel() ->
     ]}.
 
 preview_panel(Preview) ->
+    preview_panel(Preview, []).
+
+preview_panel(Preview, ExtraBody) ->
     #panel{id = ovpn_preview_result,
            class = <<"ias-status-card">>,
            body = [
@@ -116,8 +122,60 @@ preview_panel(Preview) ->
                    {"VPN Protocol", missing_text(maps:get(proto, Preview, not_found))},
                    {"VPN Cipher", missing_text(maps:get(cipher, Preview, not_found))},
                    {"Status", <<"preview only - no changes were applied">>}
-               ])
+               ]),
+               import_demo_button()
+           ] ++ ExtraBody}.
+
+
+import_demo_button() ->
+    #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
+           body = [
+               #link{id = ovpn_import_demo_button,
+                     class = [button, sgreen],
+                     body = ias_html:text("Import as Demo"),
+                     source = [ovpn_text],
+                     postback = import_demo},
+               #span{style = <<"font-size:12px;color:#64748b;">>,
+                     body = ias_html:text("Demo import only. No IAS state is persisted.")}
            ]}.
+
+demo_import_panel(Preview) ->
+    #panel{style = <<"margin-top:16px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #h3{body = ias_html:text("Demo Import Result")},
+               #p{style = <<"font-size:12px;margin:0 0 10px;color:#166534;">>,
+                  body = ias_html:text("Demo import completed. Objects were rendered for preview only and were not persisted.")},
+               key_value_table([
+                   {"Device", ias_html:join([<<"vpn-client " >>, endpoint(Preview)])},
+                   {"Certificate", certificate_result(Preview)},
+                   {"VPN Service", vpn_service_result(Preview)},
+                   {"Private Key", private_key_plan(maps:get(has_key, Preview, false))},
+                   {"Status", <<"demo only - no changes were applied">>}
+               ]),
+               #panel{style = <<"display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">>,
+                      body = [
+                          #link{class = [button], url = <<"/app/devices.htm">>, body = ias_html:text("View Devices")},
+                          #link{class = [button], url = <<"/app/certificates.htm">>, body = ias_html:text("View Certificates")},
+                          #link{class = [button], url = <<"/app/services.htm">>, body = ias_html:text("View Services")}
+                      ]}
+           ]}.
+
+certificate_result(Preview) ->
+    ias_html:join([
+        <<"CA " >>, presence(maps:get(has_ca, Preview, false)),
+        <<", client certificate " >>, presence(maps:get(has_cert, Preview, false)),
+        <<", TLS auth " >>, presence(maps:get(tls_auth, Preview, false))
+    ]).
+
+vpn_service_result(Preview) ->
+    ias_html:join([
+        <<"OpenVPN " >>,
+        missing_text(maps:get(proto, Preview, not_found)),
+        <<" " >>,
+        endpoint(Preview),
+        <<", cipher " >>,
+        missing_text(maps:get(cipher, Preview, not_found))
+    ]).
 
 key_value_table(Rows) ->
     #panel{class = <<"ias-table-container">>, body = [
