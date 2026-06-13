@@ -23,6 +23,7 @@ route(<<"app/relationships", _/binary>>) -> ias_relationships;
 route(<<"app/vpn",          _/binary>>) -> ias_vpn;
 route(<<"app/ovpn",         _/binary>>) -> ias_ovpn;
 route(<<"app/demo",         _/binary>>) -> ias_demo;
+route(<<"app/enroll",       _/binary>>) -> ias_enroll;
 route(<<"app/issue",        _/binary>>) -> ias_issue_cert;
 route(<<"app/verify",       _/binary>>) -> ias_verify_cert;
 route(_)                                 -> ias_index.
