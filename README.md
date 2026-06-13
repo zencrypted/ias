@@ -53,6 +53,7 @@ Documentation
 
 * [Runtime modes](docs/RUNTIME-MODES.md) describes the split between static GitHub Pages previews and the live Erlang/N2O runtime.
 * [Nitro rendering rules](docs/NITRO-RENDERING.md) documents safe text rendering rules for IAS/Nitro pages.
+* [Local CA/CMP test harness](docs/CA-CMP-LOCAL.md) documents the OTP 28 CA runtime and OpenSSL 3 CMP enrollment test.
 
 VPN Integration
 ---------------
