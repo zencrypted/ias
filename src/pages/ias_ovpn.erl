@@ -13,7 +13,7 @@ event(import_plan) ->
     nitro:update(ovpn_preview_result, preview_panel(Preview, [import_plan_panel(Preview)]));
 event(import_demo) ->
     Preview = ias_ovpn_preview:analyze(nitro:q(ovpn_text)),
-    ImportId = ias_demo_store:add_import(import_map(Preview)),
+    ImportId = ias_demo_store:add_import(ias_ovpn_import:import_map(Preview)),
     nitro:update(ovpn_preview_result, preview_panel(Preview, [demo_import_panel(Preview, ImportId)]));
 event(_) ->
     ok.
@@ -214,22 +214,6 @@ vpn_service_result(Preview) ->
         <<", cipher " >>,
         missing_text(maps:get(cipher, Preview, not_found))
     ]).
-
-import_map(Preview) ->
-    #{device => #{type => <<"vpn-client">>,
-                  endpoint => endpoint(Preview),
-                  transport => missing_text(maps:get(proto, Preview, not_found)),
-                  tunnel_device => missing_text(maps:get(dev, Preview, not_found))},
-      certificate => #{ca_present => maps:get(has_ca, Preview, false),
-                       client_certificate_present => maps:get(has_cert, Preview, false),
-                       private_key_present => maps:get(has_key, Preview, false),
-                       tls_auth_present => maps:get(tls_auth, Preview, false)},
-      vpn_service => #{service => openvpn,
-                       remote => endpoint(Preview),
-                       protocol => missing_text(maps:get(proto, Preview, not_found)),
-                       cipher => missing_text(maps:get(cipher, Preview, not_found)),
-                       compression => maps:get(compression, Preview, false),
-                       routes => maps:get(route_count, Preview, 0)}}.
 
 key_value_table(Rows) ->
     #panel{class = <<"ias-table-container">>, body = [
