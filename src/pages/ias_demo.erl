@@ -66,10 +66,19 @@ rows(#{kind := device} = Object) ->
     ] ++ created_row(Object);
 rows(#{kind := certificate} = Object) ->
     common_rows(Object) ++ [
+        {"Subject", maps:get(subject, Object, undefined)},
+        {"Issuer", maps:get(issuer, Object, undefined)},
+        {"Not Before", maps:get(not_before, Object, undefined)},
+        {"Not After", maps:get(not_after, Object, undefined)},
+        {"Requested CN", maps:get(requested_cn, Object, undefined)},
+        {"Enrollment CN", maps:get(enrollment_cn, Object, undefined)},
+        {"Profile", maps:get(profile, Object, undefined)},
+        {"CMP Server", maps:get(cmp_server, Object, undefined)},
         {"CA Present", maps:get(ca_present, Object, false)},
         {"Client Certificate Present", maps:get(client_certificate_present, Object, false)},
         {"Private Key Present", maps:get(private_key_present, Object, false)},
         {"Private Key Stored", maps:get(private_key_stored, Object, false)},
+        {"Certificate Body Stored", maps:get(certificate_body_stored, Object, false)},
         {"TLS Auth Present", maps:get(tls_auth_present, Object, false)}
     ] ++ created_row(Object);
 rows(#{kind := vpn_service} = Object) ->

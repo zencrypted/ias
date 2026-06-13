@@ -65,7 +65,9 @@ run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, EnrollmentCN, Curve, Server,
     ],
     run_steps(OpenSSL, Steps, #{
         requested_cn => ias_html:text(CommonName),
-        enrollment_cn => ias_html:text(EnrollmentCN)
+        enrollment_cn => ias_html:text(EnrollmentCN),
+        profile => ias_html:text(Curve),
+        cmp_server => ias_html:text(Server)
     }).
 
 run_steps(_OpenSSL, [], #{metadata := Metadata} = State) ->

@@ -111,13 +111,16 @@ imported_certificates([]) ->
 imported_certificates(Records) ->
     table([
         #table{class = <<"ias-table">>,
-               header = header(["ID", "CA", "Client Certificate", "Private Key Present",
-                                "Private Key Stored", "TLS Auth", "Source", "Import ID"]),
+               header = header(["ID", "Subject", "Issuer", "CA", "Client Certificate",
+                                "Private Key Present", "Private Key Stored", "TLS Auth",
+                                "Source", "Import ID"]),
                body = #tbody{body = [imported_certificate_row(Record) || Record <- Records]}}
     ]).
 
 imported_certificate_row(Record) ->
     row([demo_link(maps:get(id, Record, undefined)),
+         maps:get(subject, Record, <<"not found">>),
+         maps:get(issuer, Record, <<"not found">>),
          maps:get(ca_present, Record, false),
          maps:get(client_certificate_present, Record, false),
          maps:get(private_key_present, Record, false),
