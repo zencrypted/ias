@@ -36,9 +36,17 @@ remote_host(Text) ->
     end.
 
 remote_port(Text) ->
-    case remote_parts(Text) of
+    port_value(case remote_parts(Text) of
         [_Host, Port | _] -> Port;
         _ -> first_directive_value(Text, <<"port">>)
+    end).
+
+port_value(not_found) ->
+    not_found;
+port_value(Port) ->
+    case string:to_integer(binary_to_list(ias_html:text(Port))) of
+        {Integer, ""} -> Integer;
+        _ -> Port
     end.
 
 remote_parts(Text) ->

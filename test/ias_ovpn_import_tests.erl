@@ -12,7 +12,7 @@ preview_extraction_test() ->
     Preview = fixture_preview(),
     ?assertEqual(true, maps:get(detected, Preview)),
     ?assertEqual(<<"example.com">>, maps:get(remote_host, Preview)),
-    ?assertEqual(<<"1194">>, maps:get(remote_port, Preview)),
+    ?assertEqual(1194, maps:get(remote_port, Preview)),
     ?assertEqual(<<"udp">>, maps:get(proto, Preview)),
     ?assertEqual(<<"tun">>, maps:get(dev, Preview)),
     ?assertEqual(0, maps:get(route_count, Preview)),
