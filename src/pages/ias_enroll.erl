@@ -14,12 +14,14 @@ event(enroll) ->
     CommonName = field_value(nitro:q(enroll_common_name), <<"vpn-client">>),
     Profile = field_value(nitro:q(enroll_profile), <<"secp384r1">>),
     CmpServer = field_value(nitro:q(enroll_cmp_server), <<"127.0.0.1:8829">>),
+    EnrollmentCN = ias_cmp_enrollment:enrollment_cn(CommonName),
     Result = ias_cmp_enrollment:enroll(#{
         common_name => CommonName,
+        enrollment_common_name => EnrollmentCN,
         profile => Profile,
         server => CmpServer
     }),
-    nitro:update(enroll_preview_result, preview_panel(CommonName, Profile, CmpServer, Result));
+    nitro:update(enroll_preview_result, preview_panel(CommonName, EnrollmentCN, Profile, CmpServer, Result));
 event(_) ->
     ok.
 
@@ -70,15 +72,17 @@ input_row(Label, Id, Value) ->
            ]}.
 
 preview_panel(CommonName, Profile, CmpServer) ->
-    preview_panel(CommonName, Profile, CmpServer, preview).
+    preview_panel(CommonName, CommonName, Profile, CmpServer, preview).
 
-preview_panel(CommonName, Profile, CmpServer, Enrollment) ->
+preview_panel(CommonName, EnrollmentCN, Profile, CmpServer, Enrollment) ->
     #panel{id = enroll_preview_result,
            class = <<"ias-status-card">>,
            body = [
                #h3{body = ias_html:text("CSR Preview")},
                key_value_table([
-                   {"Subject", ias_html:join([<<"CN=">>, CommonName])},
+                   {"Requested CN", CommonName},
+                   {"Enrollment CN", EnrollmentCN},
+                   {"Subject", ias_html:join([<<"CN=">>, EnrollmentCN])},
                    {"Key Type", <<"EC">>},
                    {"Curve", Profile},
                    {"CSR Status", csr_status(Enrollment)}

@@ -1,5 +1,5 @@
 -module(ias_cmp_enrollment).
--export([enroll/1]).
+-export([enroll/1, enrollment_cn/1]).
 -include_lib("kernel/include/file.hrl").
 
 -define(DEFAULT_OPENSSL, "opt/openssl-3/bin/openssl").
@@ -8,19 +8,20 @@
 -define(DEFAULT_SECRET, "0000").
 
 enroll(#{common_name := CommonName,
+         enrollment_common_name := EnrollmentCN,
          profile := Curve,
          server := Server}) ->
     with_temp_dir(fun(Dir) ->
         case ca_available(Server) of
-            ok -> enroll_with_openssl(Dir, CommonName, Curve, Server);
+            ok -> enroll_with_openssl(Dir, CommonName, EnrollmentCN, Curve, Server);
             {error, ca_unavailable} -> {error, ca_unavailable}
         end
     end).
 
-enroll_with_openssl(Dir, CommonName, Curve, Server) ->
+enroll_with_openssl(Dir, CommonName, EnrollmentCN, Curve, Server) ->
     OpenSSL = openssl_path(),
     CaOpenSSLDir = ca_openssl_dir(),
-    Name = enrollment_name(CommonName),
+    Name = enrollment_name(EnrollmentCN),
     Params = filename:join(Dir, ias_html:join([Name, <<".ecparams.pem">>])),
     Key = filename:join(Dir, ias_html:join([Name, <<".key.enc">>])),
     Csr = filename:join(Dir, ias_html:join([Name, <<".csr">>])),
@@ -29,7 +30,7 @@ enroll_with_openssl(Dir, CommonName, Curve, Server) ->
         true ->
             case filelib:is_dir(CaOpenSSLDir) of
                 true ->
-                    run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, Curve, Server,
+                    run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, EnrollmentCN, Curve, Server,
                               Params, Key, Csr, Cert);
                 false ->
                     {error, ias_html:join([<<"CA OpenSSL directory not found: ">>,
@@ -40,7 +41,7 @@ enroll_with_openssl(Dir, CommonName, Curve, Server) ->
                                    ias_html:text(OpenSSL)])}
     end.
 
-run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, Curve, Server,
+run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, EnrollmentCN, Curve, Server,
           Params, Key, Csr, Cert) ->
     Steps = [
         {ecparams, Dir, [<<"ecparam">>, <<"-name">>, Curve, <<"-out">>, Params]},
@@ -49,7 +50,7 @@ run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, Curve, Server,
                <<"-keyout">>, Key,
                <<"-passout">>, <<"pass:0">>,
                <<"-out">>, Csr,
-               <<"-subj">>, subject(CommonName)]},
+               <<"-subj">>, subject(EnrollmentCN)]},
         {cmp, CaOpenSSLDir, [<<"cmp">>,
                <<"-cmd">>, <<"p10cr">>,
                <<"-server">>, Server,
@@ -62,10 +63,13 @@ run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, Curve, Server,
         {metadata, Dir, [<<"x509">>, <<"-in">>, Cert,
                          <<"-noout">>, <<"-subject">>, <<"-issuer">>, <<"-dates">>]}
     ],
-    run_steps(OpenSSL, Steps, #{}).
+    run_steps(OpenSSL, Steps, #{
+        requested_cn => ias_html:text(CommonName),
+        enrollment_cn => ias_html:text(EnrollmentCN)
+    }).
 
-run_steps(_OpenSSL, [], #{metadata := Metadata}) ->
-    parse_metadata(Metadata);
+run_steps(_OpenSSL, [], #{metadata := Metadata} = State) ->
+    {ok, maps:merge(maps:without([metadata], State), parse_metadata(Metadata))};
 run_steps(OpenSSL, [{metadata, Cwd, Args} | Rest], State) ->
     case run(OpenSSL, Args, Cwd) of
         {ok, Output} -> run_steps(OpenSSL, Rest, State#{metadata => Output});
@@ -104,12 +108,12 @@ collect(Port, Acc) ->
 
 parse_metadata(Output) ->
     Lines = binary:split(Output, <<"\n">>, [global, trim_all]),
-    {ok, #{
+    #{
         subject => metadata_value(<<"subject=">>, Lines),
         issuer => metadata_value(<<"issuer=">>, Lines),
         not_before => metadata_value(<<"notBefore=">>, Lines),
         not_after => metadata_value(<<"notAfter=">>, Lines)
-    }}.
+    }.
 
 metadata_value(Prefix, Lines) ->
     case [Value || Line <- Lines,
@@ -177,10 +181,19 @@ temp_name() ->
                                 [erlang:system_time(millisecond),
                                  erlang:unique_integer([positive])])).
 
+enrollment_cn(CommonName) ->
+    ias_html:join([ias_html:text(CommonName), <<"-">>, timestamp(), <<"-">>,
+                   ias_html:text(erlang:unique_integer([positive]))]).
+
 enrollment_name(CommonName) ->
     ias_html:join([file_stem(CommonName), <<"_">>,
                    ias_html:text(erlang:system_time(millisecond)), <<"_">>,
                    ias_html:text(erlang:unique_integer([positive]))]).
+
+timestamp() ->
+    {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:local_time(),
+    ias_html:text(io_lib:format("~4..0B~2..0B~2..0B-~2..0B~2..0B~2..0B",
+                                [Year, Month, Day, Hour, Minute, Second])).
 
 file_stem(Value) ->
     file_stem(ias_html:text(Value), <<>>).
