@@ -23,9 +23,15 @@ event(enroll) ->
     }),
     nitro:update(enroll_preview_result, preview_panel(CommonName, EnrollmentCN, Profile, CmpServer, Result));
 event(import_cert_demo) ->
-    Certificate = certificate_demo_object(),
-    Stored = ias_demo_store:add_certificate(Certificate),
-    nitro:update(enroll_import_result, certificate_import_result(Stored));
+    EnrollmentId = field_value(nitro:q(enroll_import_enrollment_id), <<"not found">>),
+    case ias_demo_store:get_enrollment_result(EnrollmentId) of
+        {ok, Enrollment} ->
+            Certificate = certificate_demo_object(Enrollment),
+            Stored = ias_demo_store:add_certificate(Certificate),
+            nitro:update(enroll_import_result, certificate_import_result(Stored));
+        not_found ->
+            nitro:update(enroll_import_result, certificate_import_not_found())
+    end;
 event(_) ->
     ok.
 
@@ -110,6 +116,7 @@ issued_certificate_table(preview) ->
         {"Future Result", <<"X.509 certificate">>}
     ]);
 issued_certificate_table({ok, Certificate}) ->
+    EnrollmentId = ias_demo_store:add_enrollment_result(Certificate),
     #panel{body = [
         key_value_table([
             {"Status", <<"issued">>},
@@ -118,7 +125,7 @@ issued_certificate_table({ok, Certificate}) ->
             {"Not Before", maps:get(not_before, Certificate, <<"not found">>)},
             {"Not After", maps:get(not_after, Certificate, <<"not found">>)}
         ]),
-        certificate_import_controls(Certificate)
+        certificate_import_controls(EnrollmentId)
     ]};
 issued_certificate_table({error, ca_unavailable}) ->
     key_value_table([
@@ -138,55 +145,37 @@ csr_status({error, _Reason}) ->
 csr_status(preview) ->
     <<"planned">>.
 
-certificate_import_controls(Certificate) ->
+certificate_import_controls(EnrollmentId) ->
     #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
-           body = hidden_certificate_fields(Certificate) ++ [
+           body = [
+               hidden(enroll_import_enrollment_id, EnrollmentId),
                #link{id = enroll_import_cert_button,
                      class = [button, sgreen],
                      body = ias_html:text("Import Certificate as Demo"),
-                     source = [enroll_import_subject,
-                               enroll_import_issuer,
-                               enroll_import_not_before,
-                               enroll_import_not_after,
-                               enroll_import_requested_cn,
-                               enroll_import_enrollment_cn,
-                               enroll_import_profile,
-                               enroll_import_cmp_server],
+                     source = [enroll_import_enrollment_id],
                      postback = import_cert_demo},
                #panel{id = enroll_import_result}
            ]}.
-
-hidden_certificate_fields(Certificate) ->
-    [
-        hidden(enroll_import_subject, maps:get(subject, Certificate, <<"not found">>)),
-        hidden(enroll_import_issuer, maps:get(issuer, Certificate, <<"not found">>)),
-        hidden(enroll_import_not_before, maps:get(not_before, Certificate, <<"not found">>)),
-        hidden(enroll_import_not_after, maps:get(not_after, Certificate, <<"not found">>)),
-        hidden(enroll_import_requested_cn, maps:get(requested_cn, Certificate, <<"not found">>)),
-        hidden(enroll_import_enrollment_cn, maps:get(enrollment_cn, Certificate, <<"not found">>)),
-        hidden(enroll_import_profile, maps:get(profile, Certificate, <<"secp384r1">>)),
-        hidden(enroll_import_cmp_server, maps:get(cmp_server, Certificate, <<"127.0.0.1:8829">>))
-    ].
 
 hidden(Id, Value) ->
     #input{id = Id,
            type = <<"hidden">>,
            value = ias_html:text(Value)}.
 
-certificate_demo_object() ->
-    Subject = field_value(nitro:q(enroll_import_subject), <<"not found">>),
+certificate_demo_object(Enrollment) ->
+    Subject = maps:get(subject, Enrollment, <<"not found">>),
     ImportId = demo_import_id(Subject),
     #{id => ias_html:join([ImportId, <<"_certificate">>]),
       source => cmp_demo_enrollment,
       import_id => ImportId,
       subject => Subject,
-      issuer => field_value(nitro:q(enroll_import_issuer), <<"not found">>),
-      not_before => field_value(nitro:q(enroll_import_not_before), <<"not found">>),
-      not_after => field_value(nitro:q(enroll_import_not_after), <<"not found">>),
-      requested_cn => field_value(nitro:q(enroll_import_requested_cn), <<"not found">>),
-      enrollment_cn => field_value(nitro:q(enroll_import_enrollment_cn), <<"not found">>),
-      profile => field_value(nitro:q(enroll_import_profile), <<"secp384r1">>),
-      cmp_server => field_value(nitro:q(enroll_import_cmp_server), <<"127.0.0.1:8829">>),
+      issuer => maps:get(issuer, Enrollment, <<"not found">>),
+      not_before => maps:get(not_before, Enrollment, <<"not found">>),
+      not_after => maps:get(not_after, Enrollment, <<"not found">>),
+      requested_cn => maps:get(requested_cn, Enrollment, <<"not found">>),
+      enrollment_cn => maps:get(enrollment_cn, Enrollment, <<"not found">>),
+      profile => maps:get(profile, Enrollment, <<"secp384r1">>),
+      cmp_server => maps:get(cmp_server, Enrollment, <<"127.0.0.1:8829">>),
       private_key_stored => false,
       certificate_body_stored => false}.
 
@@ -228,6 +217,13 @@ certificate_import_result(Stored) ->
                #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]),
                      style = <<"display:inline-block;margin-top:8px;padding:7px 10px;border:1px solid #93c5fd;border-radius:5px;background:#ffffff;color:#1d4ed8;text-decoration:none;font-size:12px;font-weight:600;">>,
                      body = ias_html:text("View Demo Object")}
+           ]}.
+
+certificate_import_not_found() ->
+    #panel{style = <<"padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
+           body = [
+               #h3{body = ias_html:text("Certificate demo import failed")},
+               #p{body = ias_html:text("Issued enrollment metadata is no longer available in server runtime state.")}
            ]}.
 
 key_value_table(Rows) ->

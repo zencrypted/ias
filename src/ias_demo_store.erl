@@ -11,6 +11,8 @@
     add_device/1,
     add_certificate/1,
     add_service/1,
+    add_enrollment_result/1,
+    get_enrollment_result/1,
     reset/0
 ]).
 
@@ -74,6 +76,38 @@ add_certificate(Certificate) when is_map(Certificate) ->
 
 add_service(Service) when is_map(Service) ->
     add_legacy(vpn_service, Service).
+
+add_enrollment_result(Result) when is_map(Result) ->
+    ensure(),
+    CreatedAt = created_at(),
+    Id = maps:get(enrollment_id, Result, enrollment_id()),
+    Stored = #{id => Id,
+               enrollment_id => Id,
+               kind => cmp_enrollment_result,
+               source => cmp_demo_enrollment,
+               created_at => maps:get(created_at, Result, CreatedAt),
+               subject => maps:get(subject, Result, <<"not found">>),
+               issuer => maps:get(issuer, Result, <<"not found">>),
+               not_before => maps:get(not_before, Result, <<"not found">>),
+               not_after => maps:get(not_after, Result, <<"not found">>),
+               requested_cn => maps:get(requested_cn, Result, <<"not found">>),
+               enrollment_cn => maps:get(enrollment_cn, Result, <<"not found">>),
+               profile => maps:get(profile, Result, <<"not found">>),
+               cmp_server => maps:get(cmp_server, Result, <<"not found">>),
+               private_key_stored => false,
+               certificate_body_stored => false},
+    ets:insert(?TABLE, {{cmp_enrollment_result, Id}, Stored}),
+    Id.
+
+get_enrollment_result(undefined) ->
+    not_found;
+get_enrollment_result(Id) ->
+    ensure(),
+    TextId = normalize_id(Id),
+    case ets:lookup(?TABLE, {cmp_enrollment_result, TextId}) of
+        [{_Key, Object}] -> {ok, Object};
+        [] -> not_found
+    end.
 
 reset() ->
     clear().
@@ -144,6 +178,11 @@ import_id() ->
 
 record_id(Kind, ImportId) ->
     ias_html:join([ImportId, <<"_">>, Kind]).
+
+enrollment_id() ->
+    ias_html:join([<<"cmp_enrollment_">>,
+                   erlang:system_time(millisecond), <<"_">>,
+                   erlang:unique_integer([positive])]).
 
 created_at() ->
     iolist_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second),
