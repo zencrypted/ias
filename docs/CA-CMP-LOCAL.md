@@ -148,3 +148,17 @@ IAS Certificate Request
 
 The current scripts are development harnesses only. They are not production
 provisioning tools and do not define the final IAS/CA integration API.
+
+
+IAS Runtime Compatibility
+-------------------------
+
+IAS does not require OTP 28.
+
+The OTP 28 requirement was observed specifically in the CA/CMP issuance path:
+
+CA -> X509.CSR.valid?/1 -> public_key.der_encode/2
+
+Recommended deployment:
+
+IAS (OTP 25) -> CMP -> CA (OTP 28)
