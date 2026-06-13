@@ -10,6 +10,16 @@ event(preview) ->
     Profile = field_value(nitro:q(enroll_profile), <<"secp384r1">>),
     CmpServer = field_value(nitro:q(enroll_cmp_server), <<"127.0.0.1:8829">>),
     nitro:update(enroll_preview_result, preview_panel(CommonName, Profile, CmpServer));
+event(enroll) ->
+    CommonName = field_value(nitro:q(enroll_common_name), <<"vpn-client">>),
+    Profile = field_value(nitro:q(enroll_profile), <<"secp384r1">>),
+    CmpServer = field_value(nitro:q(enroll_cmp_server), <<"127.0.0.1:8829">>),
+    Result = ias_cmp_enrollment:enroll(#{
+        common_name => CommonName,
+        profile => Profile,
+        server => CmpServer
+    }),
+    nitro:update(enroll_preview_result, preview_panel(CommonName, Profile, CmpServer, Result));
 event(_) ->
     ok.
 
@@ -37,8 +47,13 @@ form_panel(CommonName, Profile, CmpServer) ->
                          body = ias_html:text("Preview Enrollment"),
                          source = [enroll_common_name, enroll_profile, enroll_cmp_server],
                          postback = preview},
+                   #link{id = enroll_ca_button,
+                         class = [button, sgreen],
+                         body = ias_html:text("Enroll via CA"),
+                         source = [enroll_common_name, enroll_profile, enroll_cmp_server],
+                         postback = enroll},
                    #span{style = <<"font-size:12px;color:#64748b;">>,
-                         body = ias_html:text("Preview only. No keys, CSR files, CMP calls, or CA calls are created.")}
+                         body = ias_html:text("Development mode only. No certificate or key material is stored by IAS.")}
                ]}
     ]}.
 
@@ -55,6 +70,9 @@ input_row(Label, Id, Value) ->
            ]}.
 
 preview_panel(CommonName, Profile, CmpServer) ->
+    preview_panel(CommonName, Profile, CmpServer, preview).
+
+preview_panel(CommonName, Profile, CmpServer, Enrollment) ->
     #panel{id = enroll_preview_result,
            class = <<"ias-status-card">>,
            body = [
@@ -63,7 +81,7 @@ preview_panel(CommonName, Profile, CmpServer) ->
                    {"Subject", ias_html:join([<<"CN=">>, CommonName])},
                    {"Key Type", <<"EC">>},
                    {"Curve", Profile},
-                   {"CSR Status", <<"planned">>}
+                   {"CSR Status", csr_status(Enrollment)}
                ]),
                #h3{body = ias_html:text("CMP Enrollment Plan")},
                key_value_table([
@@ -74,12 +92,40 @@ preview_panel(CommonName, Profile, CmpServer) ->
                    {"Runtime", <<"CA OTP 28 service">>}
                ]),
                #h3{body = ias_html:text("Issued Certificate Preview")},
-               key_value_table([
-                   {"Status", <<"not issued yet">>},
-                   {"Reason", <<"preview only">>},
-                   {"Future Result", <<"X.509 certificate">>}
-               ])
+               issued_certificate_table(Enrollment)
            ]}.
+
+issued_certificate_table(preview) ->
+    key_value_table([
+        {"Status", <<"not issued yet">>},
+        {"Reason", <<"preview only">>},
+        {"Future Result", <<"X.509 certificate">>}
+    ]);
+issued_certificate_table({ok, Certificate}) ->
+    key_value_table([
+        {"Status", <<"issued">>},
+        {"Subject", maps:get(subject, Certificate, <<"not found">>)},
+        {"Issuer", maps:get(issuer, Certificate, <<"not found">>)},
+        {"Not Before", maps:get(not_before, Certificate, <<"not found">>)},
+        {"Not After", maps:get(not_after, Certificate, <<"not found">>)}
+    ]);
+issued_certificate_table({error, ca_unavailable}) ->
+    key_value_table([
+        {"Status", <<"failed">>},
+        {"Reason", <<"CA service unavailable">>}
+    ]);
+issued_certificate_table({error, Reason}) ->
+    key_value_table([
+        {"Status", <<"failed">>},
+        {"Reason", Reason}
+    ]).
+
+csr_status({ok, _Certificate}) ->
+    <<"generated">>;
+csr_status({error, _Reason}) ->
+    <<"failed">>;
+csr_status(preview) ->
+    <<"planned">>.
 
 key_value_table(Rows) ->
     #panel{class = <<"ias-table-container">>, body = [
