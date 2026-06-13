@@ -21,7 +21,8 @@ content() ->
                    body = #tbody{body =
                        [service_row(Service, VpnSummary)
                         || Service <- Services]}}
-        ])
+        ]),
+        imported_demo_objects()
     ]}.
 
 service_row(#{id := vpn, name := Name}, VpnSummary) ->
@@ -48,6 +49,34 @@ header(Columns) ->
 
 row(Values) ->
     #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
+
+imported_demo_objects() ->
+    Records = ias_demo_store:services(),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Imported Demo Objects")},
+        imported_services(Records)
+    ]}.
+
+imported_services([]) ->
+    #p{body = ias_html:text("No imported demo objects yet.")};
+imported_services(Records) ->
+    table([
+        #table{class = <<"ias-table">>,
+               header = header(["ID", "Service", "Remote", "Protocol", "Cipher",
+                                "Compression", "Routes", "Source", "Import ID"]),
+               body = #tbody{body = [imported_service_row(Record) || Record <- Records]}}
+    ]).
+
+imported_service_row(Record) ->
+    row([maps:get(id, Record, undefined),
+         maps:get(service, Record, undefined),
+         maps:get(remote, Record, undefined),
+         maps:get(protocol, Record, undefined),
+         maps:get(cipher, Record, undefined),
+         maps:get(compression, Record, false),
+         maps:get(routes, Record, 0),
+         maps:get(source, Record, undefined),
+         maps:get(import_id, Record, undefined)]).
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.

@@ -22,7 +22,8 @@ content() ->
                    body = #tbody{body =
                        [device_row(Device, VpnSummary)
                         || Device <- Devices]}}
-        ])
+        ]),
+        imported_demo_objects()
     ]}.
 
 device_row(Device, VpnSummary) ->
@@ -59,6 +60,32 @@ header(Columns) ->
 
 row(Values) ->
     #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
+
+imported_demo_objects() ->
+    Records = ias_demo_store:devices(),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Imported Demo Objects")},
+        imported_devices(Records)
+    ]}.
+
+imported_devices([]) ->
+    #p{body = ias_html:text("No imported demo objects yet.")};
+imported_devices(Records) ->
+    table([
+        #table{class = <<"ias-table">>,
+               header = header(["ID", "Type", "Endpoint", "Transport", "Tunnel Device",
+                                "Source", "Import ID"]),
+               body = #tbody{body = [imported_device_row(Record) || Record <- Records]}}
+    ]).
+
+imported_device_row(Record) ->
+    row([maps:get(id, Record, undefined),
+         maps:get(type, Record, undefined),
+         maps:get(endpoint, Record, undefined),
+         maps:get(transport, Record, undefined),
+         maps:get(tunnel_device, Record, undefined),
+         maps:get(source, Record, undefined),
+         maps:get(import_id, Record, undefined)]).
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.

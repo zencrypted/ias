@@ -26,7 +26,8 @@ content() ->
                                     "Claims"]),
                    body = #tbody{body =
                        [certificate_row(Peer, Devices, Certificates, Profiles) || Peer <- Peers]}}
-        ])
+        ]),
+        imported_demo_objects()
     ]}.
 
 status({error, _Reason}) ->
@@ -92,6 +93,33 @@ header(Columns) ->
 
 row(Values) ->
     #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
+
+imported_demo_objects() ->
+    Records = ias_demo_store:certificates(),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Imported Demo Objects")},
+        imported_certificates(Records)
+    ]}.
+
+imported_certificates([]) ->
+    #p{body = ias_html:text("No imported demo objects yet.")};
+imported_certificates(Records) ->
+    table([
+        #table{class = <<"ias-table">>,
+               header = header(["ID", "CA", "Client Certificate", "Private Key Present",
+                                "Private Key Stored", "TLS Auth", "Source", "Import ID"]),
+               body = #tbody{body = [imported_certificate_row(Record) || Record <- Records]}}
+    ]).
+
+imported_certificate_row(Record) ->
+    row([maps:get(id, Record, undefined),
+         maps:get(ca_present, Record, false),
+         maps:get(client_certificate_present, Record, false),
+         maps:get(private_key_present, Record, false),
+         maps:get(private_key_stored, Record, false),
+         maps:get(tls_auth_present, Record, false),
+         maps:get(source, Record, undefined),
+         maps:get(import_id, Record, undefined)]).
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.
