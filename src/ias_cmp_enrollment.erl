@@ -20,15 +20,16 @@ enroll(#{common_name := CommonName,
 enroll_with_openssl(Dir, CommonName, Curve, Server) ->
     OpenSSL = openssl_path(),
     CaOpenSSLDir = ca_openssl_dir(),
-    Params = filename:join(Dir, "ecparams.pem"),
-    Key = "/dev/null",
-    Csr = filename:join(Dir, "client.csr"),
-    Cert = filename:join(Dir, "client.pem"),
+    Name = enrollment_name(CommonName),
+    Params = filename:join(Dir, ias_html:join([Name, <<".ecparams.pem">>])),
+    Key = filename:join(Dir, ias_html:join([Name, <<".key.enc">>])),
+    Csr = filename:join(Dir, ias_html:join([Name, <<".csr">>])),
+    Cert = filename:join(Dir, ias_html:join([Name, <<".pem">>])),
     case executable(OpenSSL) of
         true ->
             case filelib:is_dir(CaOpenSSLDir) of
                 true ->
-                    run_steps(OpenSSL, CaOpenSSLDir, CommonName, Curve, Server,
+                    run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, Curve, Server,
                               Params, Key, Csr, Cert);
                 false ->
                     {error, ias_html:join([<<"CA OpenSSL directory not found: ">>,
@@ -39,17 +40,17 @@ enroll_with_openssl(Dir, CommonName, Curve, Server) ->
                                    ias_html:text(OpenSSL)])}
     end.
 
-run_steps(OpenSSL, CaOpenSSLDir, CommonName, Curve, Server,
+run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, Curve, Server,
           Params, Key, Csr, Cert) ->
     Steps = [
-        {ecparams, [<<"ecparam">>, <<"-name">>, Curve, <<"-out">>, Params]},
-        {csr, [<<"req">>, <<"-new">>,
+        {ecparams, Dir, [<<"ecparam">>, <<"-name">>, Curve, <<"-out">>, Params]},
+        {csr, Dir, [<<"req">>, <<"-new">>,
                <<"-newkey">>, ias_html:join([<<"ec:">>, Params]),
                <<"-keyout">>, Key,
                <<"-passout">>, <<"pass:0">>,
                <<"-out">>, Csr,
                <<"-subj">>, subject(CommonName)]},
-        {cmp, [<<"cmp">>,
+        {cmp, CaOpenSSLDir, [<<"cmp">>,
                <<"-cmd">>, <<"p10cr">>,
                <<"-server">>, Server,
                <<"-secret">>, <<"pass:", ?DEFAULT_SECRET>>,
@@ -58,21 +59,21 @@ run_steps(OpenSSL, CaOpenSSLDir, CommonName, Curve, Server,
                <<"-srvcert">>, <<"synrc.pem">>,
                <<"-certout">>, Cert,
                <<"-csr">>, Csr]},
-        {metadata, [<<"x509">>, <<"-in">>, Cert,
-                    <<"-noout">>, <<"-subject">>, <<"-issuer">>, <<"-dates">>]}
+        {metadata, Dir, [<<"x509">>, <<"-in">>, Cert,
+                         <<"-noout">>, <<"-subject">>, <<"-issuer">>, <<"-dates">>]}
     ],
-    run_steps(OpenSSL, CaOpenSSLDir, Steps, #{}).
+    run_steps(OpenSSL, Steps, #{}).
 
-run_steps(_OpenSSL, _Cwd, [], #{metadata := Metadata}) ->
+run_steps(_OpenSSL, [], #{metadata := Metadata}) ->
     parse_metadata(Metadata);
-run_steps(OpenSSL, Cwd, [{metadata, Args} | Rest], State) ->
+run_steps(OpenSSL, [{metadata, Cwd, Args} | Rest], State) ->
     case run(OpenSSL, Args, Cwd) of
-        {ok, Output} -> run_steps(OpenSSL, Cwd, Rest, State#{metadata => Output});
+        {ok, Output} -> run_steps(OpenSSL, Rest, State#{metadata => Output});
         {error, Output} -> {error, clean_error(Output)}
     end;
-run_steps(OpenSSL, Cwd, [{_Name, Args} | Rest], State) ->
+run_steps(OpenSSL, [{_Name, Cwd, Args} | Rest], State) ->
     case run(OpenSSL, Args, Cwd) of
-        {ok, _Output} -> run_steps(OpenSSL, Cwd, Rest, State);
+        {ok, _Output} -> run_steps(OpenSSL, Rest, State);
         {error, Output} -> {error, clean_error(Output)}
     end.
 
@@ -175,6 +176,28 @@ temp_name() ->
     ias_html:text(io_lib:format("ias_cmp_enroll_~p_~p",
                                 [erlang:system_time(millisecond),
                                  erlang:unique_integer([positive])])).
+
+enrollment_name(CommonName) ->
+    ias_html:join([file_stem(CommonName), <<"_">>,
+                   ias_html:text(erlang:system_time(millisecond)), <<"_">>,
+                   ias_html:text(erlang:unique_integer([positive]))]).
+
+file_stem(Value) ->
+    file_stem(ias_html:text(Value), <<>>).
+
+file_stem(<<>>, <<>>) ->
+    <<"enroll">>;
+file_stem(<<>>, Acc) ->
+    Acc;
+file_stem(<<Char/utf8, Rest/binary>>, Acc)
+  when (Char >= $a andalso Char =< $z) orelse
+       (Char >= $A andalso Char =< $Z) orelse
+       (Char >= $0 andalso Char =< $9) orelse
+       Char =:= $_ orelse
+       Char =:= $- ->
+    file_stem(Rest, <<Acc/binary, Char/utf8>>);
+file_stem(<<_Char/utf8, Rest/binary>>, Acc) ->
+    file_stem(Rest, <<Acc/binary, $_>>).
 
 openssl_path() ->
     case os:getenv("OPENSSL3") of
