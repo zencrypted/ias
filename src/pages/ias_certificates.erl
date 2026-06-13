@@ -92,7 +92,12 @@ header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
 
 row(Values) ->
-    #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
+    #tr{cells = [#td{body = cell_body(Value)} || Value <- Values]}.
+
+cell_body(#link{} = Link) ->
+    Link;
+cell_body(Value) ->
+    ias_html:text(Value).
 
 imported_demo_objects() ->
     Records = ias_demo_store:certificates(),
@@ -112,7 +117,7 @@ imported_certificates(Records) ->
     ]).
 
 imported_certificate_row(Record) ->
-    row([maps:get(id, Record, undefined),
+    row([demo_link(maps:get(id, Record, undefined)),
          maps:get(ca_present, Record, false),
          maps:get(client_certificate_present, Record, false),
          maps:get(private_key_present, Record, false),
@@ -120,6 +125,13 @@ imported_certificate_row(Record) ->
          maps:get(tls_auth_present, Record, false),
          maps:get(source, Record, undefined),
          maps:get(import_id, Record, undefined)]).
+
+demo_link(undefined) ->
+    undefined;
+demo_link(Id) ->
+    TextId = ias_html:text(Id),
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, TextId]),
+          body = TextId}.
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.

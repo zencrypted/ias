@@ -2,6 +2,7 @@
 -export([
     ensure/0,
     add_import/1,
+    get/1,
     all/0,
     devices/0,
     certificates/0,
@@ -27,6 +28,17 @@ add_import(ImportMap) when is_map(ImportMap) ->
     [ets:insert(?TABLE, {{maps:get(kind, Record), maps:get(id, Record)}, Record})
      || Record <- Records],
     ImportId.
+
+get(undefined) ->
+    not_found;
+get(Id) ->
+    ensure(),
+    TextId = ias_html:text(Id),
+    case [Object || {_Key, Object} <- ets:tab2list(?TABLE),
+                    maps:get(id, Object, undefined) =:= TextId] of
+        [Object | _] -> {ok, Object};
+        [] -> not_found
+    end.
 
 all() ->
     ensure(),

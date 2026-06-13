@@ -48,7 +48,12 @@ header(Columns) ->
     [#tr{cells = [#th{body = Column} || Column <- Columns]}].
 
 row(Values) ->
-    #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
+    #tr{cells = [#td{body = cell_body(Value)} || Value <- Values]}.
+
+cell_body(#link{} = Link) ->
+    Link;
+cell_body(Value) ->
+    ias_html:text(Value).
 
 imported_demo_objects() ->
     Records = ias_demo_store:services(),
@@ -68,7 +73,7 @@ imported_services(Records) ->
     ]).
 
 imported_service_row(Record) ->
-    row([maps:get(id, Record, undefined),
+    row([demo_link(maps:get(id, Record, undefined)),
          maps:get(service, Record, undefined),
          maps:get(remote, Record, undefined),
          maps:get(protocol, Record, undefined),
@@ -77,6 +82,13 @@ imported_service_row(Record) ->
          maps:get(routes, Record, 0),
          maps:get(source, Record, undefined),
          maps:get(import_id, Record, undefined)]).
+
+demo_link(undefined) ->
+    undefined;
+demo_link(Id) ->
+    TextId = ias_html:text(Id),
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, TextId]),
+          body = TextId}.
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.
