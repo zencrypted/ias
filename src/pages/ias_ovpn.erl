@@ -8,6 +8,9 @@ event(init) ->
 event(preview) ->
     Preview = ias_ovpn_preview:analyze(nitro:q(ovpn_text)),
     nitro:update(ovpn_preview_result, preview_panel(Preview));
+event(import_plan) ->
+    Preview = ias_ovpn_preview:analyze(nitro:q(ovpn_text)),
+    nitro:update(ovpn_preview_result, preview_panel(Preview, [import_plan_panel(Preview)]));
 event(import_demo) ->
     Preview = ias_ovpn_preview:analyze(nitro:q(ovpn_text)),
     ImportId = ias_demo_store:add_import(import_map(Preview)),
@@ -131,6 +134,11 @@ preview_panel(Preview, ExtraBody) ->
 import_demo_button() ->
     #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
            body = [
+               #link{id = ovpn_import_plan_button,
+                     class = [button, sgreen],
+                     body = ias_html:text("Generate Import Plan"),
+                     source = [ovpn_text],
+                     postback = import_plan},
                #link{id = ovpn_import_demo_button,
                      class = [button, sgreen],
                      body = ias_html:text("Import as Demo"),
@@ -138,6 +146,28 @@ import_demo_button() ->
                      postback = import_demo},
                #span{style = <<"font-size:12px;color:#64748b;">>,
                      body = ias_html:text("Demo import only. Stored in ETS runtime state.")}
+           ]}.
+
+import_plan_panel(Preview) ->
+    #panel{style = <<"margin-top:16px;padding:12px;border:1px solid rgba(59,130,246,0.25);border-radius:6px;background:#eff6ff;">>,
+           body = [
+               #h3{body = ias_html:text("IMPORT PLAN")},
+               key_value_table([
+                   {"Device Action", <<"create preview">>},
+                   {"Device Type", <<"vpn-client">>},
+                   {"Device Endpoint", endpoint(Preview)},
+                   {"Certificate Action", <<"register preview">>},
+                   {"CA", presence(maps:get(has_ca, Preview, false))},
+                   {"Client Certificate", presence(maps:get(has_cert, Preview, false))},
+                   {"Private Key", private_key_plan(maps:get(has_key, Preview, false))},
+                   {"TLS Auth", presence(maps:get(tls_auth, Preview, false))},
+                   {"VPN Service Action", <<"bind preview">>},
+                   {"VPN Service", <<"OpenVPN">>},
+                   {"VPN Remote", endpoint(Preview)},
+                   {"VPN Protocol", missing_text(maps:get(proto, Preview, not_found))},
+                   {"VPN Cipher", missing_text(maps:get(cipher, Preview, not_found))},
+                   {"Status", <<"preview only">>}
+               ])
            ]}.
 
 demo_import_panel(Preview, ImportId) ->
