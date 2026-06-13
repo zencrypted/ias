@@ -33,12 +33,19 @@ get(undefined) ->
     not_found;
 get(Id) ->
     ensure(),
-    TextId = ias_html:text(Id),
+    TextId = normalize_id(Id),
     case [Object || {_Key, Object} <- ets:tab2list(?TABLE),
-                    maps:get(id, Object, undefined) =:= TextId] of
+        maps:get(id, Object, undefined) =:= TextId] of
         [Object | _] -> {ok, Object};
         [] -> not_found
     end.
+
+normalize_id(Id) when is_binary(Id) ->
+    Id;
+normalize_id(Id) when is_list(Id) ->
+    unicode:characters_to_binary(Id);
+normalize_id(Id) ->
+    ias_html:text(Id).
 
 all() ->
     ensure(),
