@@ -9,10 +9,13 @@ event(_) ->
     ok.
 
 content() ->
-    case ias_demo_store:get(nitro:qc(id)) of
+    case ias_demo_store:get(query_id()) of
         {ok, Object} -> detail(Object);
         not_found -> not_found()
     end.
+
+query_id() ->
+    nitro:qc(id).
 
 detail(Object) ->
     #panel{class = <<"ias-placeholder">>, body = [
