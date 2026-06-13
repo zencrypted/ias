@@ -1,5 +1,6 @@
 -module(ias_demo).
 -export([event/1]).
+-include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
@@ -15,7 +16,16 @@ content() ->
     end.
 
 query_id() ->
-    nitro:qc(id).
+    Cx = get(context),
+    Req = Cx#cx.req,
+    case Req of
+        #{qs := QS} ->
+            proplists:get_value(<<"id">>, uri_string:dissect_query(nitro:to_binary(QS)));
+        #{query_string := QS} ->
+            proplists:get_value(<<"id">>, uri_string:dissect_query(nitro:to_binary(QS)));
+        _ ->
+            nitro:qc(id)
+    end.
 
 detail(Object) ->
     #panel{class = <<"ias-placeholder">>, body = [
