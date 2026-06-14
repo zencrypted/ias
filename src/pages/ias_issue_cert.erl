@@ -5,6 +5,10 @@
 event(init) ->
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event({issue_cert_demo, UserId}) ->
+    SubjectCN = field_value(nitro:q(issue_subject), <<"peer_new">>),
+    Result = ias_certificate_issue_demo:issue(UserId, SubjectCN, ias_demo_data:profiles()),
+    nitro:update(issue_result_id(UserId), issue_result(Result));
 event(_) ->
     ok.
 
@@ -96,7 +100,8 @@ preview(User, Profiles) ->
                #h3{body = ias_html:text("Security Policy")},
                security_policy_table(DeviceLock, TwoFactor),
                #h3{body = ias_html:text("Policy Evaluation")},
-               policy_table(Profile)
+               policy_table(Profile),
+               issue_controls(UserId)
            ]}.
 
 field(Label, Value) ->
@@ -217,6 +222,47 @@ security_policy_row(Label, Result) ->
         #td{body = ias_html:text("preview only")}
     ]}.
 
+issue_controls(UserId) ->
+    #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
+           body = [
+               #link{class = [button, sgreen],
+                     body = ias_html:text("Issue Certificate"),
+                     source = [issue_subject],
+                     postback = {issue_cert_demo, UserId}},
+               #panel{id = issue_result_id(UserId)}
+           ]}.
+
+issue_result({ok, Certificate}) ->
+    Id = maps:get(id, Certificate, undefined),
+    #panel{style = <<"padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #h3{body = ias_html:text("Demo certificate issued")},
+               key_value_table([
+                   {"Certificate ID", Id},
+                   {"User", maps:get(user_name, Certificate, undefined)},
+                   {"Profile", maps:get(profile_id, Certificate, undefined)},
+                   {"Subject CN", maps:get(subject_cn, Certificate, undefined)},
+                   {"Device Lock", maps:get(device_lock, Certificate, undefined)},
+                   {"2FA", maps:get(two_factor, Certificate, undefined)}
+               ]),
+               #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]),
+                     style = <<"display:inline-block;margin-top:8px;padding:7px 10px;border:1px solid #93c5fd;border-radius:5px;background:#ffffff;color:#1d4ed8;text-decoration:none;font-size:12px;font-weight:600;">>,
+                     body = ias_html:text("View Certificate")}
+           ]};
+issue_result({error, user_not_found}) ->
+    issue_error("User not found");
+issue_result({error, profile_not_found}) ->
+    issue_error("Security profile not found");
+issue_result({error, Reason}) ->
+    issue_error(Reason).
+
+issue_error(Reason) ->
+    #panel{style = <<"padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
+           body = [
+               #h3{body = ias_html:text("Demo certificate issue failed")},
+               #p{body = ias_html:text(Reason)}
+           ]}.
+
 check_label(profile_exists) ->
     <<"Profile exists">>;
 check_label(user_exists) ->
@@ -246,6 +292,9 @@ profile_for_user(User, Profiles) ->
 
 preview_id(UserId) ->
     ias_html:join(["issue_preview_", UserId]).
+
+issue_result_id(UserId) ->
+    ias_html:join(["issue_result_", UserId]).
 
 preview_style(alice) ->
     <<"display:block;">>;
@@ -279,3 +328,14 @@ update_subject_js() ->
         "for (var m=0; m<caReasonOutputs.length; m++) { caReasonOutputs[m].textContent = valid ? 'request matches selected profile' : 'validation failed'; }",
         "return false;"
     >>.
+
+field_value(undefined, Default) ->
+    Default;
+field_value(<<>>, Default) ->
+    Default;
+field_value(Value, Default) ->
+    Text = ias_html:text(Value),
+    case Text of
+        <<>> -> Default;
+        _ -> Text
+    end.

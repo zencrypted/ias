@@ -15,6 +15,7 @@ route_prefix(P)                   -> route(P).
 route(<<>>)                              -> ias_index;
 route(<<"app/index",        _/binary>>) -> ias_index;
 route(<<"app/users",        _/binary>>) -> ias_users;
+route(<<"app/user",         _/binary>>) -> ias_user;
 route(<<"app/devices",      _/binary>>) -> ias_devices;
 route(<<"app/services",     _/binary>>) -> ias_services;
 route(<<"app/certificates", _/binary>>) -> ias_certificates;

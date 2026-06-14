@@ -77,7 +77,11 @@ rows(#{kind := device} = Object) ->
     ] ++ created_row(Object);
 rows(#{kind := certificate} = Object) ->
     common_rows(Object) ++ [
+        {"Issued User", user_ref(maps:get(user, Object, undefined))},
+        {"Source Security Profile", profile_ref(maps:get(profile_id, Object,
+                                                         maps:get(profile, Object, undefined)))},
         {"Subject", maps:get(subject, Object, undefined)},
+        {"Subject CN", maps:get(subject_cn, Object, undefined)},
         {"Issuer", maps:get(issuer, Object, undefined)},
         {"Not Before", maps:get(not_before, Object, undefined)},
         {"Not After", maps:get(not_after, Object, undefined)},
@@ -90,7 +94,13 @@ rows(#{kind := certificate} = Object) ->
         {"Private Key Present", maps:get(private_key_present, Object, false)},
         {"Private Key Stored", maps:get(private_key_stored, Object, false)},
         {"Certificate Body Stored", maps:get(certificate_body_stored, Object, false)},
-        {"TLS Auth Present", maps:get(tls_auth_present, Object, false)}
+        {"TLS Auth Present", maps:get(tls_auth_present, Object, false)},
+        {"Role", maps:get(role, Object, undefined)},
+        {"Services", ias_html:join_csv(maps:get(services, Object, []))},
+        {"Attributes", ias_html:join_csv(maps:get(attributes, Object, []))},
+        {"Trust Level", maps:get(trust_level, Object, undefined)},
+        {"Device Lock", maps:get(device_lock, Object, undefined)},
+        {"2FA", maps:get(two_factor, Object, undefined)}
     ] ++ created_row(Object);
 rows(#{kind := vpn_service} = Object) ->
     common_rows(Object) ++ [
@@ -441,6 +451,14 @@ join_links([Link | Rest], []) ->
 join_links([Link | Rest], Acc) ->
     join_links(Rest, [Link, #br{} | Acc]).
 
+object_ref(user, Id) ->
+    TextId = ias_html:text(Id),
+    #link{url = ias_html:join([<<"/app/user.htm?id=">>, TextId]),
+          body = ias_html:join([object_label(user), <<" #">>, TextId])};
+object_ref(security_profile, Id) ->
+    TextId = ias_html:text(Id),
+    #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
+          body = ias_html:join([object_label(security_profile), <<" #">>, TextId])};
 object_ref(Kind, Id) ->
     TextId = ias_html:text(Id),
     #link{url = ias_html:join([<<"/app/demo.htm?id=">>, TextId]),
@@ -448,10 +466,14 @@ object_ref(Kind, Id) ->
 
 object_label(device) ->
     <<"Device">>;
+object_label(user) ->
+    <<"User">>;
 object_label(certificate) ->
     <<"Certificate">>;
 object_label(vpn_service) ->
     <<"VPN Service">>;
+object_label(security_profile) ->
+    <<"Security Profile">>;
 object_label(security_policy) ->
     <<"Security Policy">>;
 object_label(relationship) ->
@@ -468,6 +490,20 @@ device_ref(not_found) ->
     <<"not found">>;
 device_ref(Device) ->
     object_ref(device, maps:get(id, Device, undefined)).
+
+user_ref(undefined) ->
+    <<"not found">>;
+user_ref(UserId) ->
+    TextId = ias_html:text(UserId),
+    #link{url = ias_html:join([<<"/app/user.htm?id=">>, TextId]),
+          body = TextId}.
+
+profile_ref(undefined) ->
+    <<"not found">>;
+profile_ref(ProfileId) ->
+    TextId = ias_html:text(ProfileId),
+    #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
+          body = TextId}.
 
 transition_certificate(_Origin, not_found) ->
     <<"not found">>;

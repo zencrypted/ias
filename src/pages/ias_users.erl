@@ -28,13 +28,18 @@ content() ->
 
 user_row(User, Devices, Certificates) ->
     UserDevices = user_devices(User, Devices),
-    row([maps:get(name, User),
+    row([user_link(User),
          maps:get(role, User),
          maps:get(profile_id, User, undefined),
          length(UserDevices),
          ias_html:join_csv(vpn_peers(UserDevices)),
          length(user_certificates(UserDevices, Certificates)),
          ias_html:join_csv(services(UserDevices))]).
+
+user_link(User) ->
+    UserId = ias_html:text(maps:get(id, User, undefined)),
+    #link{url = ias_html:join([<<"/app/user.htm?id=">>, UserId]),
+          body = ias_html:text(maps:get(name, User, UserId))}.
 
 user_devices(User, Devices) ->
     [Device || DeviceId <- maps:get(devices, User, []),
@@ -82,7 +87,12 @@ header(Columns) ->
     [#tr{cells = [#th{body = ias_html:text(Column)} || Column <- Columns]}].
 
 row(Values) ->
-    #tr{cells = [#td{body = ias_html:text(Value)} || Value <- Values]}.
+    #tr{cells = [#td{body = cell_body(Value)} || Value <- Values]}.
+
+cell_body(#link{} = Link) ->
+    Link;
+cell_body(Value) ->
+    ias_html:text(Value).
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.

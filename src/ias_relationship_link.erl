@@ -53,6 +53,18 @@ create_for_objects(uses_security_profile, #{kind := security_profile} = Profile,
                    #{kind := Kind} = Object)
   when Kind =:= user; Kind =:= device; Kind =:= certificate ->
     create_relationship(uses_security_profile, Object, Profile);
+create_for_objects(issued_certificate, #{kind := user} = User,
+                   #{kind := certificate} = Certificate) ->
+    create_relationship(issued_certificate, User, Certificate);
+create_for_objects(issued_certificate, #{kind := certificate} = Certificate,
+                   #{kind := user} = User) ->
+    create_relationship(issued_certificate, User, Certificate);
+create_for_objects(issued_certificate, #{kind := security_profile} = Profile,
+                   #{kind := certificate} = Certificate) ->
+    create_relationship(issued_certificate, Profile, Certificate);
+create_for_objects(issued_certificate, #{kind := certificate} = Certificate,
+                   #{kind := security_profile} = Profile) ->
+    create_relationship(issued_certificate, Profile, Certificate);
 create_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 
@@ -104,6 +116,18 @@ canonical_for_objects(uses_security_profile, #{kind := security_profile} = Profi
                       #{kind := Kind} = Object)
   when Kind =:= user; Kind =:= device; Kind =:= certificate ->
     {ok, uses_security_profile, Object, Profile};
+canonical_for_objects(issued_certificate, #{kind := user} = User,
+                      #{kind := certificate} = Certificate) ->
+    {ok, issued_certificate, User, Certificate};
+canonical_for_objects(issued_certificate, #{kind := certificate} = Certificate,
+                      #{kind := user} = User) ->
+    {ok, issued_certificate, User, Certificate};
+canonical_for_objects(issued_certificate, #{kind := security_profile} = Profile,
+                      #{kind := certificate} = Certificate) ->
+    {ok, issued_certificate, Profile, Certificate};
+canonical_for_objects(issued_certificate, #{kind := certificate} = Certificate,
+                      #{kind := security_profile} = Profile) ->
+    {ok, issued_certificate, Profile, Certificate};
 canonical_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 

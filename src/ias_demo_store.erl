@@ -4,6 +4,7 @@
     add_import/1,
     get/1,
     all/0,
+    users/0,
     devices/0,
     certificates/0,
     services/0,
@@ -58,6 +59,9 @@ all() ->
     ensure(),
     Objects = objects(),
     lists:sort(fun compare_records/2, Objects).
+
+users() ->
+    list(user).
 
 devices() ->
     list(device).
@@ -195,11 +199,14 @@ list(Kind) ->
 
 objects() ->
     Stored = [Object || {_Key, Object} <- ets:tab2list(?TABLE)],
-    StoredIds = [maps:get(id, Object, undefined) || Object <- Stored],
-    SeedObjects = ias_security_profile:policies() ++ ias_security_profile:profiles(),
+    StoredIds = [normalize_id(maps:get(id, Object, undefined)) || Object <- Stored],
+    SeedObjects = user_objects() ++ ias_security_profile:policies() ++ ias_security_profile:profiles(),
     Seeded = [Object || Object <- SeedObjects,
-                        not lists:member(maps:get(id, Object, undefined), StoredIds)],
+                        not lists:member(normalize_id(maps:get(id, Object, undefined)), StoredIds)],
     Stored ++ Seeded.
+
+user_objects() ->
+    [User#{kind => user, source => demo_catalog} || User <- ias_demo_data:users()].
 
 compare_records(A, B) ->
     {maps:get(import_id, A, undefined),
@@ -209,12 +216,13 @@ compare_records(A, B) ->
             kind_order(maps:get(kind, B, undefined)),
             maps:get(id, B, undefined)}.
 
-kind_order(device) -> 1;
-kind_order(certificate) -> 2;
-kind_order(vpn_service) -> 3;
-kind_order(security_profile) -> 4;
-kind_order(security_policy) -> 5;
-kind_order(relationship) -> 6;
+kind_order(user) -> 1;
+kind_order(device) -> 2;
+kind_order(certificate) -> 3;
+kind_order(vpn_service) -> 4;
+kind_order(security_profile) -> 5;
+kind_order(security_policy) -> 6;
+kind_order(relationship) -> 7;
 kind_order(_) -> 99.
 
 import_id() ->

@@ -140,7 +140,16 @@ certificates_using(ProfileId) ->
                                        maps:get(profile_id, Certificate, undefined) =:= ProfileId],
     StaticCertificates = [Certificate || Certificate <- ias_demo_data:certificates(),
                                          maps:get(profile_id, Certificate, undefined) =:= ProfileId],
-    StaticCertificates ++ DemoCertificates ++ linked_objects(ProfileId, certificate).
+    StaticCertificates ++ DemoCertificates ++ issued_certificates(ProfileId) ++
+        linked_objects(ProfileId, certificate).
+
+issued_certificates(ProfileId) ->
+    [Certificate || Relationship <- ias_demo_store:relationships(),
+                    maps:get(relation_type, Relationship, undefined) =:= issued_certificate,
+                    maps:get(source_kind, Relationship, undefined) =:= security_profile,
+                    maps:get(source_id, Relationship, undefined) =:= ProfileId,
+                    maps:get(target_kind, Relationship, undefined) =:= certificate,
+                    {ok, Certificate} <- [ias_demo_store:get(maps:get(target_id, Relationship, undefined))]].
 
 linked_objects(ProfileId, Kind) ->
     [Object || Relationship <- ias_demo_store:relationships(),
