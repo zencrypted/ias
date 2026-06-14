@@ -38,6 +38,7 @@ detail(Object) ->
         #p{body = ias_html:text("Read-only metadata stored in ETS demo runtime state.")},
         #h3{body = title(Object)},
         key_value_table(rows(Object)),
+        certificate_lifecycle_preview(Object),
         relationship_preview(Object)
     ]}.
 
@@ -207,6 +208,36 @@ relationship_preview(Object) ->
             []
     end.
 
+certificate_lifecycle_preview(#{kind := device} = Object) ->
+    Status = ias_certificate_role:device_status(Object),
+    Transition = ias_certificate_role:replacement_preview(Object),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("CERTIFICATE STATUS")},
+        key_value_table([
+            {"Current Certificate", certificate_ref(maps:get(current_certificate, Status, not_found))},
+            {"Candidate Certificate", certificate_ref(maps:get(candidate_certificate, Status, not_found))},
+            {"State", lifecycle_text(maps:get(state, Status, undefined))}
+        ]),
+        #h3{body = ias_html:text("Certificate Transition Preview")},
+        key_value_table([
+            {"Current", transition_certificate(imported, maps:get(current, Transition, not_found))},
+            {"Future", transition_certificate(issued, maps:get(future, Transition, not_found))},
+            {"Action", maps:get(action, Transition, <<"not available">>)}
+        ])
+    ]};
+certificate_lifecycle_preview(#{kind := certificate} = Object) ->
+    Role = ias_certificate_role:certificate_role(Object),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("CERTIFICATE ROLE")},
+        key_value_table([
+            {"Origin", lifecycle_text(maps:get(origin, Role, unknown))},
+            {"Role", lifecycle_text(maps:get(role, Role, unassigned))},
+            {"Used By Device", device_ref(maps:get(used_by_device, Role, not_found))}
+        ])
+    ]};
+certificate_lifecycle_preview(_Object) ->
+    [].
+
 not_linked(not_linked) ->
     <<"not linked yet">>;
 not_linked(Value) ->
@@ -315,3 +346,50 @@ object_label(relationship) ->
     <<"Relationship">>;
 object_label(Kind) ->
     ias_html:text(Kind).
+
+certificate_ref(not_found) ->
+    <<"not found">>;
+certificate_ref(Certificate) ->
+    object_ref(certificate, maps:get(id, Certificate, undefined)).
+
+device_ref(not_found) ->
+    <<"not found">>;
+device_ref(Device) ->
+    object_ref(device, maps:get(id, Device, undefined)).
+
+transition_certificate(_Origin, not_found) ->
+    <<"not found">>;
+transition_certificate(Origin, Certificate) ->
+    Id = ias_html:text(maps:get(id, Certificate, undefined)),
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, Id]),
+          body = ias_html:join([transition_origin(Origin), <<" #">>, Id])}.
+
+transition_origin(imported) ->
+    <<"Imported Certificate">>;
+transition_origin(issued) ->
+    <<"Issued Certificate">>;
+transition_origin(Origin) ->
+    ias_html:text(Origin).
+
+lifecycle_text(replacement_available) ->
+    <<"replacement available">>;
+lifecycle_text(current_only) ->
+    <<"current only">>;
+lifecycle_text(candidate_available) ->
+    <<"candidate available">>;
+lifecycle_text(no_certificate_available) ->
+    <<"no certificate available">>;
+lifecycle_text(no_certificate_context) ->
+    <<"no certificate context">>;
+lifecycle_text(imported) ->
+    <<"imported">>;
+lifecycle_text(issued) ->
+    <<"issued">>;
+lifecycle_text(current) ->
+    <<"current">>;
+lifecycle_text(candidate) ->
+    <<"candidate">>;
+lifecycle_text(unassigned) ->
+    <<"unassigned">>;
+lifecycle_text(Value) ->
+    ias_html:text(Value).
