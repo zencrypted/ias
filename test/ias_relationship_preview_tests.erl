@@ -90,6 +90,58 @@ relationship_object_rendering_metadata_test() ->
     ?assertEqual(maps:get(id, Device), maps:get(source_id, Loaded)),
     ?assertEqual(maps:get(id, Certificate), maps:get(target_id, Loaded)).
 
+clicking_link_twice_creates_one_relationship_only_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"device_duplicate_link">>,
+                                         common_name => <<"router-1">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"cert_duplicate_link">>,
+                                                  requested_cn => <<"router-1">>}),
+
+    {ok, First} = ias_relationship_link:create(uses_certificate,
+                                               maps:get(id, Device),
+                                               maps:get(id, Certificate)),
+    {ok, Second} = ias_relationship_link:create(uses_certificate,
+                                                maps:get(id, Device),
+                                                maps:get(id, Certificate)),
+
+    ?assertEqual(maps:get(id, First), maps:get(id, Second)),
+    ?assertEqual([maps:get(id, First)], ids(ias_demo_store:relationships())).
+
+existing_relationship_is_detected_for_link_action_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"device_linked_action">>}),
+    Service = ias_demo_store:add_service(#{id => <<"service_linked_action">>}),
+
+    ?assertEqual(not_found,
+                 ias_relationship_link:exists(uses_service,
+                                              maps:get(id, Device),
+                                              maps:get(id, Service))),
+    {ok, Relationship} = ias_relationship_link:create(uses_service,
+                                                      maps:get(id, Device),
+                                                      maps:get(id, Service)),
+
+    ?assertEqual(maps:get(id, Relationship),
+                 maps:get(id, ias_relationship_link:exists(uses_service,
+                                                           maps:get(id, Device),
+                                                           maps:get(id, Service)))).
+
+no_duplicate_relationships_appear_in_device_detail_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"device_detail_duplicates">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"cert_detail_duplicates">>}),
+
+    {ok, _First} = ias_relationship_link:create(uses_certificate,
+                                                maps:get(id, Device),
+                                                maps:get(id, Certificate)),
+    {ok, _Second} = ias_relationship_link:create(uses_certificate,
+                                                 maps:get(id, Certificate),
+                                                 maps:get(id, Device)),
+
+    Relationships = ias_relationship_link:relationships_for(Device),
+    ?assertEqual(1, length(Relationships)),
+    [Relationship] = Relationships,
+    ?assertEqual(maps:get(id, Certificate), maps:get(target_id, Relationship)).
+
 score_zero_candidates_are_excluded_from_suggested_test() ->
     Candidates = [
         #{id => <<"suggested">>, relationship_score => 20},

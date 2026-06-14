@@ -274,10 +274,16 @@ candidate_row(Type, Candidate, RelationType, SourceId) ->
     ]}.
 
 candidate_action(Candidate, RelationType, SourceId) ->
-    #link{class = [button, sgreen],
-          style = <<"display:inline-block;">>,
-          body = ias_html:text("Link"),
-          postback = {link_relationship, RelationType, SourceId, maps:get(id, Candidate, undefined)}}.
+    TargetId = maps:get(id, Candidate, undefined),
+    case ias_relationship_link:exists(RelationType, SourceId, TargetId) of
+        not_found ->
+            #link{class = [button, sgreen],
+                  style = <<"display:inline-block;">>,
+                  body = ias_html:text("Link"),
+                  postback = {link_relationship, RelationType, SourceId, TargetId}};
+        _Relationship ->
+            ias_html:text("Linked")
+    end.
 
 candidate_link(Candidate) ->
     Id = maps:get(id, Candidate, undefined),
