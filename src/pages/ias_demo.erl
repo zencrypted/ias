@@ -182,7 +182,9 @@ candidate_link(Candidate) ->
     Id = maps:get(id, Candidate, undefined),
     TextId = ias_html:text(Id),
     #link{url = ias_html:join([<<"/app/demo.htm?id=">>, TextId]),
-          body = ias_html:join([candidate_label(Candidate), <<" #">>, TextId])}.
+          body = ias_html:join([candidate_label(Candidate), <<" #">>, TextId,
+                                <<" (score ">>, maps:get(relationship_score, Candidate, 0),
+                                <<")">>])}.
 
 candidate_label(#{kind := certificate}) ->
     <<"Certificate">>;
