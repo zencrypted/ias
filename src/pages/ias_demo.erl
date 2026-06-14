@@ -33,7 +33,8 @@ detail(Object) ->
         #h2{body = ias_html:text("Demo Object")},
         #p{body = ias_html:text("Read-only metadata stored in ETS demo runtime state.")},
         #h3{body = title(Object)},
-        key_value_table(rows(Object))
+        key_value_table(rows(Object)),
+        relationship_preview(Object)
     ]}.
 
 not_found() ->
@@ -109,5 +110,85 @@ key_value_table(Rows) ->
 key_value_row(Label, Value) ->
     #tr{cells = [
         #th{body = ias_html:text(Label)},
-        #td{body = ias_html:text(Value)}
+        #td{body = cell_body(Value)}
     ]}.
+
+cell_body(#panel{} = Panel) ->
+    Panel;
+cell_body(#link{} = Link) ->
+    Link;
+cell_body(Value) ->
+    ias_html:text(Value).
+
+relationship_preview(Object) ->
+    case ias_relationship_preview:preview(Object) of
+        #{kind := device} = Preview ->
+            #panel{class = <<"ias-status-card">>, body = [
+                #h3{body = ias_html:text("Relationship Preview")},
+                key_value_table([
+                    {"Related Certificate", not_linked(maps:get(related_certificate, Preview))},
+                    {"Related VPN Service", not_linked(maps:get(related_vpn_service, Preview))}
+                ]),
+                #h3{body = ias_html:text("Suggested Relationships")},
+                key_value_table([
+                    {"Suggested Certificate", candidate_links(maps:get(suggested_certificates, Preview, []))},
+                    {"Suggested VPN Service", candidate_links(maps:get(suggested_services, Preview, []))}
+                ])
+            ]};
+        #{kind := certificate} = Preview ->
+            #panel{class = <<"ias-status-card">>, body = [
+                #h3{body = ias_html:text("Relationship Preview")},
+                key_value_table([
+                    {"Used By Device", not_linked(maps:get(used_by_device, Preview))}
+                ]),
+                #h3{body = ias_html:text("Suggested Relationships")},
+                key_value_table([
+                    {"Suggested Devices", candidate_links(maps:get(suggested_devices, Preview, []))}
+                ])
+            ]};
+        #{kind := vpn_service} = Preview ->
+            #panel{class = <<"ias-status-card">>, body = [
+                #h3{body = ias_html:text("Relationship Preview")},
+                key_value_table([
+                    {"Used By Device", not_linked(maps:get(used_by_device, Preview))}
+                ]),
+                #h3{body = ias_html:text("Suggested Relationships")},
+                key_value_table([
+                    {"Suggested Devices", candidate_links(maps:get(suggested_devices, Preview, []))}
+                ])
+            ]};
+        _ ->
+            []
+    end.
+
+not_linked(not_linked) ->
+    <<"not linked yet">>;
+not_linked(Value) ->
+    Value.
+
+candidate_links([]) ->
+    <<"not found">>;
+candidate_links(Candidates) ->
+    #panel{body = candidate_links(Candidates, [])}.
+
+candidate_links([], Acc) ->
+    lists:reverse(Acc);
+candidate_links([Candidate | Rest], []) ->
+    candidate_links(Rest, [candidate_link(Candidate)]);
+candidate_links([Candidate | Rest], Acc) ->
+    candidate_links(Rest, [candidate_link(Candidate), #br{} | Acc]).
+
+candidate_link(Candidate) ->
+    Id = maps:get(id, Candidate, undefined),
+    TextId = ias_html:text(Id),
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, TextId]),
+          body = ias_html:join([candidate_label(Candidate), <<" #">>, TextId])}.
+
+candidate_label(#{kind := certificate}) ->
+    <<"Certificate">>;
+candidate_label(#{kind := vpn_service}) ->
+    <<"VPN Service">>;
+candidate_label(#{kind := device}) ->
+    <<"Device">>;
+candidate_label(_Object) ->
+    <<"Demo Object">>.
