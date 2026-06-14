@@ -68,6 +68,8 @@ effects(#{profile := high_security}) ->
     [<<"Device binding expected">>, <<"2FA required">>];
 effects(#{profile := <<"High Security">>}) ->
     [<<"Device binding expected">>, <<"2FA required">>];
+effects(#{device_lock := enabled, two_factor := required}) ->
+    [<<"Device binding expected">>, <<"2FA required">>];
 effects(_Policy) ->
     [<<"Multiple devices allowed">>, <<"2FA optional">>].
 

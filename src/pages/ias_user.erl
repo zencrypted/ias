@@ -28,7 +28,6 @@ query_id() ->
     end.
 
 detail(User) ->
-    Relationships = ias_relationship_link:relationships_for(User),
     #panel{class = <<"ias-placeholder">>, body = [
         breadcrumb(),
         #h2{body = ias_html:text("User")},
@@ -40,7 +39,7 @@ detail(User) ->
         ]),
         #h3{body = ias_html:text("Issued Certificates")},
         key_value_table([
-            {"Certificates", issued_certificates(Relationships)}
+            {"Certificates", issued_certificates(User)}
         ])
     ]}.
 
@@ -82,11 +81,9 @@ profile_link(ProfileId) ->
     #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
           body = TextId}.
 
-issued_certificates(Relationships) ->
-    Links = [certificate_link(maps:get(target_id, Relationship, undefined))
-             || Relationship <- Relationships,
-                maps:get(relation_type, Relationship, undefined) =:= issued_certificate,
-                maps:get(target_kind, Relationship, undefined) =:= certificate],
+issued_certificates(User) ->
+    Links = [certificate_link(maps:get(id, Certificate, undefined))
+             || Certificate <- ias_user_detail:issued_certificates(User)],
     links_or_not_found(Links).
 
 certificate_link(Id) ->

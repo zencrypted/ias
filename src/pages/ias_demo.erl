@@ -76,10 +76,10 @@ rows(#{kind := device} = Object) ->
         {"Tunnel Device", maps:get(tunnel_device, Object, undefined)}
     ] ++ created_row(Object);
 rows(#{kind := certificate} = Object) ->
+    Metadata = ias_certificate_detail:metadata(Object),
     common_rows(Object) ++ [
-        {"Issued User", user_ref(maps:get(user, Object, undefined))},
-        {"Source Security Profile", profile_ref(maps:get(profile_id, Object,
-                                                         maps:get(profile, Object, undefined)))},
+        {"Issued User", user_ref(maps:get(issued_user_id, Metadata, undefined))},
+        {"Source Security Profile", profile_ref(maps:get(source_security_profile, Metadata, undefined))},
         {"Subject", maps:get(subject, Object, undefined)},
         {"Subject CN", maps:get(subject_cn, Object, undefined)},
         {"Issuer", maps:get(issuer, Object, undefined)},
@@ -95,12 +95,12 @@ rows(#{kind := certificate} = Object) ->
         {"Private Key Stored", maps:get(private_key_stored, Object, false)},
         {"Certificate Body Stored", maps:get(certificate_body_stored, Object, false)},
         {"TLS Auth Present", maps:get(tls_auth_present, Object, false)},
-        {"Role", maps:get(role, Object, undefined)},
-        {"Services", ias_html:join_csv(maps:get(services, Object, []))},
-        {"Attributes", ias_html:join_csv(maps:get(attributes, Object, []))},
-        {"Trust Level", maps:get(trust_level, Object, undefined)},
-        {"Device Lock", maps:get(device_lock, Object, undefined)},
-        {"2FA", maps:get(two_factor, Object, undefined)}
+        {"Role", maps:get(role, Metadata, undefined)},
+        {"Services", ias_html:join_csv(maps:get(services, Metadata, []))},
+        {"Attributes", ias_html:join_csv(maps:get(attributes, Metadata, []))},
+        {"Trust Level", maps:get(trust_level, Metadata, undefined)},
+        {"Device Lock", maps:get(device_lock, Metadata, undefined)},
+        {"2FA", maps:get(two_factor, Metadata, undefined)}
     ] ++ created_row(Object);
 rows(#{kind := vpn_service} = Object) ->
     common_rows(Object) ++ [
@@ -295,12 +295,17 @@ security_profile_preview(_Object) ->
     [].
 
 security_profile_card(Title, Object) ->
-    Policy = ias_security_profile:applied_policy(Object),
+    Policy = security_profile_policy(Object),
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text(Title)},
         key_value_table(security_profile_rows(Policy)),
         security_policy_effects_table(Policy)
     ]}.
+
+security_profile_policy(#{kind := certificate} = Object) ->
+    ias_certificate_detail:security_policy(Object);
+security_profile_policy(Object) ->
+    ias_security_profile:applied_policy(Object).
 
 security_policy_effects_card(Policy) ->
     #panel{class = <<"ias-status-card">>, body = [
