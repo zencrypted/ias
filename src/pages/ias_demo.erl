@@ -241,13 +241,9 @@ relationship_preview(Object) ->
                 ], <<"no candidates">>)
             ]};
         #{kind := security_policy} ->
-            Relationships = ias_relationship_link:relationships_for(Object),
             #panel{class = <<"ias-status-card">>, body = [
                 #h3{body = ias_html:text("Relationship Preview")},
-                relationships_table(Object),
-                key_value_table([
-                    {"Applied To", linked_sources(uses_security_policy, Relationships)}
-                ])
+                relationships_table(Object)
             ]};
         _ ->
             []
