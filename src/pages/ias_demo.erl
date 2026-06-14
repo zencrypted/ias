@@ -39,6 +39,7 @@ detail(Object) ->
         #h3{body = title(Object)},
         key_value_table(rows(Object)),
         certificate_lifecycle_preview(Object),
+        security_profile_preview(Object),
         relationship_preview(Object)
     ]}.
 
@@ -60,6 +61,8 @@ title(#{kind := certificate}) ->
     <<"Certificate Metadata">>;
 title(#{kind := vpn_service}) ->
     <<"VPN Service Metadata">>;
+title(#{kind := security_policy}) ->
+    <<"Security Policy Metadata">>;
 title(#{kind := relationship}) ->
     <<"Relationship Metadata">>;
 title(_) ->
@@ -98,6 +101,14 @@ rows(#{kind := vpn_service} = Object) ->
         {"Compression", maps:get(compression, Object, false)},
         {"Routes", maps:get(routes, Object, 0)}
     ] ++ created_row(Object);
+rows(#{kind := security_policy} = Object) ->
+    [
+        {"Policy ID", maps:get(policy_id, Object, undefined)},
+        {"Profile", ias_security_profile:profile_label(Object)},
+        {"Device Lock", ias_security_profile:device_lock_label(Object)},
+        {"2FA", ias_security_profile:two_factor_label(Object)},
+        {"Enforcement", ias_security_profile:enforcement_label(Object)}
+    ];
 rows(#{kind := relationship} = Object) ->
     [
         {"Relationship ID", maps:get(relationship_id, Object, undefined)},
@@ -162,6 +173,11 @@ relationship_preview(Object) ->
                      uses_certificate, SourceId},
                     {"Available VPN Services", ias_relationship_preview:available_candidates(maps:get(suggested_services, Preview, [])),
                      uses_service, SourceId}
+                ]),
+                #h3{body = ias_html:text("Suggested Security Policies")},
+                candidate_table([
+                    {"Security Policy", maps:get(suggested_security_policies, Preview, []),
+                     uses_security_policy, SourceId}
                 ])
             ]};
         #{kind := certificate} = Preview ->
@@ -182,6 +198,11 @@ relationship_preview(Object) ->
                 candidate_table([
                     {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_certificate, SourceId}
+                ]),
+                #h3{body = ias_html:text("Suggested Security Policies")},
+                candidate_table([
+                    {"Security Policy", maps:get(suggested_security_policies, Preview, []),
+                     uses_security_policy, SourceId}
                 ])
             ]};
         #{kind := vpn_service} = Preview ->
@@ -202,6 +223,20 @@ relationship_preview(Object) ->
                 candidate_table([
                     {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_service, SourceId}
+                ]),
+                #h3{body = ias_html:text("Suggested Security Policies")},
+                candidate_table([
+                    {"Security Policy", maps:get(suggested_security_policies, Preview, []),
+                    uses_security_policy, SourceId}
+                ])
+            ]};
+        #{kind := security_policy} ->
+            Relationships = ias_relationship_link:relationships_for(Object),
+            #panel{class = <<"ias-status-card">>, body = [
+                #h3{body = ias_html:text("Relationship Preview")},
+                relationships_table(Object),
+                key_value_table([
+                    {"Applied To", linked_sources(uses_security_policy, Relationships)}
                 ])
             ]};
         _ ->
@@ -237,6 +272,52 @@ certificate_lifecycle_preview(#{kind := certificate} = Object) ->
     ]};
 certificate_lifecycle_preview(_Object) ->
     [].
+
+security_profile_preview(#{kind := device} = Object) ->
+    security_profile_card("APPLIED SECURITY PROFILE", Object);
+security_profile_preview(#{kind := certificate} = Object) ->
+    security_profile_card("SECURITY PROFILE", Object);
+security_profile_preview(#{kind := vpn_service} = Object) ->
+    security_profile_card("SERVICE SECURITY PROFILE", Object);
+security_profile_preview(#{kind := security_policy} = Object) ->
+    security_policy_effects_card(Object);
+security_profile_preview(_Object) ->
+    [].
+
+security_profile_card(Title, Object) ->
+    Policy = ias_security_profile:applied_policy(Object),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text(Title)},
+        key_value_table(security_profile_rows(Policy)),
+        security_policy_effects_table(Policy)
+    ]}.
+
+security_policy_effects_card(Policy) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Security Profile Preview")},
+        key_value_table(security_profile_rows(Policy)),
+        security_policy_effects_table(Policy)
+    ]}.
+
+security_profile_rows(Policy) ->
+    [
+        {"Profile", ias_security_profile:profile_label(Policy)},
+        {"Device Lock", ias_security_profile:device_lock_label(Policy)},
+        {"2FA", ias_security_profile:two_factor_label(Policy)},
+        {"Enforcement", ias_security_profile:enforcement_label(Policy)}
+    ].
+
+security_policy_effects_table(Policy) ->
+    key_value_table([
+        {"Policy Effects", #panel{body = effect_lines(ias_security_profile:effects(Policy), [])}}
+    ]).
+
+effect_lines([], Acc) ->
+    lists:reverse(Acc);
+effect_lines([Effect | Rest], []) ->
+    effect_lines(Rest, [ias_html:text(Effect)]);
+effect_lines([Effect | Rest], Acc) ->
+    effect_lines(Rest, [ias_html:text(Effect), #br{} | Acc]).
 
 not_linked(not_linked) ->
     <<"not linked yet">>;
@@ -299,6 +380,8 @@ candidate_label(#{kind := vpn_service}) ->
     <<"VPN Service">>;
 candidate_label(#{kind := device}) ->
     <<"Device">>;
+candidate_label(#{kind := security_policy}) ->
+    <<"Security Policy">>;
 candidate_label(_Object) ->
     <<"Demo Object">>.
 
@@ -312,15 +395,22 @@ relationships_table(Object) ->
 relationship_rows(#{kind := device}, Relationships) ->
     key_value_table([
         {"Certificate", linked_targets(uses_certificate, Relationships)},
-        {"VPN Service", linked_targets(uses_service, Relationships)}
+        {"VPN Service", linked_targets(uses_service, Relationships)},
+        {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
 relationship_rows(#{kind := certificate}, Relationships) ->
     key_value_table([
-        {"Used By Device", linked_sources(uses_certificate, Relationships)}
+        {"Used By Device", linked_sources(uses_certificate, Relationships)},
+        {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
 relationship_rows(#{kind := vpn_service}, Relationships) ->
     key_value_table([
-        {"Used By Device", linked_sources(uses_service, Relationships)}
+        {"Used By Device", linked_sources(uses_service, Relationships)},
+        {"Security Policy", linked_targets(uses_security_policy, Relationships)}
+    ]);
+relationship_rows(#{kind := security_policy}, Relationships) ->
+    key_value_table([
+        {"Applied To", linked_sources(uses_security_policy, Relationships)}
     ]);
 relationship_rows(_Object, _Relationships) ->
     [].
@@ -362,6 +452,8 @@ object_label(certificate) ->
     <<"Certificate">>;
 object_label(vpn_service) ->
     <<"VPN Service">>;
+object_label(security_policy) ->
+    <<"Security Policy">>;
 object_label(relationship) ->
     <<"Relationship">>;
 object_label(Kind) ->

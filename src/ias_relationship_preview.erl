@@ -6,15 +6,20 @@ preview(#{kind := device} = Object) ->
       related_certificate => not_linked,
       related_vpn_service => not_linked,
       suggested_certificates => candidate_certificates(Object),
-      suggested_services => candidate_services(Object)};
+      suggested_services => candidate_services(Object),
+      suggested_security_policies => candidate_security_policies(Object)};
 preview(#{kind := certificate} = Object) ->
     #{kind => certificate,
       used_by_device => not_linked,
-      suggested_devices => candidate_devices(Object)};
+      suggested_devices => candidate_devices(Object),
+      suggested_security_policies => candidate_security_policies(Object)};
 preview(#{kind := vpn_service} = Object) ->
     #{kind => vpn_service,
       used_by_device => not_linked,
-      suggested_devices => candidate_devices(Object)};
+      suggested_devices => candidate_devices(Object),
+      suggested_security_policies => candidate_security_policies(Object)};
+preview(#{kind := security_policy}) ->
+    #{kind => security_policy};
 preview(_Object) ->
     #{kind => unknown}.
 
@@ -34,6 +39,9 @@ candidate_services(Object) ->
 
 candidate_devices(Object) ->
     candidates(Object, ias_demo_store:devices()).
+
+candidate_security_policies(_Object) ->
+    [Policy#{relationship_score => 10} || Policy <- ias_demo_store:security_policies()].
 
 candidates(Object, Objects) ->
     Scored = [Candidate#{relationship_score => score(Object, Candidate)}
@@ -56,6 +64,12 @@ score(#{kind := device} = Device, #{kind := vpn_service} = Service) ->
     device_service_score(Device, Service);
 score(#{kind := vpn_service} = Service, #{kind := device} = Device) ->
     device_service_score(Device, Service);
+score(#{kind := Kind}, #{kind := security_policy})
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+    10;
+score(#{kind := security_policy}, #{kind := Kind})
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+    10;
 score(Object, Candidate) ->
     flow_score(Object, Candidate).
 

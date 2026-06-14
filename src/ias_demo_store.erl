@@ -7,11 +7,13 @@
     devices/0,
     certificates/0,
     services/0,
+    security_policies/0,
     relationships/0,
     clear/0,
     add_device/1,
     add_certificate/1,
     add_service/1,
+    add_security_policy/1,
     add_relationship/1,
     add_enrollment_result/1,
     get_enrollment_result/1,
@@ -38,7 +40,7 @@ get(undefined) ->
 get(Id) ->
     ensure(),
     TextId = normalize_id(Id),
-    case [Object || {_Key, Object} <- ets:tab2list(?TABLE),
+    case [Object || Object <- objects(),
         maps:get(id, Object, undefined) =:= TextId] of
         [Object | _] -> {ok, Object};
         [] -> not_found
@@ -53,7 +55,7 @@ normalize_id(Id) ->
 
 all() ->
     ensure(),
-    Objects = [Object || {_Key, Object} <- ets:tab2list(?TABLE)],
+    Objects = objects(),
     lists:sort(fun compare_records/2, Objects).
 
 devices() ->
@@ -64,6 +66,9 @@ certificates() ->
 
 services() ->
     list(vpn_service).
+
+security_policies() ->
+    list(security_policy).
 
 relationships() ->
     list(relationship).
@@ -81,6 +86,9 @@ add_certificate(Certificate) when is_map(Certificate) ->
 
 add_service(Service) when is_map(Service) ->
     add_legacy(vpn_service, Service).
+
+add_security_policy(Policy) when is_map(Policy) ->
+    add_legacy(security_policy, Policy).
 
 add_relationship(Relationship) when is_map(Relationship) ->
     ensure(),
@@ -181,6 +189,13 @@ add_legacy(Kind, Object) ->
 list(Kind) ->
     [Object || Object <- all(), maps:get(kind, Object, undefined) =:= Kind].
 
+objects() ->
+    Stored = [Object || {_Key, Object} <- ets:tab2list(?TABLE)],
+    StoredIds = [maps:get(id, Object, undefined) || Object <- Stored],
+    Seeded = [Policy || Policy <- ias_security_profile:policies(),
+                        not lists:member(maps:get(id, Policy, undefined), StoredIds)],
+    Stored ++ Seeded.
+
 compare_records(A, B) ->
     {maps:get(import_id, A, undefined),
      kind_order(maps:get(kind, A, undefined)),
@@ -192,7 +207,8 @@ compare_records(A, B) ->
 kind_order(device) -> 1;
 kind_order(certificate) -> 2;
 kind_order(vpn_service) -> 3;
-kind_order(relationship) -> 4;
+kind_order(security_policy) -> 4;
+kind_order(relationship) -> 5;
 kind_order(_) -> 99.
 
 import_id() ->
