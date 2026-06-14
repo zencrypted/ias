@@ -53,6 +53,8 @@ preview(User, Profiles) ->
     Profile = profile_for_user(User, Profiles),
     ProfileId = maps:get(id, Profile),
     Claims = ias_policy:certificate_claims(Profile),
+    DeviceLock = ias_policy:device_lock(Profile),
+    TwoFactor = ias_policy:two_factor(Profile),
     Request = ias_policy:certificate_request(User, Profile, <<"peer_new">>),
     Validation = ias_policy:validate_certificate_request(Request, Profile),
     Signing = ias_policy:ca_signing_preview(Validation),
@@ -64,12 +66,14 @@ preview(User, Profiles) ->
                subject_field(),
                field("Selected User", UserName),
                field("Resolved Profile", ProfileId),
+               #h3{body = ias_html:text("Resolved Security Policy")},
+               security_policy_table(DeviceLock, TwoFactor),
                #h3{body = ias_html:text("Certificate Request")},
                certificate_request_table(Request),
                #h3{body = ias_html:text("Request Validation")},
                validation_table(Validation),
                #h3{body = ias_html:text("CA Signing Preview")},
-               signing_table(Signing),
+               signing_table(Signing, Profile),
                #h3{body = ias_html:text("Generated Claims")},
                key_value_table([
                    {"Role", maps:get(role, Claims, undefined)},
@@ -89,6 +93,8 @@ preview(User, Profiles) ->
                    {"Trusted", true},
                    {"Key Match", true}
                ]),
+               #h3{body = ias_html:text("Security Policy")},
+               security_policy_table(DeviceLock, TwoFactor),
                #h3{body = ias_html:text("Policy Evaluation")},
                policy_table(Profile)
            ]}.
@@ -120,15 +126,20 @@ cell_body(Value) ->
     ias_html:text(Value).
 
 certificate_request_table(Request) ->
-    key_value_table([
-        {"User", maps:get(user_name, Request, undefined)},
-        {"Subject CN", subject_output()},
-        {"Resolved Profile", maps:get(profile_id, Request, undefined)},
-        {"Requested Role", maps:get(requested_role, Request, undefined)},
-        {"Requested Services", ias_html:join_csv(maps:get(requested_services, Request, []))},
-        {"Requested Attributes", ias_html:join_csv(maps:get(requested_attributes, Request, []))},
-        {"Requested Trust Level", maps:get(requested_trust_level, Request, undefined)}
-    ]).
+    #panel{body = [
+        key_value_table([
+            {"User", maps:get(user_name, Request, undefined)},
+            {"Subject CN", subject_output()},
+            {"Resolved Profile", maps:get(profile_id, Request, undefined)},
+            {"Requested Role", maps:get(requested_role, Request, undefined)},
+            {"Requested Services", ias_html:join_csv(maps:get(requested_services, Request, []))},
+            {"Requested Attributes", ias_html:join_csv(maps:get(requested_attributes, Request, []))},
+            {"Requested Trust Level", maps:get(requested_trust_level, Request, undefined)}
+        ]),
+        #h3{body = ias_html:text("SECURITY POLICY")},
+        security_policy_table(maps:get(device_lock, Request, undefined),
+                              maps:get(two_factor, Request, undefined))
+    ]}.
 
 validation_table(Validation) ->
     #panel{class = <<"ias-table-container">>, body = [
@@ -156,13 +167,23 @@ validation_row(Check) ->
         #td{body = ias_html:text(maps:get(reason, Check, undefined))}
     ]}.
 
-signing_table(Signing) ->
+signing_table(Signing, Profile) ->
+    #panel{body = [
+        key_value_table([
+            {"CA", maps:get(ca, Signing, undefined)},
+            {"Decision", #span{class = <<"ias-issue-ca-decision">>,
+                               body = ias_html:text(maps:get(decision, Signing, undefined))}},
+            {"Reason", #span{class = <<"ias-issue-ca-reason">>,
+                             body = ias_html:text(maps:get(reason, Signing, undefined))}}
+        ]),
+        #h3{body = ias_html:text("Security Requirements")},
+        security_policy_table(ias_policy:device_lock(Profile), ias_policy:two_factor(Profile))
+    ]}.
+
+security_policy_table(DeviceLock, TwoFactor) ->
     key_value_table([
-        {"CA", maps:get(ca, Signing, undefined)},
-        {"Decision", #span{class = <<"ias-issue-ca-decision">>,
-                           body = ias_html:text(maps:get(decision, Signing, undefined))}},
-        {"Reason", #span{class = <<"ias-issue-ca-reason">>,
-                         body = ias_html:text(maps:get(reason, Signing, undefined))}}
+        {"Device Lock", DeviceLock},
+        {"2FA", TwoFactor}
     ]).
 
 policy_table(Profile) ->
@@ -170,11 +191,16 @@ policy_table(Profile) ->
         #table{class = <<"ias-table">>,
                header = [#tr{cells = [
                    #th{body = ias_html:text("Service")},
-                   #th{body = ias_html:text("Decision")},
+                   #th{body = ias_html:text("Result")},
                    #th{body = ias_html:text("Reason")}
                ]}],
-               body = #tbody{body = [policy_row(Profile, Service) || Service <- [vpn, ias]]}}
+               body = #tbody{body = policy_rows(Profile)}}
     ]}.
+
+policy_rows(Profile) ->
+    [policy_row(Profile, Service) || Service <- [vpn, ias]] ++
+        [security_policy_row("Device Lock Policy", ias_policy:device_lock(Profile)),
+         security_policy_row("2FA Policy", ias_policy:two_factor(Profile))].
 
 policy_row(Profile, Service) ->
     Decision = ias_policy:evaluate_service(Profile, Service),
@@ -182,6 +208,13 @@ policy_row(Profile, Service) ->
         #td{body = ias_html:text(Service)},
         #td{body = ias_html:text(maps:get(decision, Decision, deny))},
         #td{body = ias_html:text(maps:get(reason, Decision, undefined))}
+    ]}.
+
+security_policy_row(Label, Result) ->
+    #tr{cells = [
+        #td{body = ias_html:text(Label)},
+        #td{body = ias_html:text(Result)},
+        #td{body = ias_html:text("preview only")}
     ]}.
 
 check_label(profile_exists) ->

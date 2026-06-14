@@ -17,7 +17,7 @@ content() ->
         table([
             #table{class = <<"ias-table">>,
                    header = header(["Profile", "Services", "Attributes", "Certificate Claims",
-                                    "Certificate Role", "Trust Level"]),
+                                    "Certificate Role", "Trust Level", "Device Lock", "2FA"]),
                    body = #tbody{body =
                        [profile_row(Profile) || Profile <- Profiles]}}
         ])
@@ -29,7 +29,9 @@ profile_row(Profile) ->
          ias_html:join_csv(maps:get(attributes, Profile, [])),
          certificate_claims(Profile),
          maps:get(certificate_role, Profile),
-         maps:get(trust_level, Profile)]).
+         maps:get(trust_level, Profile),
+         ias_policy:device_lock(Profile),
+         ias_policy:two_factor(Profile)]).
 
 profile_name(Profile) ->
     ias_html:join([id(Profile), " - ", maps:get(name, Profile)]).

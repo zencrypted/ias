@@ -2,7 +2,7 @@
 -export([ca_signing_preview/1, certificate_claims/1, certificate_request/2,
          certificate_request/3, certificate_claims_match/2,
          evaluate_certificate/2, evaluate_service/2, evaluate_vpn/1, format_claims/1,
-         validate_certificate_request/2]).
+         device_lock/1, two_factor/1, validate_certificate_request/2]).
 
 evaluate_service(Profile, Service) when is_map(Profile) ->
     Claims = certificate_claims(Profile),
@@ -86,7 +86,9 @@ certificate_request(User, Profile, SubjectCN) ->
       requested_role => maps:get(role, Claims, undefined),
       requested_services => maps:get(services, Claims, []),
       requested_attributes => maps:get(attributes, Claims, []),
-      requested_trust_level => maps:get(trust_level, Claims, undefined)}.
+      requested_trust_level => maps:get(trust_level, Claims, undefined),
+      device_lock => device_lock(Profile),
+      two_factor => two_factor(Profile)}.
 
 validate_certificate_request(Request, Profile) when is_map(Request), is_map(Profile) ->
     Claims = certificate_claims(Profile),
@@ -128,6 +130,22 @@ format_claims(Claims) when is_map(Claims) ->
                    "; trust=", maps:get(trust_level, Claims, undefined)]);
 format_claims(_Claims) ->
     format_claims(#{}).
+
+device_lock(#{device_lock := Value}) ->
+    Value;
+device_lock(#{id := administrator}) ->
+    enabled;
+device_lock(_Profile) ->
+    disabled.
+
+two_factor(#{two_factor := Value}) ->
+    Value;
+two_factor(#{id := administrator}) ->
+    required;
+two_factor(#{id := default_user}) ->
+    optional;
+two_factor(_Profile) ->
+    optional.
 
 join_claim_values([]) ->
     <<"-">>;

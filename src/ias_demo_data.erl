@@ -63,6 +63,8 @@ profiles() ->
           services => [vpn],
           certificate_role => peer,
           trust_level => standard,
+          device_lock => disabled,
+          two_factor => optional,
           attributes => [user, device, vpn_peer]},
         #{id => administrator,
           name => <<"Administrator">>,
@@ -70,6 +72,8 @@ profiles() ->
           services => [vpn, ias],
           certificate_role => admin,
           trust_level => elevated,
+          device_lock => enabled,
+          two_factor => required,
           attributes => [admin, issue_certificates, revoke_certificates]},
         #{id => service_account,
           name => <<"Service Account">>,
@@ -77,5 +81,7 @@ profiles() ->
           services => [vpn],
           certificate_role => service,
           trust_level => restricted,
+          device_lock => disabled,
+          two_factor => optional,
           attributes => [machine, automation]}
     ].
