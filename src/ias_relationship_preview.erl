@@ -1,5 +1,5 @@
 -module(ias_relationship_preview).
--export([preview/1]).
+-export([preview/1, suggested_candidates/1, available_candidates/1]).
 
 preview(#{kind := device} = Object) ->
     #{kind => device,
@@ -17,6 +17,14 @@ preview(#{kind := vpn_service} = Object) ->
       suggested_devices => candidate_devices(Object)};
 preview(_Object) ->
     #{kind => unknown}.
+
+suggested_candidates(Candidates) ->
+    [Candidate || Candidate <- Candidates,
+                  maps:get(relationship_score, Candidate, 0) > 0].
+
+available_candidates(Candidates) ->
+    [Candidate || Candidate <- Candidates,
+                  maps:get(relationship_score, Candidate, 0) =:= 0].
 
 candidate_certificates(Object) ->
     candidates(Object, ias_demo_store:certificates()).

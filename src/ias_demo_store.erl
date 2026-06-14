@@ -7,10 +7,12 @@
     devices/0,
     certificates/0,
     services/0,
+    relationships/0,
     clear/0,
     add_device/1,
     add_certificate/1,
     add_service/1,
+    add_relationship/1,
     add_enrollment_result/1,
     get_enrollment_result/1,
     reset/0
@@ -63,6 +65,9 @@ certificates() ->
 services() ->
     list(vpn_service).
 
+relationships() ->
+    list(relationship).
+
 clear() ->
     ensure(),
     ets:delete_all_objects(?TABLE),
@@ -76,6 +81,23 @@ add_certificate(Certificate) when is_map(Certificate) ->
 
 add_service(Service) when is_map(Service) ->
     add_legacy(vpn_service, Service).
+
+add_relationship(Relationship) when is_map(Relationship) ->
+    ensure(),
+    CreatedAt = created_at(),
+    Id = maps:get(relationship_id, Relationship, relationship_id()),
+    Stored = #{id => Id,
+               relationship_id => Id,
+               kind => relationship,
+               relation_type => maps:get(relation_type, Relationship, undefined),
+               source_kind => maps:get(source_kind, Relationship, undefined),
+               source_id => maps:get(source_id, Relationship, undefined),
+               target_kind => maps:get(target_kind, Relationship, undefined),
+               target_id => maps:get(target_id, Relationship, undefined),
+               score => maps:get(score, Relationship, 0),
+               created_at => maps:get(created_at, Relationship, CreatedAt)},
+    ets:insert(?TABLE, {{relationship, Id}, Stored}),
+    Stored.
 
 add_enrollment_result(Result) when is_map(Result) ->
     ensure(),
@@ -170,6 +192,7 @@ compare_records(A, B) ->
 kind_order(device) -> 1;
 kind_order(certificate) -> 2;
 kind_order(vpn_service) -> 3;
+kind_order(relationship) -> 4;
 kind_order(_) -> 99.
 
 import_id() ->
@@ -178,6 +201,11 @@ import_id() ->
 
 record_id(Kind, ImportId) ->
     ias_html:join([ImportId, <<"_">>, Kind]).
+
+relationship_id() ->
+    ias_html:join([<<"relationship_">>,
+                   erlang:system_time(millisecond), <<"_">>,
+                   erlang:unique_integer([positive])]).
 
 enrollment_id() ->
     ias_html:join([<<"cmp_enrollment_">>,

@@ -34,6 +34,73 @@ relationship_preview_creates_no_relationship_records_test() ->
                                      maps:get(kind, Object, undefined) =:= relationship],
     ?assertEqual([], RelationshipRecords).
 
+link_certificate_to_device_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"device_link_cert">>,
+                                         common_name => <<"router-1">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"cert_link_device">>,
+                                                  requested_cn => <<"router-1">>}),
+
+    {ok, Relationship} = ias_relationship_link:create(uses_certificate,
+                                                      maps:get(id, Device),
+                                                      maps:get(id, Certificate)),
+
+    ?assertEqual(relationship, maps:get(kind, Relationship)),
+    ?assertEqual(uses_certificate, maps:get(relation_type, Relationship)),
+    ?assertEqual(device, maps:get(source_kind, Relationship)),
+    ?assertEqual(maps:get(id, Device), maps:get(source_id, Relationship)),
+    ?assertEqual(certificate, maps:get(target_kind, Relationship)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(target_id, Relationship)),
+    ?assertEqual(130, maps:get(score, Relationship)).
+
+link_vpn_service_to_device_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"device_link_service">>,
+                                         import_id => <<"service_import">>,
+                                         endpoint => <<"example.com:1194">>}),
+    Service = ias_demo_store:add_service(#{id => <<"service_link_device">>,
+                                           import_id => <<"service_import">>,
+                                           remote => <<"example.com:1194">>}),
+
+    {ok, Relationship} = ias_relationship_link:create(uses_service,
+                                                      maps:get(id, Service),
+                                                      maps:get(id, Device)),
+
+    ?assertEqual(relationship, maps:get(kind, Relationship)),
+    ?assertEqual(uses_service, maps:get(relation_type, Relationship)),
+    ?assertEqual(device, maps:get(source_kind, Relationship)),
+    ?assertEqual(maps:get(id, Device), maps:get(source_id, Relationship)),
+    ?assertEqual(vpn_service, maps:get(target_kind, Relationship)),
+    ?assertEqual(maps:get(id, Service), maps:get(target_id, Relationship)),
+    ?assert(maps:get(score, Relationship) > 0).
+
+relationship_object_rendering_metadata_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"device_rel_detail">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"cert_rel_detail">>}),
+
+    {ok, Relationship} = ias_relationship_link:create(uses_certificate,
+                                                      maps:get(id, Device),
+                                                      maps:get(id, Certificate)),
+    {ok, Loaded} = ias_demo_store:get(maps:get(id, Relationship)),
+
+    ?assertEqual(relationship, maps:get(kind, Loaded)),
+    ?assertEqual(maps:get(relationship_id, Relationship), maps:get(relationship_id, Loaded)),
+    ?assertEqual(uses_certificate, maps:get(relation_type, Loaded)),
+    ?assertEqual(maps:get(id, Device), maps:get(source_id, Loaded)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(target_id, Loaded)).
+
+score_zero_candidates_are_excluded_from_suggested_test() ->
+    Candidates = [
+        #{id => <<"suggested">>, relationship_score => 20},
+        #{id => <<"available">>, relationship_score => 0}
+    ],
+
+    ?assertEqual([<<"suggested">>],
+                 ids(ias_relationship_preview:suggested_candidates(Candidates))),
+    ?assertEqual([<<"available">>],
+                 ids(ias_relationship_preview:available_candidates(Candidates))).
+
 exact_cn_match_ranks_highest_test() ->
     ias_demo_store:clear(),
     Certificate = ias_demo_store:add_certificate(#{
