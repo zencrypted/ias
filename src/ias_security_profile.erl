@@ -133,15 +133,15 @@ users_using(ProfileId) ->
 devices_using(ProfileId) ->
     DemoDevices = [Device || Device <- ias_demo_store:devices(),
                              maps:get(profile_id, Device, undefined) =:= ProfileId],
-    StaticDevices = [Device || Device <- ias_demo_data:devices(),
-                               maps:get(profile_id, Device, undefined) =:= ProfileId],
-    StaticDevices ++ DemoDevices ++ linked_objects(ProfileId, device).
+    StaticDevices = resolved_static_objects([Device || Device <- ias_demo_data:devices(),
+                                                       maps:get(profile_id, Device, undefined) =:= ProfileId]),
+    unique_by_id(StaticDevices ++ DemoDevices ++ linked_objects(ProfileId, device)).
 
 certificates_using(ProfileId) ->
     DemoCertificates = [Certificate || Certificate <- ias_demo_store:certificates(),
                                        maps:get(profile_id, Certificate, undefined) =:= ProfileId],
-    StaticCertificates = [Certificate || Certificate <- ias_demo_data:certificates(),
-                                         maps:get(profile_id, Certificate, undefined) =:= ProfileId],
+    StaticCertificates = resolved_static_objects([Certificate || Certificate <- ias_demo_data:certificates(),
+                                                                 maps:get(profile_id, Certificate, undefined) =:= ProfileId]),
     unique_by_id(StaticCertificates ++ DemoCertificates ++ issued_certificates(ProfileId) ++
                  linked_objects(ProfileId, certificate)).
 
@@ -160,6 +160,10 @@ linked_objects(ProfileId, Kind) ->
                maps:get(target_id, Relationship, undefined) =:= ProfileId,
                maps:get(source_kind, Relationship, undefined) =:= Kind,
                {ok, Object} <- [ias_demo_store:get(maps:get(source_id, Relationship, undefined))]].
+
+resolved_static_objects(Objects) ->
+    [Resolved || Object <- Objects,
+                 {ok, Resolved} <- [ias_demo_store:get(maps:get(id, Object, undefined))]].
 
 unique_by_id(Objects) ->
     unique_by_id(Objects, [], []).

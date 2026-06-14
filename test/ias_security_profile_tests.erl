@@ -86,10 +86,21 @@ security_profile_relationship_preview_test() ->
     Relationships = ias_security_profile:relationship_preview(Profile),
 
     ?assert(lists:member(bob, ids(maps:get(users, Relationships)))),
-    ?assert(lists:member(workstation1, ids(maps:get(devices, Relationships)))),
+    ?assertNot(lists:member(workstation1, ids(maps:get(devices, Relationships)))),
     ?assert(lists:member(<<"device_profile_demo">>, ids(maps:get(devices, Relationships)))),
-    ?assert(lists:member(cert3, ids(maps:get(certificates, Relationships)))),
+    ?assertNot(lists:member(cert3, ids(maps:get(certificates, Relationships)))),
     ?assert(lists:member(<<"cert_profile_demo">>, ids(maps:get(certificates, Relationships)))).
+
+security_profile_relationship_preview_skips_unresolved_static_references_test() ->
+    ias_demo_store:clear(),
+
+    {ok, Certificate} = ias_certificate_issue_demo:issue(bob, <<"bob-vpn">>,
+                                                         ias_demo_data:profiles()),
+    {ok, Profile} = ias_security_profile:profile(<<"default_user">>),
+    Relationships = ias_security_profile:relationship_preview(Profile),
+
+    ?assertEqual([], ids(maps:get(devices, Relationships))),
+    ?assertEqual([maps:get(id, Certificate)], ids(maps:get(certificates, Relationships))).
 
 security_profile_relationship_engine_link_test() ->
     ias_demo_store:clear(),
