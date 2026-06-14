@@ -371,14 +371,18 @@ candidate_row(Type, Candidate, RelationType, SourceId) ->
 
 candidate_action(Candidate, RelationType, SourceId) ->
     TargetId = maps:get(id, Candidate, undefined),
-    case ias_relationship_link:exists(RelationType, SourceId, TargetId) of
-        not_found ->
+    case ias_relationship_link:status(RelationType, SourceId, TargetId) of
+        link ->
             #link{class = [button, sgreen],
                   style = <<"display:inline-block;">>,
                   body = ias_html:text("Link"),
                   postback = {link_relationship, RelationType, SourceId, TargetId}};
-        _Relationship ->
-            ias_html:text("Linked")
+        {linked, _Relationship} ->
+            ias_html:text("Linked");
+        {already_has_policy, PolicyId, _Relationship} ->
+            ias_html:join([<<"Already has policy: ">>, ias_html:text(PolicyId)]);
+        _ ->
+            ias_html:text("not found")
     end.
 
 candidate_link(Candidate) ->
