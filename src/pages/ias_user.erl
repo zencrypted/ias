@@ -75,11 +75,16 @@ cell_body(Value) ->
     ias_html:text(Value).
 
 profile_link(undefined) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 profile_link(ProfileId) ->
     TextId = ias_html:text(ProfileId),
-    #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
-          body = TextId}.
+    case ias_security_profile:profile(ProfileId) of
+        {ok, _Profile} ->
+            #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
+                  body = TextId};
+        not_found ->
+            <<"not found">>
+    end.
 
 issued_certificates(User) ->
     Links = [certificate_link(maps:get(id, Certificate, undefined))
@@ -92,7 +97,7 @@ certificate_link(Id) ->
           body = ias_html:join([<<"Certificate #">>, TextId])}.
 
 links_or_not_found([]) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 links_or_not_found(Links) ->
     #panel{body = join_links(Links, [])}.
 

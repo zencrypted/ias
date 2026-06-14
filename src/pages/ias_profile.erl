@@ -104,13 +104,13 @@ cell_body(Value) ->
     ias_html:text(Value).
 
 users_list([]) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 users_list(Users) ->
     #panel{body = join_values([maps:get(name, User, maps:get(id, User, undefined))
                                || User <- Users], [])}.
 
 object_list([]) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 object_list(Objects) ->
     #panel{body = join_values([object_ref(Object) || Object <- Objects], [])}.
 
@@ -130,7 +130,7 @@ object_ref(Object) ->
             #link{url = ias_html:join([<<"/app/demo.htm?id=">>, TextId]),
                   body = ias_html:join([object_label(Kind), <<" #">>, TextId])};
         not_found ->
-            ias_html:text(Id)
+            <<"not found">>
     end.
 
 object_label(device) ->

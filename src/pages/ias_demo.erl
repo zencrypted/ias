@@ -176,19 +176,19 @@ relationship_preview(Object) ->
                      uses_certificate, SourceId},
                     {"Suggested VPN Service", ias_relationship_preview:suggested_candidates(maps:get(suggested_services, Preview, [])),
                      uses_service, SourceId}
-                ]),
+                ], <<"no candidates">>),
                 #h3{body = ias_html:text("Available Objects")},
                 candidate_table([
                     {"Available Certificates", ias_relationship_preview:available_candidates(maps:get(suggested_certificates, Preview, [])),
                      uses_certificate, SourceId},
                     {"Available VPN Services", ias_relationship_preview:available_candidates(maps:get(suggested_services, Preview, [])),
                      uses_service, SourceId}
-                ]),
+                ], <<"no available objects">>),
                 #h3{body = ias_html:text("Suggested Security Policies")},
                 candidate_table([
                     {"Security Policy", maps:get(suggested_security_policies, Preview, []),
                      uses_security_policy, SourceId}
-                ])
+                ], <<"no candidates">>)
             ]};
         #{kind := certificate} = Preview ->
             SourceId = maps:get(id, Object, undefined),
@@ -203,17 +203,17 @@ relationship_preview(Object) ->
                 candidate_table([
                     {"Suggested Devices", ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_certificate, SourceId}
-                ]),
+                ], <<"no candidates">>),
                 #h3{body = ias_html:text("Available Objects")},
                 candidate_table([
                     {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_certificate, SourceId}
-                ]),
+                ], <<"no available objects">>),
                 #h3{body = ias_html:text("Suggested Security Policies")},
                 candidate_table([
                     {"Security Policy", maps:get(suggested_security_policies, Preview, []),
                      uses_security_policy, SourceId}
-                ])
+                ], <<"no candidates">>)
             ]};
         #{kind := vpn_service} = Preview ->
             SourceId = maps:get(id, Object, undefined),
@@ -228,17 +228,17 @@ relationship_preview(Object) ->
                 candidate_table([
                     {"Suggested Devices", ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_service, SourceId}
-                ]),
+                ], <<"no candidates">>),
                 #h3{body = ias_html:text("Available Objects")},
                 candidate_table([
                     {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_service, SourceId}
-                ]),
+                ], <<"no available objects">>),
                 #h3{body = ias_html:text("Suggested Security Policies")},
                 candidate_table([
                     {"Security Policy", maps:get(suggested_security_policies, Preview, []),
                     uses_security_policy, SourceId}
-                ])
+                ], <<"no candidates">>)
             ]};
         #{kind := security_policy} ->
             Relationships = ias_relationship_link:relationships_for(Object),
@@ -339,24 +339,24 @@ not_linked(not_linked) ->
 not_linked(Value) ->
     Value.
 
-candidate_table(Groups) ->
+candidate_table(Groups, EmptyLabel) ->
     Header = #tr{cells = [
         #th{body = ias_html:text("Type")},
         #th{body = ias_html:text("Object")},
         #th{body = ias_html:text("Action")}
     ]},
-    Rows = candidate_rows(Groups),
+    Rows = candidate_rows(Groups, EmptyLabel),
     #panel{class = <<"ias-table-container">>, body = [
         #table{class = <<"ias-table">>,
                body = #tbody{body = [Header | Rows]}}
     ]}.
 
-candidate_rows(Groups) ->
+candidate_rows(Groups, EmptyLabel) ->
     Rows = [candidate_row(Type, Candidate, RelationType, SourceId)
             || {Type, Candidates, RelationType, SourceId} <- Groups,
                Candidate <- Candidates],
     case Rows of
-        [] -> [#tr{cells = [#td{body = ias_html:text("not found"), colspan = 3}]}];
+        [] -> [#tr{cells = [#td{body = ias_html:text(EmptyLabel), colspan = 3}]}];
         _ -> Rows
     end.
 
@@ -456,18 +456,35 @@ join_links([Link | Rest], []) ->
 join_links([Link | Rest], Acc) ->
     join_links(Rest, [Link, #br{} | Acc]).
 
+object_ref(_Kind, undefined) ->
+    <<"not found">>;
 object_ref(user, Id) ->
     TextId = ias_html:text(Id),
-    #link{url = ias_html:join([<<"/app/user.htm?id=">>, TextId]),
-          body = ias_html:join([object_label(user), <<" #">>, TextId])};
+    case ias_demo_store:get(Id) of
+        {ok, #{kind := user}} ->
+            #link{url = ias_html:join([<<"/app/user.htm?id=">>, TextId]),
+                  body = ias_html:join([object_label(user), <<" #">>, TextId])};
+        _ ->
+            <<"not found">>
+    end;
 object_ref(security_profile, Id) ->
     TextId = ias_html:text(Id),
-    #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
-          body = ias_html:join([object_label(security_profile), <<" #">>, TextId])};
+    case ias_demo_store:get(Id) of
+        {ok, #{kind := security_profile}} ->
+            #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
+                  body = ias_html:join([object_label(security_profile), <<" #">>, TextId])};
+        _ ->
+            <<"not found">>
+    end;
 object_ref(Kind, Id) ->
     TextId = ias_html:text(Id),
-    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, TextId]),
-          body = ias_html:join([object_label(Kind), <<" #">>, TextId])}.
+    case ias_demo_store:get(Id) of
+        {ok, #{kind := Kind}} ->
+            #link{url = ias_html:join([<<"/app/demo.htm?id=">>, TextId]),
+                  body = ias_html:join([object_label(Kind), <<" #">>, TextId])};
+        _ ->
+            <<"not found">>
+    end.
 
 object_label(device) ->
     <<"Device">>;
@@ -487,31 +504,41 @@ object_label(Kind) ->
     ias_html:text(Kind).
 
 certificate_ref(not_found) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 certificate_ref(Certificate) ->
     object_ref(certificate, maps:get(id, Certificate, undefined)).
 
 device_ref(not_found) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 device_ref(Device) ->
     object_ref(device, maps:get(id, Device, undefined)).
 
 user_ref(undefined) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 user_ref(UserId) ->
     TextId = ias_html:text(UserId),
-    #link{url = ias_html:join([<<"/app/user.htm?id=">>, TextId]),
-          body = TextId}.
+    case ias_demo_store:get(UserId) of
+        {ok, #{kind := user}} ->
+            #link{url = ias_html:join([<<"/app/user.htm?id=">>, TextId]),
+                  body = TextId};
+        _ ->
+            <<"not found">>
+    end.
 
 profile_ref(undefined) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 profile_ref(ProfileId) ->
     TextId = ias_html:text(ProfileId),
-    #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
-          body = TextId}.
+    case ias_demo_store:get(ProfileId) of
+        {ok, #{kind := security_profile}} ->
+            #link{url = ias_html:join([<<"/app/profile.htm?id=">>, TextId]),
+                  body = TextId};
+        _ ->
+            <<"not found">>
+    end.
 
 transition_certificate(_Origin, not_found) ->
-    <<"not found">>;
+    <<"not linked yet">>;
 transition_certificate(Origin, Certificate) ->
     Id = ias_html:text(maps:get(id, Certificate, undefined)),
     #link{url = ias_html:join([<<"/app/demo.htm?id=">>, Id]),
