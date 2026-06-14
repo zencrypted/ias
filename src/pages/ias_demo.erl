@@ -150,18 +150,18 @@ relationship_preview(Object) ->
                     {"Related VPN Service", linked_targets(uses_service, Relationships)}
                 ]),
                 #h3{body = ias_html:text("Suggested Relationships")},
-                key_value_table([
-                    {"Suggested Certificate", candidate_links(ias_relationship_preview:suggested_candidates(maps:get(suggested_certificates, Preview, [])),
-                                                             uses_certificate, SourceId, "Link Certificate")},
-                    {"Suggested VPN Service", candidate_links(ias_relationship_preview:suggested_candidates(maps:get(suggested_services, Preview, [])),
-                                                             uses_service, SourceId, "Link VPN Service")}
+                candidate_table([
+                    {"Suggested Certificate", ias_relationship_preview:suggested_candidates(maps:get(suggested_certificates, Preview, [])),
+                     uses_certificate, SourceId},
+                    {"Suggested VPN Service", ias_relationship_preview:suggested_candidates(maps:get(suggested_services, Preview, [])),
+                     uses_service, SourceId}
                 ]),
                 #h3{body = ias_html:text("Available Objects")},
-                key_value_table([
-                    {"Available Certificates", candidate_links(ias_relationship_preview:available_candidates(maps:get(suggested_certificates, Preview, [])),
-                                                              uses_certificate, SourceId, "Link Certificate")},
-                    {"Available VPN Services", candidate_links(ias_relationship_preview:available_candidates(maps:get(suggested_services, Preview, [])),
-                                                              uses_service, SourceId, "Link VPN Service")}
+                candidate_table([
+                    {"Available Certificates", ias_relationship_preview:available_candidates(maps:get(suggested_certificates, Preview, [])),
+                     uses_certificate, SourceId},
+                    {"Available VPN Services", ias_relationship_preview:available_candidates(maps:get(suggested_services, Preview, [])),
+                     uses_service, SourceId}
                 ])
             ]};
         #{kind := certificate} = Preview ->
@@ -174,14 +174,14 @@ relationship_preview(Object) ->
                     {"Used By Device", linked_sources(uses_certificate, Relationships)}
                 ]),
                 #h3{body = ias_html:text("Suggested Relationships")},
-                key_value_table([
-                    {"Suggested Devices", candidate_links(ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
-                                                         uses_certificate, SourceId, "Link Device")}
+                candidate_table([
+                    {"Suggested Devices", ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
+                     uses_certificate, SourceId}
                 ]),
                 #h3{body = ias_html:text("Available Objects")},
-                key_value_table([
-                    {"Available Devices", candidate_links(ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
-                                                         uses_certificate, SourceId, "Link Device")}
+                candidate_table([
+                    {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
+                     uses_certificate, SourceId}
                 ])
             ]};
         #{kind := vpn_service} = Preview ->
@@ -194,14 +194,14 @@ relationship_preview(Object) ->
                     {"Used By Device", linked_sources(uses_service, Relationships)}
                 ]),
                 #h3{body = ias_html:text("Suggested Relationships")},
-                key_value_table([
-                    {"Suggested Devices", candidate_links(ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
-                                                         uses_service, SourceId, "Link Device")}
+                candidate_table([
+                    {"Suggested Devices", ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
+                     uses_service, SourceId}
                 ]),
                 #h3{body = ias_html:text("Available Objects")},
-                key_value_table([
-                    {"Available Devices", candidate_links(ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
-                                                         uses_service, SourceId, "Link Device")}
+                candidate_table([
+                    {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
+                     uses_service, SourceId}
                 ])
             ]};
         _ ->
@@ -243,27 +243,43 @@ not_linked(not_linked) ->
 not_linked(Value) ->
     Value.
 
-candidate_links([], _RelationType, _SourceId, _LinkLabel) ->
-    <<"not found">>;
-candidate_links(Candidates, RelationType, SourceId, LinkLabel) ->
-    #panel{body = candidate_links(Candidates, RelationType, SourceId, LinkLabel, [])}.
-
-candidate_links([], _RelationType, _SourceId, _LinkLabel, Acc) ->
-    lists:reverse(Acc);
-candidate_links([Candidate | Rest], RelationType, SourceId, LinkLabel, []) ->
-    candidate_links(Rest, RelationType, SourceId, LinkLabel,
-                    [candidate_item(Candidate, RelationType, SourceId, LinkLabel)]);
-candidate_links([Candidate | Rest], RelationType, SourceId, LinkLabel, Acc) ->
-    candidate_links(Rest, RelationType, SourceId, LinkLabel,
-                    [candidate_item(Candidate, RelationType, SourceId, LinkLabel), #br{} | Acc]).
-
-candidate_item(Candidate, RelationType, SourceId, LinkLabel) ->
-    #panel{style = <<"margin:0 0 8px 0;">>, body = [
-        candidate_link(Candidate),
-        #br{},
-        #link{body = ias_html:text(LinkLabel),
-              postback = {link_relationship, RelationType, SourceId, maps:get(id, Candidate, undefined)}}
+candidate_table(Groups) ->
+    Rows = candidate_rows(Groups),
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = [
+                   #thead{body = #tr{cells = [
+                       #th{body = ias_html:text("Type")},
+                       #th{body = ias_html:text("Object")},
+                       #th{body = ias_html:text("Action")}
+                   ]}},
+                   #tbody{body = Rows}
+               ]}
     ]}.
+
+candidate_rows(Groups) ->
+    Rows = [candidate_row(Type, Candidate, RelationType, SourceId)
+            || {Type, Candidates, RelationType, SourceId} <- Groups,
+               Candidate <- Candidates],
+    case Rows of
+        [] -> [#tr{cells = [#td{body = ias_html:text("not found"), colspan = 3}]}];
+        _ -> Rows
+    end.
+
+candidate_row(Type, Candidate, RelationType, SourceId) ->
+    #tr{cells = [
+        #td{style = <<"width:24%;">>, body = ias_html:text(Type)},
+        #td{style = <<"word-break:break-all;white-space:normal;">>,
+            body = candidate_link(Candidate)},
+        #td{style = <<"width:90px;white-space:nowrap;">>,
+            body = candidate_action(Candidate, RelationType, SourceId)}
+    ]}.
+
+candidate_action(Candidate, RelationType, SourceId) ->
+    #link{class = [button, sgreen],
+          style = <<"display:inline-block;">>,
+          body = ias_html:text("Link"),
+          postback = {link_relationship, RelationType, SourceId, maps:get(id, Candidate, undefined)}}.
 
 candidate_link(Candidate) ->
     Id = maps:get(id, Candidate, undefined),
