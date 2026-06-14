@@ -125,7 +125,28 @@ existing_relationship_is_detected_for_link_action_test() ->
                                                            maps:get(id, Device),
                                                            maps:get(id, Service)))).
 
-certificate_security_policy_is_singleton_test() ->
+device_security_policy_is_singleton_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"device_policy_singleton">>}),
+
+    {ok, HighSecurity} = ias_relationship_link:create(uses_security_policy,
+                                                      maps:get(id, Device),
+                                                      <<"high_security">>),
+    ?assertMatch({error, {already_has_policy, <<"high_security">>}},
+                 ias_relationship_link:create(uses_security_policy,
+                                              maps:get(id, Device),
+                                              <<"standard">>)),
+    ?assertMatch({already_has_policy, <<"high_security">>, _},
+                 ias_relationship_link:status(uses_security_policy,
+                                              maps:get(id, Device),
+                                              <<"standard">>)),
+
+    Relationships = security_policy_relationships_for(Device),
+    ?assertEqual([maps:get(id, HighSecurity)], ids(Relationships)),
+    ?assertEqual([<<"high_security">>], [maps:get(target_id, Relationship)
+                                         || Relationship <- Relationships]).
+
+certificate_security_policy_is_still_singleton_test() ->
     ias_demo_store:clear(),
     Certificate = ias_demo_store:add_certificate(#{id => <<"cert_policy_singleton">>}),
 
@@ -146,6 +167,27 @@ certificate_security_policy_is_singleton_test() ->
     ?assertEqual([<<"high_security">>], [maps:get(target_id, Relationship)
                                          || Relationship <- Relationships]).
 
+vpn_service_security_policy_is_singleton_test() ->
+    ias_demo_store:clear(),
+    Service = ias_demo_store:add_service(#{id => <<"service_policy_singleton">>}),
+
+    {ok, Standard} = ias_relationship_link:create(uses_security_policy,
+                                                  maps:get(id, Service),
+                                                  <<"standard">>),
+    ?assertMatch({error, {already_has_policy, <<"standard">>}},
+                 ias_relationship_link:create(uses_security_policy,
+                                              maps:get(id, Service),
+                                              <<"high_security">>)),
+    ?assertMatch({already_has_policy, <<"standard">>, _},
+                 ias_relationship_link:status(uses_security_policy,
+                                              maps:get(id, Service),
+                                              <<"high_security">>)),
+
+    Relationships = security_policy_relationships_for(Service),
+    ?assertEqual([maps:get(id, Standard)], ids(Relationships)),
+    ?assertEqual([<<"standard">>], [maps:get(target_id, Relationship)
+                                    || Relationship <- Relationships]).
+
 same_security_policy_link_is_idempotent_test() ->
     ias_demo_store:clear(),
     Certificate = ias_demo_store:add_certificate(#{id => <<"cert_policy_idempotent">>}),
@@ -160,21 +202,29 @@ same_security_policy_link_is_idempotent_test() ->
     ?assertEqual(maps:get(id, First), maps:get(id, Second)),
     ?assertEqual([maps:get(id, First)], ids(security_policy_relationships_for(Certificate))).
 
-security_policy_can_apply_to_many_certificates_test() ->
+security_policy_can_apply_to_many_object_kinds_test() ->
     ias_demo_store:clear(),
-    Certificate1 = ias_demo_store:add_certificate(#{id => <<"cert_policy_many_1">>}),
-    Certificate2 = ias_demo_store:add_certificate(#{id => <<"cert_policy_many_2">>}),
+    Device = ias_demo_store:add_device(#{id => <<"device_policy_many">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"cert_policy_many">>}),
+    Service = ias_demo_store:add_service(#{id => <<"service_policy_many">>}),
 
     {ok, Relationship1} = ias_relationship_link:create(uses_security_policy,
-                                                       maps:get(id, Certificate1),
+                                                       maps:get(id, Device),
                                                        <<"high_security">>),
     {ok, Relationship2} = ias_relationship_link:create(uses_security_policy,
-                                                       maps:get(id, Certificate2),
+                                                       maps:get(id, Certificate),
+                                                       <<"high_security">>),
+    {ok, Relationship3} = ias_relationship_link:create(uses_security_policy,
+                                                       maps:get(id, Service),
                                                        <<"high_security">>),
 
-    ?assertEqual(lists:sort([maps:get(id, Relationship1), maps:get(id, Relationship2)]),
+    ?assertEqual(lists:sort([maps:get(id, Relationship1),
+                             maps:get(id, Relationship2),
+                             maps:get(id, Relationship3)]),
                  lists:sort(ids(security_policy_relationships()))),
-    ?assertEqual(lists:sort([maps:get(id, Certificate1), maps:get(id, Certificate2)]),
+    ?assertEqual(lists:sort([maps:get(id, Device),
+                             maps:get(id, Certificate),
+                             maps:get(id, Service)]),
                  lists:sort([maps:get(source_id, Relationship)
                              || Relationship <- security_policy_relationships()])).
 
@@ -314,5 +364,4 @@ security_policy_relationships_for(Certificate) ->
 security_policy_relationships() ->
     [Relationship || Relationship <- ias_demo_store:relationships(),
                      maps:get(relation_type, Relationship, undefined) =:= uses_security_policy,
-                     maps:get(source_kind, Relationship, undefined) =:= certificate,
                      maps:get(target_kind, Relationship, undefined) =:= security_policy].

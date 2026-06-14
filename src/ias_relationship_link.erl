@@ -76,11 +76,11 @@ create_for_objects(issued_certificate, #{kind := certificate} = Certificate,
 create_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 
-create_relationship(uses_security_policy, #{kind := certificate} = Certificate,
+create_relationship(uses_security_policy, Source,
                     #{kind := security_policy} = Policy) ->
-    case relationship_status(uses_security_policy, Certificate, Policy) of
+    case relationship_status(uses_security_policy, Source, Policy) of
         link ->
-            add_relationship(uses_security_policy, Certificate, Policy);
+            add_relationship(uses_security_policy, Source, Policy);
         {linked, Relationship} ->
             {ok, Relationship};
         {already_has_policy, PolicyId, _Relationship} ->
@@ -167,9 +167,9 @@ existing_relationship(RelationType, Source, Target) ->
         [] -> not_found
     end.
 
-relationship_status(uses_security_policy, #{kind := certificate} = Certificate,
+relationship_status(uses_security_policy, Source,
                     #{kind := security_policy} = Policy) ->
-    case existing_security_policy_relationship(Certificate) of
+    case existing_security_policy_relationship(Source) of
         not_found ->
             link;
         #{target_id := PolicyId} = Relationship ->
@@ -184,12 +184,13 @@ relationship_status(RelationType, Source, Target) ->
         Relationship -> {linked, Relationship}
     end.
 
-existing_security_policy_relationship(Certificate) ->
-    CertificateId = maps:get(id, Certificate, undefined),
+existing_security_policy_relationship(Source) ->
+    SourceKind = maps:get(kind, Source, undefined),
+    SourceId = maps:get(id, Source, undefined),
     case [Relationship || Relationship <- ias_demo_store:relationships(),
                           maps:get(relation_type, Relationship, undefined) =:= uses_security_policy,
-                          maps:get(source_kind, Relationship, undefined) =:= certificate,
-                          maps:get(source_id, Relationship, undefined) =:= CertificateId,
+                          maps:get(source_kind, Relationship, undefined) =:= SourceKind,
+                          maps:get(source_id, Relationship, undefined) =:= SourceId,
                           maps:get(target_kind, Relationship, undefined) =:= security_policy] of
         [Relationship | _] -> Relationship;
         [] -> not_found
