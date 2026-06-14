@@ -244,17 +244,15 @@ not_linked(Value) ->
     Value.
 
 candidate_table(Groups) ->
+    Header = #tr{cells = [
+        #th{body = ias_html:text("Type")},
+        #th{body = ias_html:text("Object")},
+        #th{body = ias_html:text("Action")}
+    ]},
     Rows = candidate_rows(Groups),
     #panel{class = <<"ias-table-container">>, body = [
         #table{class = <<"ias-table">>,
-               body = [
-                   #thead{body = #tr{cells = [
-                       #th{body = ias_html:text("Type")},
-                       #th{body = ias_html:text("Object")},
-                       #th{body = ias_html:text("Action")}
-                   ]}},
-                   #tbody{body = Rows}
-               ]}
+               body = #tbody{body = [Header | Rows]}}
     ]}.
 
 candidate_rows(Groups) ->
