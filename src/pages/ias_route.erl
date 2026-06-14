@@ -19,6 +19,7 @@ route(<<"app/devices",      _/binary>>) -> ias_devices;
 route(<<"app/services",     _/binary>>) -> ias_services;
 route(<<"app/certificates", _/binary>>) -> ias_certificates;
 route(<<"app/profiles",     _/binary>>) -> ias_profiles;
+route(<<"app/profile",      _/binary>>) -> ias_profile;
 route(<<"app/relationships", _/binary>>) -> ias_relationships;
 route(<<"app/vpn",          _/binary>>) -> ias_vpn;
 route(<<"app/ovpn",         _/binary>>) -> ias_ovpn;

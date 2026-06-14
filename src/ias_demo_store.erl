@@ -7,6 +7,7 @@
     devices/0,
     certificates/0,
     services/0,
+    security_profiles/0,
     security_policies/0,
     relationships/0,
     clear/0,
@@ -41,7 +42,7 @@ get(Id) ->
     ensure(),
     TextId = normalize_id(Id),
     case [Object || Object <- objects(),
-        maps:get(id, Object, undefined) =:= TextId] of
+        normalize_id(maps:get(id, Object, undefined)) =:= TextId] of
         [Object | _] -> {ok, Object};
         [] -> not_found
     end.
@@ -66,6 +67,9 @@ certificates() ->
 
 services() ->
     list(vpn_service).
+
+security_profiles() ->
+    list(security_profile).
 
 security_policies() ->
     list(security_policy).
@@ -192,8 +196,9 @@ list(Kind) ->
 objects() ->
     Stored = [Object || {_Key, Object} <- ets:tab2list(?TABLE)],
     StoredIds = [maps:get(id, Object, undefined) || Object <- Stored],
-    Seeded = [Policy || Policy <- ias_security_profile:policies(),
-                        not lists:member(maps:get(id, Policy, undefined), StoredIds)],
+    SeedObjects = ias_security_profile:policies() ++ ias_security_profile:profiles(),
+    Seeded = [Object || Object <- SeedObjects,
+                        not lists:member(maps:get(id, Object, undefined), StoredIds)],
     Stored ++ Seeded.
 
 compare_records(A, B) ->
@@ -207,8 +212,9 @@ compare_records(A, B) ->
 kind_order(device) -> 1;
 kind_order(certificate) -> 2;
 kind_order(vpn_service) -> 3;
-kind_order(security_policy) -> 4;
-kind_order(relationship) -> 5;
+kind_order(security_profile) -> 4;
+kind_order(security_policy) -> 5;
+kind_order(relationship) -> 6;
 kind_order(_) -> 99.
 
 import_id() ->

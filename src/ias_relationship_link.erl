@@ -45,6 +45,14 @@ create_for_objects(uses_security_policy, #{kind := security_policy} = Policy,
                    #{kind := Kind} = Object)
   when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
     create_relationship(uses_security_policy, Object, Policy);
+create_for_objects(uses_security_profile, #{kind := Kind} = Object,
+                   #{kind := security_profile} = Profile)
+  when Kind =:= user; Kind =:= device; Kind =:= certificate ->
+    create_relationship(uses_security_profile, Object, Profile);
+create_for_objects(uses_security_profile, #{kind := security_profile} = Profile,
+                   #{kind := Kind} = Object)
+  when Kind =:= user; Kind =:= device; Kind =:= certificate ->
+    create_relationship(uses_security_profile, Object, Profile);
 create_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 
@@ -88,6 +96,14 @@ canonical_for_objects(uses_security_policy, #{kind := security_policy} = Policy,
                       #{kind := Kind} = Object)
   when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
     {ok, uses_security_policy, Object, Policy};
+canonical_for_objects(uses_security_profile, #{kind := Kind} = Object,
+                      #{kind := security_profile} = Profile)
+  when Kind =:= user; Kind =:= device; Kind =:= certificate ->
+    {ok, uses_security_profile, Object, Profile};
+canonical_for_objects(uses_security_profile, #{kind := security_profile} = Profile,
+                      #{kind := Kind} = Object)
+  when Kind =:= user; Kind =:= device; Kind =:= certificate ->
+    {ok, uses_security_profile, Object, Profile};
 canonical_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 
