@@ -142,8 +142,8 @@ certificates_using(ProfileId) ->
                                        maps:get(profile_id, Certificate, undefined) =:= ProfileId],
     StaticCertificates = [Certificate || Certificate <- ias_demo_data:certificates(),
                                          maps:get(profile_id, Certificate, undefined) =:= ProfileId],
-    StaticCertificates ++ DemoCertificates ++ issued_certificates(ProfileId) ++
-        linked_objects(ProfileId, certificate).
+    unique_by_id(StaticCertificates ++ DemoCertificates ++ issued_certificates(ProfileId) ++
+                 linked_objects(ProfileId, certificate)).
 
 issued_certificates(ProfileId) ->
     [Certificate || Relationship <- ias_demo_store:relationships(),
@@ -160,6 +160,18 @@ linked_objects(ProfileId, Kind) ->
                maps:get(target_id, Relationship, undefined) =:= ProfileId,
                maps:get(source_kind, Relationship, undefined) =:= Kind,
                {ok, Object} <- [ias_demo_store:get(maps:get(source_id, Relationship, undefined))]].
+
+unique_by_id(Objects) ->
+    unique_by_id(Objects, [], []).
+
+unique_by_id([], _Seen, Acc) ->
+    lists:reverse(Acc);
+unique_by_id([Object | Rest], Seen, Acc) ->
+    Id = maps:get(id, Object, undefined),
+    case lists:member(Id, Seen) of
+        true -> unique_by_id(Rest, Seen, Acc);
+        false -> unique_by_id(Rest, [Id | Seen], [Object | Acc])
+    end.
 
 standard_policy() ->
     #{id => <<"standard">>,

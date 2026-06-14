@@ -57,6 +57,18 @@ security_profile_preview_shows_issued_certificate_test() ->
     ?assert(lists:member(maps:get(id, Certificate),
                          ids(maps:get(certificates, Relationships)))).
 
+security_profile_issued_certificates_are_deduplicated_test() ->
+    ias_demo_store:clear(),
+
+    {ok, Certificate} = ias_certificate_issue_demo:issue(alice, <<"peer_new">>,
+                                                         ias_demo_data:profiles()),
+    {ok, Profile} = ias_security_profile:profile(<<"administrator">>),
+    Relationships = ias_security_profile:relationship_preview(Profile),
+    CertificateId = maps:get(id, Certificate),
+    CertificateIds = ids(maps:get(certificates, Relationships)),
+
+    ?assertEqual([CertificateId], [Id || Id <- CertificateIds, Id =:= CertificateId]).
+
 user_relationships_show_issued_certificate_test() ->
     ias_demo_store:clear(),
 
