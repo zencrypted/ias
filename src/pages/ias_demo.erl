@@ -258,9 +258,9 @@ candidate_links([Candidate | Rest], RelationType, SourceId, LinkLabel, Acc) ->
                     [candidate_item(Candidate, RelationType, SourceId, LinkLabel), #br{} | Acc]).
 
 candidate_item(Candidate, RelationType, SourceId, LinkLabel) ->
-    #span{body = [
+    #panel{style = <<"margin:0 0 8px 0;">>, body = [
         candidate_link(Candidate),
-        ias_html:text(" "),
+        #br{},
         #link{body = ias_html:text(LinkLabel),
               postback = {link_relationship, RelationType, SourceId, maps:get(id, Candidate, undefined)}}
     ]}.
