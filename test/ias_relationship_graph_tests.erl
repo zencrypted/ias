@@ -7,8 +7,23 @@ relationship_type_is_known_test() ->
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_certificate)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_security_policy)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_vpn_service)),
+    ?assertEqual(true, ias_relationship_graph:known_relationship_type(issues)),
     ?assertEqual(false, ias_relationship_graph:known_relationship_type(uses_service)),
     ?assertEqual(false, ias_relationship_graph:known_relationship_type(unknown_relation)).
+
+relationship_tree_render_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"tree_device">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"tree_certificate">>}),
+    {ok, Relationship} = ias_relationship_link:create(uses_certificate,
+                                                       maps:get(id, Device),
+                                                       maps:get(id, Certificate)),
+
+    Edge = ias_relationship_graph:tree_edge(Relationship),
+
+    ?assertEqual(<<"tree_device">>, maps:get(source, Edge)),
+    ?assertEqual(uses_certificate, maps:get(relation_type, Edge)),
+    ?assertEqual(<<"tree_certificate">>, maps:get(target, Edge)).
 
 broken_relationship_detection_test() ->
     ias_demo_store:clear(),

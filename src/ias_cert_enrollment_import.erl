@@ -4,7 +4,9 @@
 import(EnrollmentId) ->
     case ias_demo_store:get_enrollment_result(EnrollmentId) of
         {ok, Enrollment} ->
-            {ok, ias_demo_store:add_certificate(certificate_demo_object(Enrollment))};
+            Certificate = ias_demo_store:add_certificate(certificate_demo_object(Enrollment)),
+            _ = ias_relationship_link:create(issues, EnrollmentId, maps:get(id, Certificate, undefined)),
+            {ok, Certificate};
         not_found ->
             not_found
     end.

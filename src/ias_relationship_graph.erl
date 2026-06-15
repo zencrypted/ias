@@ -2,13 +2,15 @@
 -export([known_relationship_type/1,
          categorized_relationships/0,
          graph_consistency_report/0,
-         summary/0]).
+         summary/0,
+         tree_edge/1]).
 
 known_relationship_type(uses_security_profile) -> true;
 known_relationship_type(issued_certificate) -> true;
 known_relationship_type(uses_certificate) -> true;
 known_relationship_type(uses_security_policy) -> true;
 known_relationship_type(uses_vpn_service) -> true;
+known_relationship_type(issues) -> true;
 known_relationship_type(_RelationType) -> false.
 
 categorized_relationships() ->
@@ -40,6 +42,11 @@ summary() ->
       vpn_services => length(ias_demo_store:services()),
       relationships => length(ias_demo_store:relationships()),
       total_relationships => length(ias_demo_store:relationships())}.
+
+tree_edge(Relationship) ->
+    #{source => object_label(maps:get(source_id, Relationship, undefined)),
+      relation_type => maps:get(relation_type, Relationship, undefined),
+      target => object_label(maps:get(target_id, Relationship, undefined))}.
 
 known_relationship(Relationship) ->
     known_relationship_type(maps:get(relation_type, Relationship, undefined)).
@@ -75,4 +82,12 @@ missing_object(Side, Kind, Id, Relationship) ->
               id => Id,
               relationship_id => maps:get(id, Relationship, undefined),
               relation_type => maps:get(relation_type, Relationship, undefined)}
+    end.
+
+object_label(Id) ->
+    case ias_demo_store:get(Id) of
+        {ok, Object} ->
+            ias_html:text(maps:get(name, Object, maps:get(id, Object, Id)));
+        not_found ->
+            ias_html:text(Id)
     end.

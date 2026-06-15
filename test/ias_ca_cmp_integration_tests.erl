@@ -14,6 +14,32 @@ enrollment_result_import_test() ->
     ?assertEqual(<<"vpn-client">>, maps:get(requested_cn, Certificate)),
     ?assertEqual(<<"vpn-client-20260614-012345">>, maps:get(enrollment_cn, Certificate)).
 
+enrollment_to_certificate_relationship_test() ->
+    ias_demo_store:clear(),
+    EnrollmentId = ias_demo_store:add_enrollment_result(enrollment_result()),
+
+    {ok, Certificate} = ias_cert_enrollment_import:import(EnrollmentId),
+
+    ?assert(lists:any(fun(Relationship) ->
+        maps:get(relation_type, Relationship) =:= issues andalso
+        maps:get(source_kind, Relationship) =:= cmp_enrollment_result andalso
+        maps:get(source_id, Relationship) =:= EnrollmentId andalso
+        maps:get(target_kind, Relationship) =:= certificate andalso
+        maps:get(target_id, Relationship) =:= maps:get(id, Certificate)
+    end, ias_demo_store:relationships())).
+
+issued_certificate_origin_test() ->
+    ias_demo_store:clear(),
+    EnrollmentId = ias_demo_store:add_enrollment_result(enrollment_result()),
+
+    {ok, Certificate} = ias_cert_enrollment_import:import(EnrollmentId),
+    Relationships = ias_relationship_link:relationships_for(Certificate),
+
+    ?assert(lists:any(fun(Relationship) ->
+        maps:get(relation_type, Relationship) =:= issues andalso
+        maps:get(source_id, Relationship) =:= EnrollmentId
+    end, Relationships)).
+
 metadata_only_storage_test() ->
     ias_demo_store:clear(),
     EnrollmentId = ias_demo_store:add_enrollment_result(enrollment_result(#{

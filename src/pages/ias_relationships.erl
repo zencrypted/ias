@@ -56,12 +56,13 @@ relationship_table(Relationships, _EmptyLabel) ->
            body = [relationship_edge(Relationship) || Relationship <- Relationships]}.
 
 relationship_edge(Relationship) ->
+    Edge = ias_relationship_graph:tree_edge(Relationship),
     #panel{class = <<"ias-tree-line">>, body = [
-        #panel{body = object_label(maps:get(source_id, Relationship, undefined))},
+        #panel{body = maps:get(source, Edge, <<"-">>)},
         #panel{style = <<"padding-left:18px;">>,
-               body = ias_html:join([<<"-> ">>, maps:get(relation_type, Relationship, undefined)])},
-        #panel{style = <<"padding-left:18px;">>,
-               body = ias_html:join([<<"-> ">>, object_label(maps:get(target_id, Relationship, undefined))])}
+               body = ias_html:join([<<"└─ ">>, maps:get(relation_type, Edge, undefined)])},
+        #panel{style = <<"padding-left:42px;">>,
+               body = ias_html:join([<<"└─ ">>, maps:get(target, Edge, <<"-">>)])}
     ]}.
 
 broken_relationship_table([]) ->

@@ -72,6 +72,14 @@ Device
       └─ VPN Service
 ```
 
+### Certificate Enrollment -> Issued Certificate
+
+```text
+Certificate Enrollment
+ └─ issues
+      └─ Issued Certificate
+```
+
 ---
 
 ## Runtime Flows
@@ -111,18 +119,6 @@ Issued Certificate
 ## Target Architecture
 
 The following relationships are expected to appear as the PKI lifecycle evolves.
-
-### Enrollment -> Issued Certificate
-
-```text
-Certificate Enrollment
-        ↓
-        issues
-        ↓
-Issued Certificate
-```
-
-Status: planned
 
 ### Certificate Replacement
 

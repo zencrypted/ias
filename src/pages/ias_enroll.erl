@@ -166,7 +166,7 @@ certificate_import_result(Stored) ->
            body = [
                #h3{body = ias_html:text("Certificate demo import completed")},
                key_value_table([
-                   {"Certificate ID", Id},
+                   {"Issued Certificate", Id},
                    {"Subject", maps:get(subject, Stored, <<"not found">>)},
                    {"Issuer", maps:get(issuer, Stored, <<"not found">>)},
                    {"Private Key Stored", maps:get(private_key_stored, Stored, false)},

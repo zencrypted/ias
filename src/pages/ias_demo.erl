@@ -66,6 +66,8 @@ title(#{kind := security_policy}) ->
     <<"Security Policy Metadata">>;
 title(#{kind := relationship}) ->
     <<"Relationship Metadata">>;
+title(#{kind := cmp_enrollment_result}) ->
+    <<"Certificate Enrollment Metadata">>;
 title(_) ->
     <<"Demo Metadata">>.
 
@@ -81,6 +83,7 @@ rows(#{kind := certificate} = Object) ->
     common_rows(Object) ++ [
         {"Issued User", user_ref(maps:get(issued_user_id, Metadata, undefined))},
         {"Source Security Profile", profile_ref(maps:get(source_security_profile, Metadata, undefined))},
+        {"Issued From Enrollment", enrollment_ref(issued_from_enrollment_id(Object))},
         {"Subject", maps:get(subject, Object, undefined)},
         {"Subject CN", maps:get(subject_cn, Object, undefined)},
         {"Issuer", maps:get(issuer, Object, undefined)},
@@ -129,6 +132,19 @@ rows(#{kind := relationship} = Object) ->
         {"Target", object_ref(maps:get(target_kind, Object, undefined),
                               maps:get(target_id, Object, undefined))},
         {"Score", maps:get(score, Object, 0)}
+    ] ++ created_row(Object);
+rows(#{kind := cmp_enrollment_result} = Object) ->
+    common_rows(Object) ++ [
+        {"Enrollment ID", maps:get(enrollment_id, Object, undefined)},
+        {"Subject", maps:get(subject, Object, undefined)},
+        {"Issuer", maps:get(issuer, Object, undefined)},
+        {"Not Before", maps:get(not_before, Object, undefined)},
+        {"Not After", maps:get(not_after, Object, undefined)},
+        {"Requested CN", maps:get(requested_cn, Object, undefined)},
+        {"Enrollment CN", maps:get(enrollment_cn, Object, undefined)},
+        {"Profile", maps:get(profile, Object, undefined)},
+        {"CMP Server", maps:get(cmp_server, Object, undefined)},
+        {"Issued Certificate", certificate_ref(issued_certificate_id(Object))}
     ] ++ created_row(Object);
 rows(Object) ->
     common_rows(Object) ++ created_row(Object).
@@ -247,8 +263,39 @@ relationship_preview(Object) ->
                 relationships_table(Object)
             ]};
         _ ->
-            []
+            case maps:get(kind, Object, undefined) of
+                cmp_enrollment_result ->
+                    #panel{class = <<"ias-status-card">>, body = [
+                        #h3{body = ias_html:text("Relationship Preview")},
+                        relationships_table(Object)
+                    ]};
+                _ ->
+                    []
+            end
     end.
+
+issued_from_enrollment_id(Object) ->
+    case [maps:get(source_id, Relationship, undefined)
+          || Relationship <- ias_relationship_link:relationships_for(Object),
+             maps:get(relation_type, Relationship, undefined) =:= issues,
+             maps:get(source_kind, Relationship, undefined) =:= cmp_enrollment_result] of
+        [EnrollmentId | _] -> EnrollmentId;
+        [] -> undefined
+    end.
+
+issued_certificate_id(Object) ->
+    case [maps:get(target_id, Relationship, undefined)
+          || Relationship <- ias_relationship_link:relationships_for(Object),
+             maps:get(relation_type, Relationship, undefined) =:= issues,
+             maps:get(target_kind, Relationship, undefined) =:= certificate] of
+        [CertificateId | _] -> CertificateId;
+        [] -> not_found
+    end.
+
+enrollment_ref(undefined) ->
+    <<"not linked yet">>;
+enrollment_ref(EnrollmentId) ->
+    object_ref(cmp_enrollment_result, EnrollmentId).
 
 policy_consistency_preview(#{kind := device} = Object) ->
     DeviceId = maps:get(id, Object, undefined),
@@ -539,6 +586,10 @@ relationship_rows(#{kind := security_policy}, Relationships) ->
     key_value_table([
         {"Applied To", linked_sources(uses_security_policy, Relationships)}
     ]);
+relationship_rows(#{kind := cmp_enrollment_result}, Relationships) ->
+    key_value_table([
+        {"Issued Certificate", linked_targets(issues, Relationships)}
+    ]);
 relationship_rows(_Object, _Relationships) ->
     [].
 
@@ -612,6 +663,8 @@ object_label(security_policy) ->
     <<"Security Policy">>;
 object_label(relationship) ->
     <<"Relationship">>;
+object_label(cmp_enrollment_result) ->
+    <<"Certificate Enrollment">>;
 object_label(Kind) ->
     ias_html:text(Kind).
 
