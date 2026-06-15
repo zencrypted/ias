@@ -19,6 +19,7 @@ If a relationship appears in the UI but is not present in this graph, it should 
 - Security Policy
 - VPN Service
 - Certificate Enrollment
+- Certificate Verification
 
 ---
 
@@ -60,6 +61,26 @@ Device
 
 ```text
 Certificate
+ └─ uses_security_policy
+      └─ Security Policy
+```
+
+### Certificate -> Verification
+
+```text
+Certificate
+ └─ uses_verification
+      └─ Certificate Verification
+```
+
+Certificate verification records are runtime-only demo objects. They capture
+verification metadata and authorization result metadata, but do not store
+certificate bodies, private keys, or production audit state.
+
+### Verification -> Security Policy
+
+```text
+Certificate Verification
  └─ uses_security_policy
       └─ Security Policy
 ```
@@ -133,6 +154,16 @@ User
 Security Profile
       ↓
 Issued Certificate
+```
+
+### Certificate Verification Flow
+
+```text
+Certificate
+      ↓
+Certificate Verification
+      ↓
+Authorization Decision Metadata
 ```
 
 ---

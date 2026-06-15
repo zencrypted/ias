@@ -5,6 +5,10 @@
 event(init) ->
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event({verify_certificate, PeerId}) ->
+    Certificate = verification_certificate(PeerId),
+    Result = ias_certificate_verification:verify(Certificate),
+    nitro:update(verify_result_id(PeerId), verify_result(Result));
 event(_) ->
     ok.
 
@@ -75,7 +79,37 @@ preview(Certificate) ->
                #h3{body = ias_html:text("Consistency Check")},
                key_value_table([
                    {"Profile Claims Match", ias_policy:certificate_claims_match(ProfileClaims, Claims)}
+               ]),
+               verify_controls(PeerId)
+           ]}.
+
+verify_controls(PeerId) ->
+    #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
+           body = [
+               #link{class = [button, sgreen],
+                     body = ias_html:text("Verify Certificate"),
+                     postback = {verify_certificate, PeerId}},
+               #panel{id = verify_result_id(PeerId)}
+           ]}.
+
+verify_result({ok, Verification}) ->
+    Id = maps:get(id, Verification, undefined),
+    CertificateId = maps:get(certificate_id, Verification, undefined),
+    #panel{style = <<"padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #h3{body = ias_html:text("Certificate verification recorded")},
+               key_value_table([
+                   {"Verification", object_link(verification, Id)},
+                   {"Certificate", object_link(certificate, CertificateId)},
+                   {"Verification Result", maps:get(verification_result, Verification, undefined)},
+                   {"Authorization Result", maps:get(authorization_result, Verification, undefined)}
                ])
+           ]};
+verify_result({error, Reason}) ->
+    #panel{style = <<"padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
+           body = [
+               #h3{body = ias_html:text("Certificate verification failed")},
+               #p{body = ias_html:text(Reason)}
            ]}.
 
 authorization_table(Certificate) ->
@@ -104,6 +138,10 @@ verification_certificates() ->
     Profiles = ias_demo_data:profiles(),
     [verification_certificate(PeerId, Peers, Users, Profiles)
      || PeerId <- [<<"peer_a">>, <<"peer_b">>]].
+
+verification_certificate(PeerId) ->
+    verification_certificate(PeerId, ias_vpn_runtime:peers(ias_vpn_runtime:summary()),
+                             ias_demo_data:users(), ias_demo_data:profiles()).
 
 verification_certificate(PeerId, Peers, Users, Profiles) ->
     User = user_for_peer(PeerId, Users),
@@ -166,11 +204,30 @@ key_value_table(Rows) ->
 key_value_row(Label, Value) ->
     #tr{cells = [
         #th{body = ias_html:text(Label)},
-        #td{body = ias_html:text(Value)}
+        #td{body = cell_body(Value)}
     ]}.
+
+cell_body(#link{} = Link) ->
+    Link;
+cell_body(Value) ->
+    ias_html:text(Value).
 
 preview_id(PeerId) ->
     ias_html:join(["verify_preview_", PeerId]).
+
+verify_result_id(PeerId) ->
+    ias_html:join(["verify_result_", PeerId]).
+
+object_link(Kind, Id) ->
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]),
+          body = ias_html:join([object_label(Kind), <<" #">>, Id])}.
+
+object_label(certificate) ->
+    <<"Certificate">>;
+object_label(verification) ->
+    <<"Verification">>;
+object_label(Kind) ->
+    ias_html:text(Kind).
 
 preview_style(<<"peer_a">>) ->
     <<"display:block;">>;

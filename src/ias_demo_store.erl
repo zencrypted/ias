@@ -231,10 +231,11 @@ compare_records(A, B) ->
 kind_order(user) -> 1;
 kind_order(device) -> 2;
 kind_order(certificate) -> 3;
-kind_order(vpn_service) -> 4;
-kind_order(security_profile) -> 5;
-kind_order(security_policy) -> 6;
-kind_order(relationship) -> 7;
+kind_order(verification) -> 4;
+kind_order(vpn_service) -> 5;
+kind_order(security_profile) -> 6;
+kind_order(security_policy) -> 7;
+kind_order(relationship) -> 8;
 kind_order(_) -> 99.
 
 import_id() ->

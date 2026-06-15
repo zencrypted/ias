@@ -5,6 +5,7 @@ relationship_type_is_known_test() ->
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_security_profile)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(issued_certificate)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_certificate)),
+    ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_verification)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_security_policy)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_service)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_vpn_service)),

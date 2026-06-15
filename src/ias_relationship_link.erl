@@ -45,13 +45,19 @@ create_for_objects(uses_service, #{kind := device} = Device,
 create_for_objects(uses_service, #{kind := vpn_service} = Service,
                    #{kind := device} = Device) ->
     create_relationship(uses_service, Device, Service);
+create_for_objects(uses_verification, #{kind := certificate} = Certificate,
+                   #{kind := verification} = Verification) ->
+    create_relationship(uses_verification, Certificate, Verification);
+create_for_objects(uses_verification, #{kind := verification} = Verification,
+                   #{kind := certificate} = Certificate) ->
+    create_relationship(uses_verification, Certificate, Verification);
 create_for_objects(uses_security_policy, #{kind := Kind} = Object,
                    #{kind := security_policy} = Policy)
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     create_relationship(uses_security_policy, Object, Policy);
 create_for_objects(uses_security_policy, #{kind := security_policy} = Policy,
                    #{kind := Kind} = Object)
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     create_relationship(uses_security_policy, Object, Policy);
 create_for_objects(uses_security_profile, #{kind := Kind} = Object,
                    #{kind := security_profile} = Profile)
@@ -130,13 +136,19 @@ canonical_for_objects(uses_service, #{kind := device} = Device,
 canonical_for_objects(uses_service, #{kind := vpn_service} = Service,
                       #{kind := device} = Device) ->
     {ok, uses_service, Device, Service};
+canonical_for_objects(uses_verification, #{kind := certificate} = Certificate,
+                      #{kind := verification} = Verification) ->
+    {ok, uses_verification, Certificate, Verification};
+canonical_for_objects(uses_verification, #{kind := verification} = Verification,
+                      #{kind := certificate} = Certificate) ->
+    {ok, uses_verification, Certificate, Verification};
 canonical_for_objects(uses_security_policy, #{kind := Kind} = Object,
                       #{kind := security_policy} = Policy)
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     {ok, uses_security_policy, Object, Policy};
 canonical_for_objects(uses_security_policy, #{kind := security_policy} = Policy,
                       #{kind := Kind} = Object)
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     {ok, uses_security_policy, Object, Policy};
 canonical_for_objects(uses_security_profile, #{kind := Kind} = Object,
                       #{kind := security_profile} = Profile)
@@ -233,10 +245,10 @@ candidates_for(#{kind := certificate} = Source, #{kind := device}) ->
 candidates_for(#{kind := vpn_service} = Source, #{kind := device}) ->
     maps:get(suggested_devices, ias_relationship_preview:preview(Source), []);
 candidates_for(#{kind := Kind} = Source, #{kind := security_policy})
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     maps:get(suggested_security_policies, ias_relationship_preview:preview(Source), []);
 candidates_for(#{kind := security_policy}, #{kind := Kind} = Target)
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     maps:get(suggested_security_policies, ias_relationship_preview:preview(Target), []);
 candidates_for(_Source, _Target) ->
     [].

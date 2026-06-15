@@ -66,6 +66,8 @@ title(#{kind := security_policy}) ->
     <<"Security Policy Metadata">>;
 title(#{kind := relationship}) ->
     <<"Relationship Metadata">>;
+title(#{kind := verification}) ->
+    <<"Verification Metadata">>;
 title(#{kind := cmp_enrollment_result}) ->
     <<"Certificate Enrollment Metadata">>;
 title(_) ->
@@ -125,6 +127,14 @@ rows(#{kind := security_policy} = Object) ->
         {"2FA", ias_security_profile:two_factor_label(Object)},
         {"Enforcement", ias_security_profile:enforcement_label(Object)}
     ];
+rows(#{kind := verification} = Object) ->
+    common_rows(Object) ++ [
+        {"Certificate", object_ref(certificate, maps:get(certificate_id, Object, undefined))},
+        {"Profile", maps:get(profile_id, Object, undefined)},
+        {"Security Policy", object_ref(security_policy, maps:get(policy_id, Object, undefined))},
+        {"Verification Result", maps:get(verification_result, Object, undefined)},
+        {"Authorization Result", maps:get(authorization_result, Object, undefined)}
+    ] ++ created_row(Object);
 rows(#{kind := relationship} = Object) ->
     [
         {"Relationship ID", maps:get(relationship_id, Object, undefined)},
@@ -387,12 +397,14 @@ policy_reason(Consistency) ->
 certificate_lifecycle_preview(#{kind := device} = Object) ->
     Status = ias_certificate_role:device_status(Object),
     Transition = ias_certificate_role:replacement_preview(Object),
+    CurrentCertificate = maps:get(current_certificate, Status, not_found),
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("CERTIFICATE STATUS")},
         key_value_table([
-            {"Current Certificate", certificate_ref(maps:get(current_certificate, Status, not_found))},
+            {"Current Certificate", certificate_ref(CurrentCertificate)},
             {"Candidate Certificate", certificate_ref(maps:get(candidate_certificate, Status, not_found))},
-            {"State", lifecycle_text(maps:get(state, Status, undefined))}
+            {"State", lifecycle_text(maps:get(state, Status, undefined))},
+            {"Verification Status", ias_certificate_verification:certificate_status(CurrentCertificate)}
         ]),
         #h3{body = ias_html:text("Certificate Transition Preview")},
         key_value_table([
@@ -408,7 +420,8 @@ certificate_lifecycle_preview(#{kind := certificate} = Object) ->
         key_value_table([
             {"Origin", lifecycle_text(maps:get(origin, Role, unknown))},
             {"Role", lifecycle_text(maps:get(role, Role, unassigned))},
-            {"Used By Device", device_ref(maps:get(used_by_device, Role, not_found))}
+            {"Used By Device", device_ref(maps:get(used_by_device, Role, not_found))},
+            {"Verification History", verification_history(Object)}
         ])
     ]};
 certificate_lifecycle_preview(_Object) ->
@@ -587,6 +600,7 @@ relationship_rows(#{kind := certificate}, Relationships) ->
     key_value_table([
         {"Issued From", linked_sources(issues, Relationships)},
         {"Issued Certificate", linked_targets(issues, Relationships)},
+        {"Verification History", linked_targets(uses_verification, Relationships)},
         {"Used By Device", linked_sources(uses_certificate, Relationships)},
         {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
@@ -598,6 +612,11 @@ relationship_rows(#{kind := vpn_service}, Relationships) ->
 relationship_rows(#{kind := security_policy}, Relationships) ->
     key_value_table([
         {"Applied To", linked_sources(uses_security_policy, Relationships)}
+    ]);
+relationship_rows(#{kind := verification}, Relationships) ->
+    key_value_table([
+        {"Certificate", linked_sources(uses_verification, Relationships)},
+        {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
 relationship_rows(#{kind := cmp_enrollment_result}, Relationships) ->
     key_value_table([
@@ -676,6 +695,8 @@ object_label(security_policy) ->
     <<"Security Policy">>;
 object_label(relationship) ->
     <<"Relationship">>;
+object_label(verification) ->
+    <<"Verification">>;
 object_label(cmp_enrollment_result) ->
     <<"Certificate Enrollment">>;
 object_label(Kind) ->
@@ -696,6 +717,11 @@ device_ref(not_found) ->
     <<"not linked yet">>;
 device_ref(Device) ->
     object_ref(device, maps:get(id, Device, undefined)).
+
+verification_history(Certificate) ->
+    Links = [object_ref(verification, maps:get(id, Verification, undefined))
+             || Verification <- ias_certificate_verification:verification_history(Certificate)],
+    links_or_not_found(Links).
 
 user_ref(undefined) ->
     <<"not linked yet">>;

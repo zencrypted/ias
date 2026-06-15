@@ -3,6 +3,9 @@
 
 report() ->
     #{policy_mismatches => policy_mismatches(),
+      verified_certificates => ias_certificate_verification:verified_certificates(),
+      failed_verifications => ias_certificate_verification:failed_verifications(),
+      certificates_never_verified => ias_certificate_verification:certificates_never_verified(),
       devices_without_security_policy => devices_without_security_policy(),
       certificates_without_security_policy => certificates_without_security_policy(),
       devices_without_vpn_service => devices_without_vpn_service(),

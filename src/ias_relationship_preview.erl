@@ -65,10 +65,10 @@ score(#{kind := device} = Device, #{kind := vpn_service} = Service) ->
 score(#{kind := vpn_service} = Service, #{kind := device} = Device) ->
     device_service_score(Device, Service);
 score(#{kind := Kind}, #{kind := security_policy})
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     10;
 score(#{kind := security_policy}, #{kind := Kind})
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service ->
+  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     10;
 score(Object, Candidate) ->
     flow_score(Object, Candidate).
