@@ -56,6 +56,21 @@ export_panel() ->
 import_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Import Demo State")},
+        #p{body = ias_html:text("Paste an exported .eterm snapshot or choose a .eterm file.")},
+        #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;padding:10px;border:1px solid rgba(15,23,42,0.12);border-radius:6px;background:#fff;">>,
+               body = [
+            #label{for = state_import_file,
+                   style = <<"font-weight:600;color:#334155;white-space:nowrap;">>,
+                   body = ias_html:text("Import Demo State File")},
+            #input{id = state_import_file,
+                   type = <<"file">>,
+                   accept = <<".eterm,text/plain">>,
+                   style = <<"width:auto;flex:1;box-shadow:none;">>,
+                   onchange = import_file_js()},
+            #span{id = state_import_file_name,
+                  style = <<"font-size:12px;color:#64748b;white-space:nowrap;">>,
+                  body = ias_html:text("No file selected")}
+        ]},
         #textarea{id = state_import_snapshot,
                   rows = 12,
                   cols = 90,
@@ -126,6 +141,32 @@ key_value_row(Label, Value) ->
         #th{body = ias_html:text(Label)},
         #td{body = ias_html:text(Value)}
     ]}.
+
+
+import_file_js() ->
+    <<
+        "var file=this.files && this.files[0];",
+        "if (!file) { return false; }",
+        "var name=file.name || '';",
+        "var lower=name.toLowerCase();",
+        "if (!(lower.endsWith('.eterm') || file.type === 'text/plain' || lower.endsWith('.txt'))) {",
+        "alert('Please select an .eterm file.');",
+        "this.value='';",
+        "var cleared=document.getElementById('state_import_file_name');",
+        "if (cleared) { cleared.textContent='No file selected'; }",
+        "return false;",
+        "}",
+        "var fileName=document.getElementById('state_import_file_name');",
+        "if (fileName) { fileName.textContent=name; }",
+        "var reader=new FileReader();",
+        "reader.onload=function(e) {",
+        "var target=document.getElementById('state_import_snapshot');",
+        "if (target) { target.value=e.target.result || ''; }",
+        "};",
+        "reader.onerror=function() { alert('Could not read selected demo state file.'); };",
+        "reader.readAsText(file);",
+        "return false;"
+    >>.
 
 download_js(Term) ->
     Encoded = base64:encode(Term),
