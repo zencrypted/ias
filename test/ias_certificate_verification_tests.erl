@@ -175,6 +175,98 @@ runtime_certificate_verification_updates_graph_analysis_test() ->
                            verification, maps:get(id, Verification)),
                       ias_demo_store:relationships())).
 
+bulk_verify_runtime_certificates_test() ->
+    ias_demo_store:clear(),
+    Issued = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_issued_cert">>,
+                                                               certificate_issue_demo)),
+    Imported = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_ovpn_cert">>,
+                                                                 ovpn_demo_import)),
+    Enrollment = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_cmp_cert">>,
+                                                                   cmp_demo_enrollment)),
+    _Unsupported = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_unsupported_cert">>,
+                                                                     verification_demo)),
+
+    Result = ias_verify_cert:bulk_verify_runtime_certificates(),
+    VerifiedIds = [maps:get(certificate_id, Item) || Item <- maps:get(results, Result, [])],
+
+    ?assertEqual(3, maps:get(verified, Result)),
+    ?assertEqual(0, maps:get(failed, Result)),
+    ?assertEqual(0, maps:get(skipped, Result)),
+    ?assert(lists:member(maps:get(id, Issued), VerifiedIds)),
+    ?assert(lists:member(maps:get(id, Imported), VerifiedIds)),
+    ?assert(lists:member(maps:get(id, Enrollment), VerifiedIds)),
+    ?assertNot(lists:member(<<"bulk_unsupported_cert">>, VerifiedIds)).
+
+bulk_verify_creates_verification_records_test() ->
+    ias_demo_store:clear(),
+    Certificate = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_records_cert">>,
+                                                                    certificate_issue_demo)),
+
+    _First = ias_verify_cert:bulk_verify_runtime_certificates(),
+    _Second = ias_verify_cert:bulk_verify_runtime_certificates(),
+    Report = ias_graph_analysis:report(),
+
+    ?assertEqual(2, length(maps:get(total_verification_records, Report))),
+    ?assertEqual(1, length(maps:get(unique_verified_certificates, Report))),
+    ?assertEqual(2, length(ias_certificate_verification:verification_history(Certificate))).
+
+bulk_verify_preserves_unique_verified_certificate_count_test() ->
+    ias_demo_store:clear(),
+    _FirstCertificate = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_unique_one">>,
+                                                                          certificate_issue_demo)),
+    _SecondCertificate = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_unique_two">>,
+                                                                           ovpn_demo_import)),
+
+    _First = ias_verify_cert:bulk_verify_runtime_certificates(),
+    FirstReport = ias_graph_analysis:report(),
+    _Second = ias_verify_cert:bulk_verify_runtime_certificates(),
+    SecondReport = ias_graph_analysis:report(),
+
+    ?assertEqual(2, length(maps:get(unique_verified_certificates, FirstReport))),
+    ?assertEqual(2, length(maps:get(total_verification_records, FirstReport))),
+    ?assertEqual(2, length(maps:get(unique_verified_certificates, SecondReport))),
+    ?assertEqual(4, length(maps:get(total_verification_records, SecondReport))).
+
+bulk_verify_result_summary_test() ->
+    ias_demo_store:clear(),
+    _VerifiedCertificate = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_summary_verified">>,
+                                                                             certificate_issue_demo)),
+    _FailedCertificate = ias_demo_store:add_certificate(
+        (runtime_certificate(<<"bulk_summary_failed">>, ovpn_demo_import))#{
+            trusted => false
+        }),
+
+    Result = ias_verify_cert:bulk_verify_runtime_certificates(),
+    Results = maps:get(results, Result),
+
+    ?assertEqual(1, maps:get(verified, Result)),
+    ?assertEqual(1, maps:get(failed, Result)),
+    ?assertEqual(0, maps:get(skipped, Result)),
+    ?assert(lists:any(result_for(<<"bulk_summary_verified">>, verified), Results)),
+    ?assert(lists:any(result_for(<<"bulk_summary_failed">>, failed), Results)).
+
+bulk_verify_snapshot_roundtrip_test() ->
+    ias_demo_store:clear(),
+    Certificate = ias_demo_store:add_certificate(runtime_certificate(<<"bulk_snapshot_cert">>,
+                                                                    certificate_issue_demo)),
+    _Bulk = ias_verify_cert:bulk_verify_runtime_certificates(),
+    BeforeReport = ias_graph_analysis:report(),
+    Term = ias_demo_state:export(),
+
+    ok = ias_demo_state:clear(),
+    _Import = ias_demo_state:import(Term),
+    AfterReport = ias_graph_analysis:report(),
+
+    ?assertEqual(length(maps:get(total_verification_records, BeforeReport)),
+                 length(maps:get(total_verification_records, AfterReport))),
+    ?assertEqual(length(maps:get(unique_verified_certificates, BeforeReport)),
+                 length(maps:get(unique_verified_certificates, AfterReport))),
+    ?assertEqual(1, length(ias_certificate_verification:verification_history(Certificate))),
+    ?assert(lists:any(fun(Relationship) ->
+        maps:get(relation_type, Relationship, undefined) =:= verified_by andalso
+            maps:get(source_id, Relationship, undefined) =:= maps:get(id, Certificate)
+    end, ias_demo_store:relationships())).
+
 edge(RelationType, SourceKind, SourceId, TargetKind, TargetId) ->
     fun(Relationship) ->
         maps:get(relation_type, Relationship, undefined) =:= RelationType andalso
@@ -188,6 +280,13 @@ edge_target(SourceId, RelationType) ->
     fun(Relationship) ->
         maps:get(relation_type, Relationship, undefined) =:= RelationType andalso
             maps:get(source_id, Relationship, undefined) =:= SourceId
+    end.
+
+result_for(CertificateId, Result) ->
+    fun(Item) ->
+        maps:get(certificate_id, Item, undefined) =:= CertificateId andalso
+            maps:get(result, Item, undefined) =:= Result andalso
+            maps:is_key(verification_id, Item)
     end.
 
 certificate(PeerId, Trusted, KeyMatch, Claims, ProfileId) ->

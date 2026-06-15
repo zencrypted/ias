@@ -1,5 +1,8 @@
 -module(ias_verify_cert).
--export([event/1, verification_certificates/0, verification_certificate/1]).
+-export([event/1,
+         verification_certificates/0,
+         verification_certificate/1,
+         bulk_verify_runtime_certificates/0]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
@@ -11,6 +14,9 @@ event({verify_certificate, CertificateId}) ->
                  Certificate -> ias_certificate_verification:verify(Certificate)
              end,
     nitro:update(verify_result_id(CertificateId), verify_result(Result));
+event(verify_all_runtime_certificates) ->
+    Result = bulk_verify_runtime_certificates(),
+    nitro:update(<<"bulk_verify_result">>, bulk_verify_result(Result));
 event(_) ->
     ok.
 
@@ -20,6 +26,7 @@ content() ->
         #h2{body = ias_html:text("Certificate Verification")},
         #p{body = ias_html:text("Verify a certificate, resolve its authorization claims and evaluate service access.")},
         selector(Certificates),
+        #panel{id = <<"bulk_verify_result">>},
         #panel{id = <<"verify_previews">>,
                body = [preview(Certificate) || Certificate <- Certificates]}
     ]}.
@@ -32,6 +39,11 @@ selector(Certificates) ->
             #select{id = <<"verify_certificate">>,
                     onchange = toggle_preview_js(),
                     body = [option(Certificate) || Certificate <- Certificates]}
+        ]},
+        #panel{style = <<"margin-top:14px;">>, body = [
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Verify All Runtime Certificates"),
+                  postback = verify_all_runtime_certificates}
         ]}
     ]}.
 
@@ -118,6 +130,60 @@ verify_result({error, Reason}) ->
                #h3{body = ias_html:text("Certificate verification failed")},
                #p{body = ias_html:text(Reason)}
            ]}.
+
+bulk_verify_runtime_certificates() ->
+    Results = [bulk_verify_certificate(Certificate) || Certificate <- verification_certificates()],
+    #{verified => length([Result || Result <- Results,
+                                   maps:get(result, Result, undefined) =:= verified]),
+      failed => length([Result || Result <- Results,
+                                maps:get(result, Result, undefined) =:= failed]),
+      skipped => length([Result || Result <- Results,
+                                  maps:get(result, Result, undefined) =:= skipped]),
+      results => Results}.
+
+bulk_verify_certificate(Certificate) ->
+    CertificateId = maps:get(certificate_id, Certificate, undefined),
+    case ias_certificate_verification:verify(Certificate) of
+        {ok, Verification} ->
+            #{certificate_id => CertificateId,
+              result => maps:get(verification_status, Verification, failed),
+              verification_id => maps:get(id, Verification, undefined)};
+        {error, Reason} ->
+            #{certificate_id => CertificateId,
+              result => skipped,
+              reason => Reason}
+    end.
+
+bulk_verify_result(Result) ->
+    #panel{style = <<"padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;margin-bottom:14px;">>,
+           body = [
+               #h3{body = ias_html:text("Bulk Verification Completed")},
+               key_value_table([
+                   {"Verified", maps:get(verified, Result, 0)},
+                   {"Failed", maps:get(failed, Result, 0)},
+                   {"Skipped", maps:get(skipped, Result, 0)}
+               ]),
+               #ul{body = [bulk_verify_item(Item)
+                           || Item <- maps:get(results, Result, [])]}
+           ]}.
+
+bulk_verify_item(Item) ->
+    #li{body = [
+        object_link(certificate, maps:get(certificate_id, Item, undefined)),
+        #ul{body = [
+            #li{body = ias_html:join([<<"result: ">>,
+                                      maps:get(result, Item, undefined)])},
+            bulk_verify_verification_item(Item)
+        ]}
+    ]}.
+
+bulk_verify_verification_item(#{result := skipped} = Item) ->
+    #li{body = ias_html:join([<<"reason: ">>, maps:get(reason, Item, undefined)])};
+bulk_verify_verification_item(Item) ->
+    #li{body = [
+        ias_html:text("verification: "),
+        object_link(verification, maps:get(verification_id, Item, undefined))
+    ]}.
 
 authorization_table(Certificate) ->
     #panel{class = <<"ias-table-container">>, body = [
