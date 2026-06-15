@@ -105,6 +105,49 @@ verification_detail_rendering_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Verification #">>)),
     ?assertMatch({_, _}, binary:match(Html, maps:get(id, Verification))).
 
+runtime_certificate_selector_includes_supported_sources_test() ->
+    ias_demo_store:clear(),
+    Issued = ias_demo_store:add_certificate(runtime_certificate(<<"runtime_issued_cert">>,
+                                                               certificate_issue_demo)),
+    Imported = ias_demo_store:add_certificate(runtime_certificate(<<"runtime_ovpn_cert">>,
+                                                                 ovpn_demo_import)),
+    Enrollment = ias_demo_store:add_certificate(runtime_certificate(<<"runtime_cmp_cert">>,
+                                                                   cmp_demo_enrollment)),
+    _Unsupported = ias_demo_store:add_certificate(runtime_certificate(<<"runtime_other_cert">>,
+                                                                     verification_demo)),
+
+    Certificates = ias_verify_cert:verification_certificates(),
+    Ids = [maps:get(certificate_id, Certificate) || Certificate <- Certificates],
+
+    ?assert(lists:member(maps:get(id, Issued), Ids)),
+    ?assert(lists:member(maps:get(id, Imported), Ids)),
+    ?assert(lists:member(maps:get(id, Enrollment), Ids)),
+    ?assertNot(lists:member(<<"runtime_other_cert">>, Ids)).
+
+runtime_certificate_verification_updates_graph_analysis_test() ->
+    ias_demo_store:clear(),
+    RuntimeCertificate = ias_demo_store:add_certificate(runtime_certificate(<<"runtime_graph_cert">>,
+                                                                           certificate_issue_demo)),
+    Before = ias_graph_analysis:report(),
+    Certificate = ias_verify_cert:verification_certificate(maps:get(id, RuntimeCertificate)),
+
+    {ok, Verification} = ias_certificate_verification:verify(Certificate),
+    After = ias_graph_analysis:report(),
+
+    ?assert(lists:any(fun(Warning) ->
+        maps:get(id, Warning) =:= maps:get(id, RuntimeCertificate)
+    end, maps:get(certificates_never_verified, Before))),
+    ?assertNot(lists:any(fun(Warning) ->
+        maps:get(id, Warning) =:= maps:get(id, RuntimeCertificate)
+    end, maps:get(certificates_never_verified, After))),
+    ?assert(lists:any(fun(Warning) ->
+        maps:get(certificate_id, Warning) =:= maps:get(id, RuntimeCertificate) andalso
+            maps:get(verification_id, Warning) =:= maps:get(id, Verification)
+    end, maps:get(verified_certificates, After))),
+    ?assert(lists:any(edge(verified_by, certificate, maps:get(id, RuntimeCertificate),
+                           verification, maps:get(id, Verification)),
+                      ias_demo_store:relationships())).
+
 edge(RelationType, SourceKind, SourceId, TargetKind, TargetId) ->
     fun(Relationship) ->
         maps:get(relation_type, Relationship, undefined) =:= RelationType andalso
@@ -149,3 +192,20 @@ peer_claims() ->
       services => [vpn],
       attributes => [user, device, vpn_peer],
       trust_level => standard}.
+
+runtime_certificate(Id, Source) ->
+    #{id => Id,
+      source => Source,
+      import_id => <<"runtime_verification_test">>,
+      user => alice,
+      profile_id => administrator,
+      subject_cn => Id,
+      issuer_cn => <<"Zencrypted Dev CA">>,
+      role => admin,
+      services => [vpn, ias],
+      attributes => [admin, issue_certificates, revoke_certificates],
+      trust_level => elevated,
+      trusted => true,
+      key_match => true,
+      private_key_stored => false,
+      certificate_body_stored => false}.

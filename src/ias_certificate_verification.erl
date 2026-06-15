@@ -144,7 +144,13 @@ link_security_policy(Verification) ->
 certificate_id(Certificate) ->
     case maps:get(certificate_id, Certificate, undefined) of
         undefined ->
-            ias_html:join([<<"verify_certificate_">>, maps:get(peer_id, Certificate, <<"unknown">>)]);
+            case maps:get(id, Certificate, undefined) of
+                undefined ->
+                    ias_html:join([<<"verify_certificate_">>,
+                                   maps:get(peer_id, Certificate, <<"unknown">>)]);
+                Id ->
+                    Id
+            end;
         Id ->
             Id
     end.

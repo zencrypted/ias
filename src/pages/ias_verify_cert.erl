@@ -1,14 +1,16 @@
 -module(ias_verify_cert).
--export([event/1]).
+-export([event/1, verification_certificates/0, verification_certificate/1]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
-event({verify_certificate, PeerId}) ->
-    Certificate = verification_certificate(PeerId),
-    Result = ias_certificate_verification:verify(Certificate),
-    nitro:update(verify_result_id(PeerId), verify_result(Result));
+event({verify_certificate, CertificateId}) ->
+    Result = case verification_certificate(CertificateId) of
+                 not_found -> {error, certificate_not_found};
+                 Certificate -> ias_certificate_verification:verify(Certificate)
+             end,
+    nitro:update(verify_result_id(CertificateId), verify_result(Result));
 event(_) ->
     ok.
 
@@ -34,24 +36,29 @@ selector(Certificates) ->
     ]}.
 
 option(Certificate) ->
-    PeerId = maps:get(peer_id, Certificate),
-    #option{value = ias_html:text(PeerId),
-            selected = PeerId =:= <<"peer_a">>,
-            body = ias_html:text(PeerId)}.
+    CertificateId = maps:get(certificate_id, Certificate),
+    #option{value = ias_html:text(CertificateId),
+            selected = maps:get(selected, Certificate, false),
+            body = ias_html:join([certificate_type_label(Certificate), <<": ">>,
+                                  CertificateId, <<" - ">>,
+                                  maps:get(subject_cn, Certificate, <<"not found">>),
+                                  <<" (">>, maps:get(source_label, Certificate, <<"runtime">>), <<")">>])}.
 
 preview(Certificate) ->
-    PeerId = maps:get(peer_id, Certificate),
+    CertificateId = maps:get(certificate_id, Certificate),
     User = maps:get(user, Certificate, #{}),
     Profile = maps:get(profile, Certificate, #{}),
     Claims = maps:get(claims, Certificate, #{}),
     ProfileClaims = ias_policy:certificate_claims(Profile),
-    #panel{id = preview_id(PeerId),
+    #panel{id = preview_id(CertificateId),
            class = <<"ias-status-card ias-verify-preview">>,
-           style = preview_style(PeerId),
+           style = preview_style(Certificate),
            body = [
-               #h3{body = ias_html:join(["Certificate: ", PeerId])},
+               #h3{body = ias_html:join([<<"Certificate: ">>, CertificateId])},
                #h3{body = ias_html:text("Certificate Details")},
                key_value_table([
+                   {"Certificate ID", CertificateId},
+                   {"Source", maps:get(source_label, Certificate, <<"runtime">>)},
                    {"Subject CN", maps:get(subject_cn, Certificate, undefined)},
                    {"Issuer CN", maps:get(issuer_cn, Certificate, undefined)},
                    {"Role", maps:get(role, Claims, undefined)},
@@ -65,7 +72,7 @@ preview(Certificate) ->
                key_value_table([
                    {"Certificate Subject", maps:get(subject_cn, Certificate, undefined)},
                    {"Assigned User", maps:get(name, User, undefined)},
-                   {"Resolved Security Profile", maps:get(id, Profile, undefined)}
+                   {"Resolved Security Profile", maps:get(id, Profile, maps:get(profile_id, Certificate, undefined))}
                ]),
                #h3{body = ias_html:text("Extracted Claims")},
                key_value_table([
@@ -80,7 +87,7 @@ preview(Certificate) ->
                key_value_table([
                    {"Profile Claims Match", ias_policy:certificate_claims_match(ProfileClaims, Claims)}
                ]),
-               verify_controls(PeerId)
+               verify_controls(CertificateId)
            ]}.
 
 verify_controls(PeerId) ->
@@ -132,68 +139,94 @@ authorization_row(Certificate, Service) ->
     ]}.
 
 verification_certificates() ->
-    Summary = ias_vpn_runtime:summary(),
-    Peers = ias_vpn_runtime:peers(Summary),
-    Users = ias_demo_data:users(),
-    Profiles = ias_demo_data:profiles(),
-    [verification_certificate(PeerId, Peers, Users, Profiles)
-     || PeerId <- [<<"peer_a">>, <<"peer_b">>]].
+    mark_selected([normalize_certificate(Certificate)
+                   || Certificate <- ias_demo_store:certificates(),
+                      runtime_verifiable_certificate(Certificate)]).
 
-verification_certificate(PeerId) ->
-    verification_certificate(PeerId, ias_vpn_runtime:peers(ias_vpn_runtime:summary()),
-                             ias_demo_data:users(), ias_demo_data:profiles()).
-
-verification_certificate(PeerId, Peers, Users, Profiles) ->
-    User = user_for_peer(PeerId, Users),
-    Profile = profile_for_user(User, Profiles),
-    Claims = certificate_claims_for_peer(PeerId),
-    Peer = ias_vpn_runtime:peer(PeerId, #{<<"peers">> => Peers}),
-    #{peer_id => PeerId,
-      subject_cn => value_or(ias_vpn_runtime:certificate_field(Peer, [subject_cn]), PeerId),
-      issuer_cn => value_or(ias_vpn_runtime:certificate_field(Peer, [issuer_cn]), <<"Zencrypted Dev CA">>),
-      trusted => value_or(ias_vpn_runtime:certificate_field(Peer, [trusted]), true),
-      key_match => value_or(ias_vpn_runtime:certificate_field(Peer, [key_match]), true),
-      user => User,
-      profile => Profile,
-      claims => Claims}.
-
-user_for_peer(PeerId, Users) ->
-    Devices = ias_demo_data:devices(),
-    case [Device || Device <- Devices, maps:get(vpn_peer, Device, undefined) =:= PeerId] of
-        [#{owner := Owner} | _] -> user(Owner, Users);
-        _ -> #{}
+verification_certificate(CertificateId) ->
+    case ias_demo_store:get(CertificateId) of
+        {ok, #{kind := certificate} = Certificate} ->
+            normalize_certificate(Certificate);
+        _ ->
+            not_found
     end.
 
-user(UserId, Users) ->
-    case [User || User <- Users, maps:get(id, User, undefined) =:= UserId] of
-        [User | _] -> User;
-        [] -> #{}
-    end.
+runtime_verifiable_certificate(#{source := certificate_issue_demo}) ->
+    true;
+runtime_verifiable_certificate(#{source := ovpn_demo_import}) ->
+    true;
+runtime_verifiable_certificate(#{source := cmp_demo_enrollment}) ->
+    true;
+runtime_verifiable_certificate(_Certificate) ->
+    false.
 
-profile_for_user(User, Profiles) ->
-    ProfileId = maps:get(profile_id, User, undefined),
-    case [Profile || Profile <- Profiles, maps:get(id, Profile, undefined) =:= ProfileId] of
+normalize_certificate(Certificate) ->
+    Profile = profile_for_certificate(Certificate),
+    Certificate#{
+        certificate_id => maps:get(id, Certificate, undefined),
+        subject_cn => certificate_subject(Certificate),
+        issuer_cn => certificate_issuer(Certificate),
+        trusted => maps:get(trusted, Certificate, true),
+        key_match => maps:get(key_match, Certificate, true),
+        profile => Profile,
+        profile_id => maps:get(id, Profile, maps:get(profile_id, Certificate, undefined)),
+        user => user_for_certificate(Certificate),
+        claims => certificate_claims(Certificate, Profile),
+        source_label => source_label(Certificate)
+    }.
+
+profile_for_certificate(Certificate) ->
+    ProfileId = maps:get(profile_id, Certificate, maps:get(profile, Certificate, undefined)),
+    case [Profile || Profile <- ias_demo_data:profiles(),
+                     maps:get(id, Profile, undefined) =:= ProfileId] of
         [Profile | _] -> Profile;
         [] -> #{}
     end.
 
-certificate_claims_for_peer(<<"peer_a">>) ->
-    #{role => admin,
-      services => [vpn, ias],
-      attributes => [admin, issue_certificates, revoke_certificates],
-      trust_level => elevated};
-certificate_claims_for_peer(<<"peer_b">>) ->
-    #{role => peer,
-      services => [vpn],
-      attributes => [user, device, vpn_peer],
-      trust_level => standard};
-certificate_claims_for_peer(_PeerId) ->
-    #{}.
+user_for_certificate(Certificate) ->
+    UserId = maps:get(user, Certificate, undefined),
+    case [User || User <- ias_demo_data:users(),
+                  maps:get(id, User, undefined) =:= UserId] of
+        [User | _] -> User;
+        [] -> #{}
+    end.
 
-value_or(undefined, Default) ->
-    Default;
-value_or(Value, _Default) ->
-    Value.
+certificate_claims(Certificate, Profile) when is_map(Profile), map_size(Profile) > 0 ->
+    #{role => maps:get(role, Certificate, maps:get(certificate_role, Profile, undefined)),
+      services => maps:get(services, Certificate, maps:get(services, Profile, [])),
+      attributes => maps:get(attributes, Certificate, maps:get(attributes, Profile, [])),
+      trust_level => maps:get(trust_level, Certificate, maps:get(trust_level, Profile, undefined))};
+certificate_claims(Certificate, _Profile) ->
+    #{role => maps:get(role, Certificate, undefined),
+      services => maps:get(services, Certificate, []),
+      attributes => maps:get(attributes, Certificate, []),
+      trust_level => maps:get(trust_level, Certificate, undefined)}.
+
+certificate_subject(Certificate) ->
+    maps:get(subject_cn, Certificate,
+             maps:get(subject, Certificate,
+                      maps:get(id, Certificate, <<"not found">>))).
+
+certificate_issuer(Certificate) ->
+    maps:get(issuer_cn, Certificate,
+             maps:get(issuer, Certificate, <<"not found">>)).
+
+source_label(#{source := certificate_issue_demo}) ->
+    <<"Issued Certificate">>;
+source_label(#{source := cmp_demo_enrollment}) ->
+    <<"Enrollment Certificate">>;
+source_label(#{source := ovpn_demo_import}) ->
+    <<"Imported Certificate">>;
+source_label(_Certificate) ->
+    <<"Runtime Certificate">>.
+
+certificate_type_label(Certificate) ->
+    maps:get(source_label, Certificate, <<"Runtime Certificate">>).
+
+mark_selected([]) ->
+    [];
+mark_selected([First | Rest]) ->
+    [First#{selected => true} | [Certificate#{selected => false} || Certificate <- Rest]].
 
 key_value_table(Rows) ->
     #panel{class = <<"ias-table-container">>, body = [
@@ -229,9 +262,9 @@ object_label(verification) ->
 object_label(Kind) ->
     ias_html:text(Kind).
 
-preview_style(<<"peer_a">>) ->
+preview_style(#{selected := true}) ->
     <<"display:block;">>;
-preview_style(_PeerId) ->
+preview_style(_Certificate) ->
     <<"display:none;">>.
 
 toggle_preview_js() ->
