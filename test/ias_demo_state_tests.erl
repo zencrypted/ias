@@ -6,12 +6,12 @@ export_demo_state_roundtrip_test() ->
     setup_demo_graph(),
     BeforeCategories = ias_relationship_graph:categorized_relationships(),
     BeforeAnalysis = warning_counts(ias_graph_analysis:report()),
-    Json = ias_demo_state:export(),
+    Term = ias_demo_state:export(),
 
     ok = ias_demo_state:clear(),
     ?assertEqual(0, maps:get(total_records, ias_demo_state:summary())),
 
-    Result = ias_demo_state:import(Json),
+    Result = ias_demo_state:import(Term),
     AfterCategories = ias_relationship_graph:categorized_relationships(),
     AfterAnalysis = warning_counts(ias_graph_analysis:report()),
 
@@ -37,10 +37,10 @@ clear_demo_state_test() ->
 import_demo_state_restores_relationships_test() ->
     ias_demo_store:clear(),
     #{device := Device, certificate := Certificate} = setup_demo_graph(),
-    Json = ias_demo_state:export(),
+    Term = ias_demo_state:export(),
 
     ok = ias_demo_state:clear(),
-    Result = ias_demo_state:import(Json),
+    Result = ias_demo_state:import(Term),
 
     ?assertEqual(2, maps:get(imported_relationships, Result)),
     ?assert(lists:any(fun(Relationship) ->
@@ -53,9 +53,9 @@ import_demo_state_restores_relationships_test() ->
 import_demo_state_rejects_malformed_snapshot_test() ->
     ias_demo_store:clear(),
 
-    ?assertEqual({error, malformed_snapshot}, ias_demo_state:import(<<"{not-json">>)),
+    ?assertEqual({error, malformed_snapshot}, ias_demo_state:import(<<"{not-term">>)),
     ?assertEqual({error, invalid_snapshot_format},
-                 ias_demo_state:import(<<"{\"format\":\"wrong\",\"objects\":[],\"relationships\":[]}">>)),
+                 ias_demo_state:import(<<"#{format => wrong, objects => [], relationships => []}.">>)),
     ?assertEqual(0, maps:get(total_records, ias_demo_state:summary())).
 
 export_demo_state_does_not_export_private_material_test() ->
@@ -70,15 +70,16 @@ export_demo_state_does_not_export_private_material_test() ->
         certificate_body_stored => true
     }),
 
-    Json = ias_demo_state:export(),
-    Decoded = jiffy:decode(Json, [return_maps]),
-    [Exported] = maps:get(<<"objects">>, Decoded),
+    Term = ias_demo_state:export(),
+    {ok, Tokens, _} = erl_scan:string(binary_to_list(Term)),
+    {ok, Snapshot} = erl_parse:parse_term(Tokens),
+    [Exported] = maps:get(objects, Snapshot),
 
-    ?assertEqual(nomatch, binary:match(Json, <<"PRIVATE-KEY-BODY">>)),
-    ?assertEqual(nomatch, binary:match(Json, <<"CERTIFICATE-PEM-BODY">>)),
-    ?assertEqual(nomatch, binary:match(Json, <<"CSR-BODY">>)),
-    ?assertEqual(false, maps:get(<<"private_key_stored">>, Exported)),
-    ?assertEqual(false, maps:get(<<"certificate_body_stored">>, Exported)).
+    ?assertEqual(nomatch, binary:match(Term, <<"PRIVATE-KEY-BODY">>)),
+    ?assertEqual(nomatch, binary:match(Term, <<"CERTIFICATE-PEM-BODY">>)),
+    ?assertEqual(nomatch, binary:match(Term, <<"CSR-BODY">>)),
+    ?assertEqual(false, maps:get(private_key_stored, Exported)),
+    ?assertEqual(false, maps:get(certificate_body_stored, Exported)).
 
 setup_demo_graph() ->
     Device = ias_demo_store:add_device(#{id => <<"state_device">>,

@@ -6,9 +6,9 @@ event(init) ->
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
 event(export_demo_state) ->
-    Json = ias_demo_state:export(),
-    nitro:update(state_export_result, export_result(Json)),
-    nitro:wire(download_js(Json));
+    Term = ias_demo_state:export(),
+    nitro:update(state_export_result, export_result(Term)),
+    nitro:wire(download_js(Term));
 event(import_demo_state) ->
     Snapshot = nitro:q(state_import_snapshot),
     Result = ias_demo_state:import(Snapshot),
@@ -46,7 +46,7 @@ runtime_summary() ->
 export_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Export Demo State")},
-        #p{body = ias_html:text("Exports current ETS demo runtime state as JSON metadata.")},
+        #p{body = ias_html:text("Exports current ETS demo runtime state as Erlang term metadata.")},
         #link{class = [button, sgreen],
               body = ias_html:text("Export Demo State"),
               postback = export_demo_state},
@@ -59,7 +59,7 @@ import_panel() ->
         #textarea{id = state_import_snapshot,
                   rows = 12,
                   cols = 90,
-                  placeholder = <<"Paste exported IAS demo state JSON snapshot here">>,
+                  placeholder = <<"Paste exported IAS demo state Erlang term snapshot here">>,
                   style = <<"width:100%;min-height:220px;font-family:monospace;">>},
         #panel{style = <<"margin-top:12px;">>, body = [
             #link{class = [button, sgreen],
@@ -78,12 +78,12 @@ clear_panel() ->
               postback = clear_demo_state}
     ]}.
 
-export_result(Json) ->
+export_result(Term) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
                #h3{body = ias_html:text("Demo state export ready")},
                key_value_table([
-                   {"Bytes", byte_size(Json)}
+                   {"Bytes", byte_size(Term)}
                ])
            ]}.
 
@@ -127,15 +127,15 @@ key_value_row(Label, Value) ->
         #td{body = ias_html:text(Value)}
     ]}.
 
-download_js(Json) ->
-    Encoded = base64:encode(Json),
+download_js(Term) ->
+    Encoded = base64:encode(Term),
     [
         <<"var data=atob('">>, Encoded, <<"');">>,
-        <<"var blob=new Blob([data],{type:'application/json'});">>,
+        <<"var blob=new Blob([data],{type:'text/plain'});">>,
         <<"var url=URL.createObjectURL(blob);">>,
         <<"var a=document.createElement('a');">>,
         <<"a.href=url;">>,
-        <<"a.download='ias-demo-state.json';">>,
+        <<"a.download='ias-demo-state.eterm';">>,
         <<"document.body.appendChild(a);">>,
         <<"a.click();">>,
         <<"document.body.removeChild(a);">>,
