@@ -10,6 +10,10 @@ event({link_relationship, RelationType, SourceId, TargetId}) ->
     _ = ias_relationship_link:create(RelationType, SourceId, TargetId),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event({unlink_relationship, RelationshipId}) ->
+    _ = ias_relationship_link:unlink(RelationshipId),
+    nitro:clear(stand),
+    nitro:insert_bottom(stand, content());
 event(_) ->
     ok.
 
@@ -146,7 +150,8 @@ rows(#{kind := relationship} = Object) ->
                               maps:get(source_id, Object, undefined))},
         {"Target", object_ref(maps:get(target_kind, Object, undefined),
                               maps:get(target_id, Object, undefined))},
-        {"Score", maps:get(score, Object, 0)}
+        {"Score", maps:get(score, Object, 0)},
+        {"Action", relationship_detail_action(Object)}
     ] ++ created_row(Object);
 rows(#{kind := cmp_enrollment_result} = Object) ->
     common_rows(Object) ++ [
@@ -525,7 +530,7 @@ candidate_action(Candidate, RelationType, SourceId) ->
                   body = ias_html:text("Link"),
                   postback = {link_relationship, RelationType, SourceId, TargetId}};
         {linked, _Relationship} ->
-            ias_html:text("Linked");
+            linked_action(_Relationship);
         {already_has_policy, PolicyId, _Relationship} ->
             ias_html:join([<<"Already has policy: ">>, ias_html:text(PolicyId)]);
         _ ->
@@ -585,6 +590,31 @@ candidate_label(#{kind := security_policy}) ->
     <<"Security Policy">>;
 candidate_label(_Object) ->
     <<"Demo Object">>.
+
+linked_action(Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            #panel{body = [
+                ias_html:text("Linked "),
+                unlink_link(maps:get(id, Relationship, undefined))
+            ]};
+        false ->
+            ias_html:text("Linked")
+    end.
+
+relationship_detail_action(Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            unlink_link(maps:get(id, Relationship, undefined));
+        false ->
+            ias_html:text("Protected lifecycle relationship")
+    end.
+
+unlink_link(RelationshipId) ->
+    #link{class = [button],
+          style = <<"display:inline-block;">>,
+          body = ias_html:text("Unlink"),
+          postback = {unlink_relationship, RelationshipId}}.
 
 relationships_table(Object) ->
     Relationships = ias_relationship_link:relationships_for(Object),

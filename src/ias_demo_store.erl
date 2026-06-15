@@ -19,6 +19,7 @@
     add_service/1,
     add_security_policy/1,
     add_relationship/1,
+    delete_relationship/1,
     add_enrollment_result/1,
     get_enrollment_result/1,
     reset/0
@@ -126,6 +127,11 @@ add_relationship(Relationship) when is_map(Relationship) ->
                created_at => maps:get(created_at, Relationship, CreatedAt)},
     ets:insert(?TABLE, {{relationship, Id}, Stored}),
     Stored.
+
+delete_relationship(Id) ->
+    ensure(),
+    ets:delete(?TABLE, {relationship, normalize_id(Id)}),
+    ok.
 
 add_enrollment_result(Result) when is_map(Result) ->
     ensure(),

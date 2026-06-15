@@ -1,9 +1,28 @@
 -module(ias_relationship_link).
--export([create/3, relationships_for/1, exists/3, status/3]).
+-export([create/3, unlink/1, unlinkable/1, relationships_for/1, exists/3, status/3]).
 
 create(RelationType, SourceId, TargetId) ->
     with_objects(SourceId, TargetId,
                  fun(Source, Target) -> create_for_objects(RelationType, Source, Target) end).
+
+unlink(RelationshipId) ->
+    case ias_demo_store:get(RelationshipId) of
+        {ok, #{kind := relationship} = Relationship} ->
+            case unlinkable(Relationship) of
+                true ->
+                    ok = ias_demo_store:delete_relationship(maps:get(id, Relationship, RelationshipId)),
+                    {ok, unlinked};
+                false ->
+                    {error, protected_relationship}
+            end;
+        _ ->
+            {error, not_found}
+    end.
+
+unlinkable(#{kind := relationship, relation_type := RelationType} = Relationship) ->
+    unlinkable_relationship(RelationType, Relationship);
+unlinkable(_Relationship) ->
+    false.
 
 relationships_for(Object) ->
     Id = maps:get(id, Object, undefined),
@@ -258,3 +277,14 @@ touches(Relationship, Kind, Id) ->
      maps:get(source_id, Relationship, undefined) =:= Id) orelse
     (maps:get(target_kind, Relationship, undefined) =:= Kind andalso
      maps:get(target_id, Relationship, undefined) =:= Id).
+
+unlinkable_relationship(uses_certificate, #{source_kind := device, target_kind := certificate}) ->
+    true;
+unlinkable_relationship(uses_service, #{source_kind := device, target_kind := vpn_service}) ->
+    true;
+unlinkable_relationship(uses_vpn_service, #{source_kind := device, target_kind := vpn_service}) ->
+    true;
+unlinkable_relationship(uses_security_policy, #{target_kind := security_policy}) ->
+    true;
+unlinkable_relationship(_RelationType, _Relationship) ->
+    false.

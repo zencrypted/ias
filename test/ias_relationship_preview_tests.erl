@@ -245,6 +245,99 @@ no_duplicate_relationships_appear_in_device_detail_test() ->
     [Relationship] = Relationships,
     ?assertEqual(maps:get(id, Certificate), maps:get(target_id, Relationship)).
 
+unlink_device_certificate_relationship_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"unlink_device_cert_device">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"unlink_device_cert_certificate">>}),
+    {ok, Relationship} = ias_relationship_link:create(uses_certificate,
+                                                      maps:get(id, Device),
+                                                      maps:get(id, Certificate)),
+
+    ?assertEqual({ok, unlinked}, ias_relationship_link:unlink(maps:get(id, Relationship))),
+    ?assertEqual(not_found, ias_demo_store:get(maps:get(id, Relationship))),
+    ?assertMatch({ok, #{kind := device}}, ias_demo_store:get(maps:get(id, Device))),
+    ?assertMatch({ok, #{kind := certificate}}, ias_demo_store:get(maps:get(id, Certificate))).
+
+unlink_device_vpn_service_relationship_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"unlink_device_service_device">>}),
+    Service = ias_demo_store:add_service(#{id => <<"unlink_device_service_service">>}),
+    {ok, UsesService} = ias_relationship_link:create(uses_service,
+                                                     maps:get(id, Device),
+                                                     maps:get(id, Service)),
+    UsesVpnService = ias_demo_store:add_relationship(#{
+        relation_type => uses_vpn_service,
+        source_kind => device,
+        source_id => maps:get(id, Device),
+        target_kind => vpn_service,
+        target_id => maps:get(id, Service)
+    }),
+
+    ?assertEqual({ok, unlinked}, ias_relationship_link:unlink(maps:get(id, UsesService))),
+    ?assertEqual({ok, unlinked}, ias_relationship_link:unlink(maps:get(id, UsesVpnService))),
+    ?assertEqual([], ias_demo_store:relationships()).
+
+unlink_security_policy_relationship_test() ->
+    ias_demo_store:clear(),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"unlink_policy_certificate">>}),
+    {ok, Relationship} = ias_relationship_link:create(uses_security_policy,
+                                                      maps:get(id, Certificate),
+                                                      <<"high_security">>),
+
+    ?assertEqual(true, ias_relationship_link:unlinkable(Relationship)),
+    ?assertEqual({ok, unlinked}, ias_relationship_link:unlink(maps:get(id, Relationship))),
+    ?assertEqual([], security_policy_relationships_for(Certificate)).
+
+protected_lifecycle_relationship_cannot_be_unlinked_test() ->
+    ias_demo_store:clear(),
+    User = #{id => alice, kind => user},
+    Certificate = ias_demo_store:add_certificate(#{id => <<"protected_issued_certificate">>}),
+    Verification = ias_demo_store:put_runtime_object(#{id => <<"protected_verification">>,
+                                                       kind => verification}),
+    {ok, Issued} = ias_relationship_link:create(issued_certificate,
+                                                maps:get(id, User),
+                                                maps:get(id, Certificate)),
+    {ok, VerifiedBy} = ias_relationship_link:create(verified_by,
+                                                    maps:get(id, Certificate),
+                                                    maps:get(id, Verification)),
+    Issues = ias_demo_store:add_relationship(#{
+        relation_type => issues,
+        source_kind => certificate,
+        source_id => maps:get(id, Certificate),
+        target_kind => certificate,
+        target_id => maps:get(id, Certificate)
+    }),
+
+    ?assertEqual(false, ias_relationship_link:unlinkable(Issued)),
+    ?assertEqual(false, ias_relationship_link:unlinkable(VerifiedBy)),
+    ?assertEqual(false, ias_relationship_link:unlinkable(Issues)),
+    ?assertEqual({error, protected_relationship}, ias_relationship_link:unlink(maps:get(id, Issued))),
+    ?assertEqual({error, protected_relationship}, ias_relationship_link:unlink(maps:get(id, VerifiedBy))),
+    ?assertEqual({error, protected_relationship}, ias_relationship_link:unlink(maps:get(id, Issues))),
+    ?assertMatch({ok, #{kind := relationship}}, ias_demo_store:get(maps:get(id, Issued))),
+    ?assertMatch({ok, #{kind := relationship}}, ias_demo_store:get(maps:get(id, VerifiedBy))),
+    ?assertMatch({ok, #{kind := relationship}}, ias_demo_store:get(maps:get(id, Issues))).
+
+unlink_missing_relationship_returns_not_found_test() ->
+    ias_demo_store:clear(),
+
+    ?assertEqual({error, not_found}, ias_relationship_link:unlink(<<"missing_relationship">>)).
+
+unlink_updates_graph_analysis_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"unlink_analysis_device">>}),
+    {ok, Relationship} = ias_relationship_link:create(uses_security_policy,
+                                                      maps:get(id, Device),
+                                                      <<"standard">>),
+    Before = ias_graph_analysis:report(),
+
+    ?assertNot(lists:any(has_id(maps:get(id, Device)),
+                         maps:get(devices_without_security_policy, Before))),
+    ?assertEqual({ok, unlinked}, ias_relationship_link:unlink(maps:get(id, Relationship))),
+    After = ias_graph_analysis:report(),
+    ?assert(lists:any(has_id(maps:get(id, Device)),
+                      maps:get(devices_without_security_policy, After))).
+
 score_zero_candidates_are_excluded_from_suggested_test() ->
     Candidates = [
         #{id => <<"suggested">>, relationship_score => 20},
@@ -365,3 +458,6 @@ security_policy_relationships() ->
     [Relationship || Relationship <- ias_demo_store:relationships(),
                      maps:get(relation_type, Relationship, undefined) =:= uses_security_policy,
                      maps:get(target_kind, Relationship, undefined) =:= security_policy].
+
+has_id(Id) ->
+    fun(Warning) -> maps:get(id, Warning, undefined) =:= Id end.
