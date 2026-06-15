@@ -11,123 +11,139 @@ event(_) ->
     ok.
 
 content() ->
-    Users = ias_demo_data:users(),
-    Devices = ias_demo_data:devices(),
-    Certificates = ias_demo_data:certificates(),
-    Services = ias_demo_data:services(),
-    Profiles = ias_demo_data:profiles(),
-    VpnSummary = ias_vpn_runtime:summary(),
+    Summary = ias_relationship_graph:summary(),
+    Categories = ias_relationship_graph:categorized_relationships(),
+    Report = ias_relationship_graph:graph_consistency_report(),
     #panel{class = <<"ias-placeholder">>, body = [
-        #h2{body = "Relationships"},
-        #p{body = "User to device, certificate and service relationships."},
-        counters(Users, Devices, Certificates, Services),
-        #panel{class = <<"ias-relationship-tree">>,
-               body = hierarchy(Users, Devices, Certificates, Services, Profiles, VpnSummary)}
+        #h2{body = ias_html:text("Relationship Explorer")},
+        #p{body = ias_html:text("Read-only IAS object graph inspection.")},
+        summary_panel(Summary),
+        #h3{body = ias_html:text("Relationships")},
+        relationship_table(maps:get(known, Categories, []), <<"not linked yet">>),
+        #h3{body = ias_html:text("Unknown Relationships")},
+        relationship_table(maps:get(unknown, Categories, []), <<"not linked yet">>),
+        #h3{body = ias_html:text("Broken Relationships")},
+        broken_relationship_table(maps:get(broken, Categories, [])),
+        #h3{body = ias_html:text("Graph Consistency Checks")},
+        consistency_table(Report)
     ]}.
 
-counters(Users, Devices, Certificates, Services) ->
+summary_panel(Summary) ->
     #panel{class = <<"ias-summary">>, body = [
-        summary("Users", Users),
-        summary("Devices", Devices),
-        summary("Certificates", Certificates),
-        summary("Services", Services)
+        summary_item("Users", maps:get(users, Summary, 0)),
+        summary_item("Devices", maps:get(devices, Summary, 0)),
+        summary_item("Certificates", maps:get(certificates, Summary, 0)),
+        summary_item("Security Profiles", maps:get(security_profiles, Summary, 0)),
+        summary_item("Security Policies", maps:get(security_policies, Summary, 0)),
+        summary_item("VPN Services", maps:get(vpn_services, Summary, 0)),
+        summary_item("Relationships", maps:get(relationships, Summary, 0)),
+        summary_item("Total Relationships", maps:get(total_relationships, Summary, 0))
     ]}.
 
-summary(Label, Rows) ->
+summary_item(Label, Count) ->
     #panel{class = <<"ias-summary-item">>,
-           body = [Label, ": ", integer_to_list(length(Rows))]}.
+           body = ias_html:join([Label, <<": ">>, Count])}.
 
-hierarchy(Users, Devices, Certificates, Services, Profiles, VpnSummary) ->
-    join_blocks([user_tree(User, Devices, Certificates, Services, Profiles, VpnSummary) || User <- Users]).
+relationship_table([], EmptyLabel) ->
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [
+                   #tr{cells = [#td{colspan = 3, body = ias_html:text(EmptyLabel)}]}
+               ]}}
+    ]};
+relationship_table(Relationships, _EmptyLabel) ->
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [relationship_header() |
+                                      [relationship_row(Relationship)
+                                       || Relationship <- Relationships]]}}
+    ]}.
 
-user_tree(User, Devices, Certificates, Services, Profiles, VpnSummary) ->
-    UserDevices = [find(DeviceId, Devices) || DeviceId <- maps:get(devices, User, [])],
-    [tree_line(ias_html:text(maps:get(name, User))),
-     device_lines(UserDevices, Certificates, Services, Profiles, VpnSummary)].
+relationship_header() ->
+    #tr{cells = [
+        #th{body = ias_html:text("Source")},
+        #th{body = ias_html:text("Relationship")},
+        #th{body = ias_html:text("Target")}
+    ]}.
 
-device_lines(Devices, Certificates, Services, Profiles, VpnSummary) ->
-    lists:append([device_tree(Device, Certificates, Services, Profiles, VpnSummary) || Device <- Devices]).
+relationship_row(Relationship) ->
+    #tr{cells = [
+        #td{body = object_label(maps:get(source_id, Relationship, undefined))},
+        #td{body = ias_html:join([<<"-> ">>,
+                                  maps:get(relation_type, Relationship, undefined),
+                                  <<" ->">>])},
+        #td{body = object_label(maps:get(target_id, Relationship, undefined))}
+    ]}.
 
-device_tree(Device, Certificates, Services, Profiles, VpnSummary) ->
-    Certificate = find(maps:get(certificate, Device), Certificates),
-    DeviceServices = [find(ServiceId, Services) || ServiceId <- maps:get(services, Device, [])],
-    [tree_line(["  +- ", ias_html:text(maps:get(id, Device))]),
-     tree_line(["  |  +- ", ias_html:text(maps:get(id, Certificate))])
-     | service_lines(Device, DeviceServices, Profiles, VpnSummary)].
+broken_relationship_table([]) ->
+    relationship_table([], <<"not linked yet">>);
+broken_relationship_table(Relationships) ->
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [broken_header() |
+                                      [broken_relationship_row(Relationship)
+                                       || Relationship <- Relationships]]}}
+    ]}.
 
-service_lines(Device, Services, Profiles, VpnSummary) ->
-    lists:append([service_tree(Device, Service, Profiles, VpnSummary) || Service <- Services]).
+broken_header() ->
+    #tr{cells = [
+        #th{body = ias_html:text("Status")},
+        #th{body = ias_html:text("Source")},
+        #th{body = ias_html:text("Relationship")},
+        #th{body = ias_html:text("Missing Target ID")}
+    ]}.
 
-service_tree(Device, #{id := vpn}, Profiles, VpnSummary) ->
-    vpn_service_lines(Device, Profiles, VpnSummary);
-service_tree(_Device, Service, _Profiles, _VpnSummary) ->
-    [tree_line(["  |  `- ", ias_html:text(maps:get(id, Service))])].
+broken_relationship_row(Relationship) ->
+    #tr{cells = [
+        #td{body = ias_html:text("Broken Relationship")},
+        #td{body = object_or_missing(maps:get(source_id, Relationship, undefined))},
+        #td{body = ias_html:text(maps:get(relation_type, Relationship, undefined))},
+        #td{body = missing_target_id(Relationship)}
+    ]}.
 
-vpn_service_lines(Device, Profiles, VpnSummary) ->
-    PeerId = maps:get(vpn_peer, Device, undefined),
-    ProfileId = maps:get(profile_id, Device, undefined),
-    Profile = profile(ProfileId, Profiles),
-    Policy = ias_policy:evaluate_vpn(Profile),
-    [tree_line(["  |  `- vpn -> ", ias_html:text(PeerId), " -> ",
-                atom_to_list(vpn_peer_status(PeerId, VpnSummary))]),
-     tree_line(["  |      profile: ", ias_html:text(ProfileId)]),
-     tree_line(["  |      authorized: ", ias_html:text(maps:get(authorized, Policy, false))]),
-     tree_line(["  |      reason: ", ias_html:text(maps:get(reason, Policy, undefined))])].
+consistency_table(Report) ->
+    Rows = [
+        {"Broken Relationships", length(maps:get(broken_relationships, Report, []))},
+        {"Unknown Relationship Types", length(maps:get(unknown_relationships, Report, []))},
+        {"Missing Objects", length(maps:get(missing_objects, Report, []))},
+        {"Total Relationships", maps:get(total_relationships, Report, 0)}
+    ],
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [#tr{cells = [
+                                        #th{body = ias_html:text(Label)},
+                                        #td{body = ias_html:text(Value)}
+                                    ]} || {Label, Value} <- Rows]}}
+    ]}.
 
-vpn_peer_status(undefined, _VpnSummary) ->
-    unknown;
-vpn_peer_status(_PeerId, {error, _Reason}) ->
-    unavailable;
-vpn_peer_status(PeerId, {ok, Data}) when is_map(Data) ->
-    case ias_vpn_runtime:peer(PeerId, Data) of
-        undefined -> unknown;
-        Peer -> ias_vpn_runtime:state(Peer)
-    end;
-vpn_peer_status(_PeerId, _VpnSummary) ->
-    unavailable.
-
-profile(undefined, _Profiles) ->
-    #{};
-profile(ProfileId, Profiles) ->
-    case [Profile || Profile <- Profiles, maps:get(id, Profile) =:= ProfileId] of
-        [Profile | _] -> Profile;
-        [] -> #{}
+object_label(Id) ->
+    case ias_demo_store:get(Id) of
+        {ok, Object} ->
+            ias_html:text(maps:get(name, Object, maps:get(id, Object, Id)));
+        not_found ->
+            ias_html:text(Id)
     end.
 
-find(Id, Rows) ->
-    case [Row || Row <- Rows, maps:get(id, Row) =:= Id] of
-        [Row | _] -> Row;
-        [] -> #{id => Id}
+object_or_missing(Id) ->
+    case ias_demo_store:get(Id) of
+        {ok, Object} ->
+            ias_html:text(maps:get(name, Object, maps:get(id, Object, Id)));
+        not_found ->
+            ias_html:text("Broken Relationship")
     end.
 
-join_blocks([]) ->
-    [];
-join_blocks([Block]) ->
-    Block;
-join_blocks([Block | Rest]) ->
-    [Block, tree_line(""), join_blocks(Rest)].
-
-tree_line(Body) ->
-    #panel{class = <<"ias-tree-line">>, body = #span{body = line_text(Body)}}.
-
-line_text(Value) ->
-    unicode:characters_to_binary(text_chars(Value)).
-
-text_chars(Value) when is_binary(Value) ->
-    binary_to_list(Value);
-text_chars(Value) when is_atom(Value) ->
-    atom_to_list(Value);
-text_chars(Value) when is_integer(Value) ->
-    integer_to_list(Value);
-text_chars(Value) when is_list(Value) ->
-    case is_charlist(Value) of
-        true -> Value;
-        false -> lists:append([text_chars(Part) || Part <- Value])
+missing_target_id(Relationship) ->
+    TargetId = maps:get(target_id, Relationship, undefined),
+    case ias_demo_store:get(TargetId) of
+        {ok, _Object} ->
+            missing_source_id(Relationship);
+        not_found ->
+            ias_html:text(TargetId)
     end.
 
-is_charlist([]) ->
-    true;
-is_charlist([Char | Rest]) when is_integer(Char), Char >= 0 ->
-    is_charlist(Rest);
-is_charlist(_) ->
-    false.
+missing_source_id(Relationship) ->
+    SourceId = maps:get(source_id, Relationship, undefined),
+    case ias_demo_store:get(SourceId) of
+        {ok, _Object} -> ias_html:text(<<"not linked yet">>);
+        not_found -> ias_html:text(SourceId)
+    end.
