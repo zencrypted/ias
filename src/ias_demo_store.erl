@@ -11,6 +11,8 @@
     security_profiles/0,
     security_policies/0,
     relationships/0,
+    runtime_objects/0,
+    put_runtime_object/1,
     clear/0,
     add_device/1,
     add_certificate/1,
@@ -80,6 +82,16 @@ security_policies() ->
 
 relationships() ->
     list(relationship).
+
+runtime_objects() ->
+    ensure(),
+    Stored = [Object || {_Key, Object} <- ets:tab2list(?TABLE)],
+    lists:sort(fun compare_records/2, Stored).
+
+put_runtime_object(#{kind := Kind, id := Id} = Object) ->
+    ensure(),
+    ets:insert(?TABLE, {{Kind, Id}, Object}),
+    Object.
 
 clear() ->
     ensure(),
