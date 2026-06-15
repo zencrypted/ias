@@ -57,13 +57,16 @@ relationship_table(Relationships, _EmptyLabel) ->
 
 relationship_edge(Relationship) ->
     Edge = ias_relationship_graph:tree_edge(Relationship),
-    #panel{class = <<"ias-tree-line">>, body = [
-        #panel{body = maps:get(source, Edge, <<"-">>)},
-        #panel{style = <<"padding-left:18px;">>,
-               body = ias_html:join([<<"└─ ">>, maps:get(relation_type, Edge, undefined)])},
-        #panel{style = <<"padding-left:42px;">>,
-               body = ias_html:join([<<"└─ ">>, maps:get(target, Edge, <<"-">>)])}
-    ]}.
+    #pre{class = <<"ias-tree-line">>,
+         style = <<"font-family:monospace;white-space:pre;">>,
+         body = relationship_edge_text(Edge)}.
+
+relationship_edge_text(Edge) ->
+    ias_html:join([
+        maps:get(source, Edge, <<"-">>), <<"\n">>,
+        <<" └─ ">>, maps:get(relation_type, Edge, undefined), <<"\n">>,
+        <<"      └─ ">>, maps:get(target, Edge, <<"-">>)
+    ]).
 
 broken_relationship_table([]) ->
     relationship_table([], <<"not linked yet">>);
