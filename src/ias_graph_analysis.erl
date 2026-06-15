@@ -6,6 +6,7 @@ report() ->
       verified_certificates => ias_certificate_verification:verified_certificates(),
       failed_verifications => ias_certificate_verification:failed_verifications(),
       certificates_never_verified => ias_certificate_verification:certificates_never_verified(),
+      verifications_without_security_policy => verifications_without_security_policy(),
       devices_without_security_policy => devices_without_security_policy(),
       certificates_without_security_policy => certificates_without_security_policy(),
       devices_without_vpn_service => devices_without_vpn_service(),
@@ -24,6 +25,11 @@ policy_mismatches() ->
 devices_without_security_policy() ->
     [object_warning(Device) || Device <- ias_demo_store:devices(),
                              active_security_policy(Device) =:= not_found].
+
+verifications_without_security_policy() ->
+    [object_warning(Verification) || Verification <- ias_demo_store:runtime_objects(),
+                                       maps:get(kind, Verification, undefined) =:= verification,
+                                       active_security_policy(Verification) =:= not_found].
 
 certificates_without_security_policy() ->
     [object_warning(Certificate) || Certificate <- ias_demo_store:certificates(),

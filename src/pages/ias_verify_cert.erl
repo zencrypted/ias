@@ -101,8 +101,8 @@ verify_result({ok, Verification}) ->
                key_value_table([
                    {"Verification", object_link(verification, Id)},
                    {"Certificate", object_link(certificate, CertificateId)},
-                   {"Verification Result", maps:get(verification_result, Verification, undefined)},
-                   {"Authorization Result", maps:get(authorization_result, Verification, undefined)}
+                   {"Status", maps:get(verification_status, Verification, undefined)},
+                   {"Authorization Decision", maps:get(authorization_status, Verification, undefined)}
                ])
            ]};
 verify_result({error, Reason}) ->

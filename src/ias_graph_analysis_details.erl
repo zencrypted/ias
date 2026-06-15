@@ -23,6 +23,10 @@ warning_specs(Analysis) ->
          maps:get(certificates_never_verified, Analysis, []),
          <<"Certificates never verified">>,
          fun object_list_detail/1},
+        {<<"Verifications without security policy">>,
+         maps:get(verifications_without_security_policy, Analysis, []),
+         <<"Verifications without security policy">>,
+         fun object_list_detail/1},
         {<<"Devices without security policy">>,
          maps:get(devices_without_security_policy, Analysis, []),
          <<"Devices without security policy">>,
@@ -98,10 +102,10 @@ failed_verification_detail(Warning) ->
         #ul{body = [
             #li{body = [ias_html:text("Certificate: "),
                         object_link(certificate, maps:get(certificate_id, Warning, undefined))]},
-            #li{body = ias_html:join([<<"Verification Result: ">>,
-                                      maps:get(verification_result, Warning, undefined)])},
-            #li{body = ias_html:join([<<"Authorization Result: ">>,
-                                      maps:get(authorization_result, Warning, undefined)])}
+            #li{body = ias_html:join([<<"Status: ">>,
+                                      maps:get(verification_status, Warning, undefined)])},
+            #li{body = ias_html:join([<<"Authorization Decision: ">>,
+                                      maps:get(authorization_status, Warning, undefined)])}
         ]}
     ]}.
 

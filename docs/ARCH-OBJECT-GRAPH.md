@@ -69,7 +69,7 @@ Certificate
 
 ```text
 Certificate
- └─ uses_verification
+ └─ verified_by
       └─ Certificate Verification
 ```
 

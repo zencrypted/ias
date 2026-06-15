@@ -45,12 +45,12 @@ create_for_objects(uses_service, #{kind := device} = Device,
 create_for_objects(uses_service, #{kind := vpn_service} = Service,
                    #{kind := device} = Device) ->
     create_relationship(uses_service, Device, Service);
-create_for_objects(uses_verification, #{kind := certificate} = Certificate,
+create_for_objects(verified_by, #{kind := certificate} = Certificate,
                    #{kind := verification} = Verification) ->
-    create_relationship(uses_verification, Certificate, Verification);
-create_for_objects(uses_verification, #{kind := verification} = Verification,
+    create_relationship(verified_by, Certificate, Verification);
+create_for_objects(verified_by, #{kind := verification} = Verification,
                    #{kind := certificate} = Certificate) ->
-    create_relationship(uses_verification, Certificate, Verification);
+    create_relationship(verified_by, Certificate, Verification);
 create_for_objects(uses_security_policy, #{kind := Kind} = Object,
                    #{kind := security_policy} = Policy)
   when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
@@ -136,12 +136,12 @@ canonical_for_objects(uses_service, #{kind := device} = Device,
 canonical_for_objects(uses_service, #{kind := vpn_service} = Service,
                       #{kind := device} = Device) ->
     {ok, uses_service, Device, Service};
-canonical_for_objects(uses_verification, #{kind := certificate} = Certificate,
+canonical_for_objects(verified_by, #{kind := certificate} = Certificate,
                       #{kind := verification} = Verification) ->
-    {ok, uses_verification, Certificate, Verification};
-canonical_for_objects(uses_verification, #{kind := verification} = Verification,
+    {ok, verified_by, Certificate, Verification};
+canonical_for_objects(verified_by, #{kind := verification} = Verification,
                       #{kind := certificate} = Certificate) ->
-    {ok, uses_verification, Certificate, Verification};
+    {ok, verified_by, Certificate, Verification};
 canonical_for_objects(uses_security_policy, #{kind := Kind} = Object,
                       #{kind := security_policy} = Policy)
   when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->

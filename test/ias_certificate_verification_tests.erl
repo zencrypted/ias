@@ -1,7 +1,7 @@
 -module(ias_certificate_verification_tests).
 -include_lib("eunit/include/eunit.hrl").
 
-verification_creates_runtime_object_and_relationships_test() ->
+verify_certificate_creates_runtime_object_test() ->
     ias_demo_store:clear(),
     Certificate = certificate(<<"peer_a">>, true, true, administrator_claims(), administrator),
 
@@ -10,39 +10,35 @@ verification_creates_runtime_object_and_relationships_test() ->
 
     ?assertEqual(verification, maps:get(kind, Verification)),
     ?assertEqual(CertificateId, maps:get(certificate_id, Verification)),
-    ?assertEqual(administrator, maps:get(profile_id, Verification)),
-    ?assertEqual(verified, maps:get(verification_result, Verification)),
-    ?assertEqual(allow, maps:get(authorization_result, Verification)),
-    ?assertMatch({ok, #{kind := certificate}}, ias_demo_store:get(CertificateId)),
-    ?assert(lists:any(edge(uses_verification, certificate, CertificateId,
+    ?assertEqual(<<"peer_a">>, maps:get(certificate_subject, Verification)),
+    ?assertEqual(verified, maps:get(verification_status, Verification)),
+    ?assertEqual(allow, maps:get(authorization_status, Verification)),
+    ?assertEqual(administrator, maps:get(resolved_profile, Verification)),
+    ?assertEqual(<<"high_security">>, maps:get(resolved_policy, Verification)),
+    ?assertEqual(true, maps:get(trusted, Verification)),
+    ?assertEqual(true, maps:get(key_match, Verification)),
+    ?assertMatch({ok, #{kind := certificate}}, ias_demo_store:get(CertificateId)).
+
+verify_certificate_links_certificate_to_verification_test() ->
+    ias_demo_store:clear(),
+    {ok, Verification} = ias_certificate_verification:verify(
+        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
+    CertificateId = maps:get(certificate_id, Verification),
+
+    ?assert(lists:any(edge(verified_by, certificate, CertificateId,
                            verification, maps:get(id, Verification)),
-                      ias_demo_store:relationships())),
+                      ias_demo_store:relationships())).
+
+verification_uses_security_policy_test() ->
+    ias_demo_store:clear(),
+    {ok, Verification} = ias_certificate_verification:verify(
+        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
+
     ?assert(lists:any(edge(uses_security_policy, verification, maps:get(id, Verification),
                            security_policy, <<"high_security">>),
                       ias_demo_store:relationships())).
 
-graph_analysis_verification_checks_test() ->
-    ias_demo_store:clear(),
-    {ok, Verified} = ias_certificate_verification:verify(
-        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
-    {ok, Failed} = ias_certificate_verification:verify(
-        certificate(<<"peer_b">>, false, true, peer_claims(), default_user)),
-    Never = ias_demo_store:add_certificate(#{id => <<"never_verified_certificate">>,
-                                             source => verification_demo}),
-
-    Report = ias_graph_analysis:report(),
-
-    ?assert(lists:any(fun(Warning) ->
-        maps:get(certificate_id, Warning) =:= maps:get(certificate_id, Verified)
-    end, maps:get(verified_certificates, Report))),
-    ?assert(lists:any(fun(Verification) ->
-        maps:get(id, Verification) =:= maps:get(id, Failed)
-    end, maps:get(failed_verifications, Report))),
-    ?assert(lists:any(fun(Warning) ->
-        maps:get(id, Warning) =:= maps:get(id, Never)
-    end, maps:get(certificates_never_verified, Report))).
-
-certificate_verification_history_test() ->
+certificate_detail_shows_verification_history_test() ->
     ias_demo_store:clear(),
     {ok, Verification} = ias_certificate_verification:verify(
         certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
@@ -52,13 +48,51 @@ certificate_verification_history_test() ->
                  [maps:get(id, Item) || Item <- ias_certificate_verification:verification_history(Certificate)]),
     ?assertEqual(<<"Verified">>, ias_certificate_verification:certificate_status(Certificate)).
 
-failed_certificate_status_test() ->
+graph_analysis_detects_verified_certificates_test() ->
     ias_demo_store:clear(),
     {ok, Verification} = ias_certificate_verification:verify(
-        certificate(<<"peer_b">>, false, true, peer_claims(), default_user)),
-    {ok, Certificate} = ias_demo_store:get(maps:get(certificate_id, Verification)),
+        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
+    Report = ias_graph_analysis:report(),
 
+    ?assert(lists:any(fun(Warning) ->
+        maps:get(certificate_id, Warning) =:= maps:get(certificate_id, Verification) andalso
+            maps:get(verification_id, Warning) =:= maps:get(id, Verification)
+    end, maps:get(verified_certificates, Report))).
+
+graph_analysis_detects_certificates_never_verified_test() ->
+    ias_demo_store:clear(),
+    Never = ias_demo_store:add_certificate(#{id => <<"never_verified_certificate">>,
+                                             source => verification_demo}),
+    Report = ias_graph_analysis:report(),
+
+    ?assert(lists:any(fun(Warning) ->
+        maps:get(id, Warning) =:= maps:get(id, Never)
+    end, maps:get(certificates_never_verified, Report))).
+
+failed_verification_appears_in_graph_analysis_test() ->
+    ias_demo_store:clear(),
+    {ok, Failed} = ias_certificate_verification:verify(
+        certificate(<<"peer_b">>, false, true, peer_claims(), default_user)),
+    {ok, Certificate} = ias_demo_store:get(maps:get(certificate_id, Failed)),
+    Report = ias_graph_analysis:report(),
+
+    ?assert(lists:any(fun(Verification) ->
+        maps:get(id, Verification) =:= maps:get(id, Failed)
+    end, maps:get(failed_verifications, Report))),
     ?assertEqual(<<"Verification Failed">>, ias_certificate_verification:certificate_status(Certificate)).
+
+verification_without_security_policy_is_reported_test() ->
+    ias_demo_store:clear(),
+    {ok, Verification} = ias_certificate_verification:verify(
+        certificate(<<"peer_unknown">>, true, true, #{}, undefined)),
+    Report = ias_graph_analysis:report(),
+
+    ?assertEqual(undefined, maps:get(resolved_policy, Verification)),
+    ?assertEqual(false, lists:any(edge_target(maps:get(id, Verification), uses_security_policy),
+                                  ias_demo_store:relationships())),
+    ?assert(lists:any(fun(Warning) ->
+        maps:get(id, Warning) =:= maps:get(id, Verification)
+    end, maps:get(verifications_without_security_policy, Report))).
 
 verification_detail_rendering_test() ->
     ias_demo_store:clear(),
@@ -80,6 +114,12 @@ edge(RelationType, SourceKind, SourceId, TargetKind, TargetId) ->
             maps:get(target_id, Relationship, undefined) =:= TargetId
     end.
 
+edge_target(SourceId, RelationType) ->
+    fun(Relationship) ->
+        maps:get(relation_type, Relationship, undefined) =:= RelationType andalso
+            maps:get(source_id, Relationship, undefined) =:= SourceId
+    end.
+
 certificate(PeerId, Trusted, KeyMatch, Claims, ProfileId) ->
     Profile = profile(ProfileId),
     #{peer_id => PeerId,
@@ -91,6 +131,8 @@ certificate(PeerId, Trusted, KeyMatch, Claims, ProfileId) ->
       profile => Profile,
       claims => Claims}.
 
+profile(undefined) ->
+    #{};
 profile(ProfileId) ->
     [Profile] = [Profile || Profile <- ias_demo_data:profiles(),
                             maps:get(id, Profile) =:= ProfileId],

@@ -9,24 +9,21 @@
 verify(Certificate) ->
     StoredCertificate = ensure_certificate(Certificate),
     Verification = ias_demo_store:put_runtime_object(verification_object(StoredCertificate, Certificate)),
-    _ = ias_relationship_link:create(uses_verification,
+    _ = ias_relationship_link:create(verified_by,
                                      maps:get(id, StoredCertificate, undefined),
                                      maps:get(id, Verification, undefined)),
-    _ = ias_relationship_link:create(uses_security_policy,
-                                     maps:get(id, Verification, undefined),
-                                     maps:get(policy_id, Verification, undefined)),
+    _ = link_security_policy(Verification),
     {ok, Verification}.
 
 verified_certificates() ->
     [#{certificate_id => maps:get(source_id, Relationship, undefined),
        verification_id => maps:get(target_id, Relationship, undefined)}
      || Relationship <- ias_demo_store:relationships(),
-        maps:get(relation_type, Relationship, undefined) =:= uses_verification,
-        verification_result(maps:get(target_id, Relationship, undefined)) =:= verified].
+        maps:get(relation_type, Relationship, undefined) =:= verified_by].
 
 failed_verifications() ->
     [Verification || Verification <- verifications(),
-                     maps:get(verification_result, Verification, undefined) =/= verified].
+                     maps:get(verification_status, Verification, undefined) =/= verified].
 
 certificates_never_verified() ->
     [#{id => maps:get(id, Certificate, undefined), kind => certificate}
@@ -36,7 +33,7 @@ certificates_never_verified() ->
 verification_history(#{kind := certificate} = Certificate) ->
     CertificateId = maps:get(id, Certificate, undefined),
     [Verification || Relationship <- ias_demo_store:relationships(),
-                     maps:get(relation_type, Relationship, undefined) =:= uses_verification,
+                     maps:get(relation_type, Relationship, undefined) =:= verified_by,
                      maps:get(source_kind, Relationship, undefined) =:= certificate,
                      maps:get(source_id, Relationship, undefined) =:= CertificateId,
                      maps:get(target_kind, Relationship, undefined) =:= verification,
@@ -53,7 +50,7 @@ certificate_status(#{kind := certificate} = Certificate) ->
             <<"Not Verified">>;
         History ->
             case lists:any(fun(Verification) ->
-                maps:get(verification_result, Verification, undefined) =/= verified
+                maps:get(verification_status, Verification, undefined) =/= verified
             end, History) of
                 true -> <<"Verification Failed">>;
                 false -> <<"Verified">>
@@ -86,21 +83,25 @@ certificate_object(CertificateId, Certificate) ->
 
 verification_object(StoredCertificate, Certificate) ->
     ProfileId = profile_id(Certificate),
-    VerificationResult = verification_result(Certificate),
-    AuthorizationResult = authorization_result(Certificate),
+    PolicyId = policy_id(ProfileId),
+    VerificationStatus = verification_status(Certificate),
+    AuthorizationStatus = authorization_status(Certificate),
     Id = verification_id(maps:get(id, StoredCertificate, undefined)),
     #{id => Id,
       kind => verification,
       source => verification_demo,
       import_id => <<"verification_demo">>,
       certificate_id => maps:get(id, StoredCertificate, undefined),
-      profile_id => ProfileId,
-      policy_id => policy_id(ProfileId),
-      verification_result => VerificationResult,
-      authorization_result => AuthorizationResult,
+      certificate_subject => maps:get(subject_cn, Certificate, undefined),
+      verification_status => VerificationStatus,
+      authorization_status => AuthorizationStatus,
+      resolved_profile => ProfileId,
+      resolved_policy => PolicyId,
+      trusted => maps:get(trusted, Certificate, false),
+      key_match => maps:get(key_match, Certificate, false),
       created_at => created_at()}.
 
-verification_result(Certificate) when is_map(Certificate) ->
+verification_status(Certificate) when is_map(Certificate) ->
     Claims = maps:get(claims, Certificate, #{}),
     Profile = maps:get(profile, Certificate, #{}),
     ProfileClaims = ias_policy:certificate_claims(Profile),
@@ -109,16 +110,9 @@ verification_result(Certificate) when is_map(Certificate) ->
          ias_policy:certificate_claims_match(ProfileClaims, Claims) =:= true of
         true -> verified;
         false -> failed
-    end;
-verification_result(VerificationId) ->
-    case ias_demo_store:get(VerificationId) of
-        {ok, #{kind := verification} = Verification} ->
-            maps:get(verification_result, Verification, undefined);
-        _ ->
-            undefined
     end.
 
-authorization_result(Certificate) ->
+authorization_status(Certificate) ->
     Decision = ias_policy:evaluate_certificate(Certificate, vpn),
     maps:get(decision, Decision, deny).
 
@@ -130,8 +124,22 @@ policy_id(administrator) ->
     <<"high_security">>;
 policy_id(<<"administrator">>) ->
     <<"high_security">>;
+policy_id(default_user) ->
+    <<"standard">>;
+policy_id(<<"default_user">>) ->
+    <<"standard">>;
+policy_id(undefined) ->
+    undefined;
 policy_id(_ProfileId) ->
-    <<"standard">>.
+    undefined.
+
+link_security_policy(#{resolved_policy := undefined}) ->
+    ok;
+link_security_policy(Verification) ->
+    _ = ias_relationship_link:create(uses_security_policy,
+                                     maps:get(id, Verification, undefined),
+                                     maps:get(resolved_policy, Verification, undefined)),
+    ok.
 
 certificate_id(Certificate) ->
     case maps:get(certificate_id, Certificate, undefined) of

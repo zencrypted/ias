@@ -130,10 +130,13 @@ rows(#{kind := security_policy} = Object) ->
 rows(#{kind := verification} = Object) ->
     common_rows(Object) ++ [
         {"Certificate", object_ref(certificate, maps:get(certificate_id, Object, undefined))},
-        {"Profile", maps:get(profile_id, Object, undefined)},
-        {"Security Policy", object_ref(security_policy, maps:get(policy_id, Object, undefined))},
-        {"Verification Result", maps:get(verification_result, Object, undefined)},
-        {"Authorization Result", maps:get(authorization_result, Object, undefined)}
+        {"Certificate Subject", maps:get(certificate_subject, Object, undefined)},
+        {"Status", maps:get(verification_status, Object, undefined)},
+        {"Authorization Decision", maps:get(authorization_status, Object, undefined)},
+        {"Resolved Profile", maps:get(resolved_profile, Object, undefined)},
+        {"Resolved Policy", policy_ref(maps:get(resolved_policy, Object, undefined))},
+        {"Trusted", maps:get(trusted, Object, false)},
+        {"Key Match", maps:get(key_match, Object, false)}
     ] ++ created_row(Object);
 rows(#{kind := relationship} = Object) ->
     [
@@ -600,7 +603,7 @@ relationship_rows(#{kind := certificate}, Relationships) ->
     key_value_table([
         {"Issued From", linked_sources(issues, Relationships)},
         {"Issued Certificate", linked_targets(issues, Relationships)},
-        {"Verification History", linked_targets(uses_verification, Relationships)},
+        {"Verification History", linked_targets(verified_by, Relationships)},
         {"Used By Device", linked_sources(uses_certificate, Relationships)},
         {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
@@ -615,7 +618,7 @@ relationship_rows(#{kind := security_policy}, Relationships) ->
     ]);
 relationship_rows(#{kind := verification}, Relationships) ->
     key_value_table([
-        {"Certificate", linked_sources(uses_verification, Relationships)},
+        {"Certificate", linked_sources(verified_by, Relationships)},
         {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
 relationship_rows(#{kind := cmp_enrollment_result}, Relationships) ->
@@ -746,6 +749,11 @@ profile_ref(ProfileId) ->
         _ ->
             <<"not found">>
     end.
+
+policy_ref(undefined) ->
+    <<"not linked yet">>;
+policy_ref(PolicyId) ->
+    object_ref(security_policy, PolicyId).
 
 transition_certificate(_Origin, not_found) ->
     <<"not linked yet">>;
