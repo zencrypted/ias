@@ -64,8 +64,8 @@ relationship_edge(Relationship) ->
 relationship_edge_text(Edge) ->
     ias_html:join([
         maps:get(source, Edge, <<"-">>), <<"\n">>,
-        <<" └─ ">>, maps:get(relation_type, Edge, undefined), <<"\n">>,
-        <<"      └─ ">>, maps:get(target, Edge, <<"-">>)
+        <<"  +-- ">>, maps:get(relation_type, Edge, undefined), <<"\n">>,
+        <<"      +-- ">>, maps:get(target, Edge, <<"-">>)
     ]).
 
 broken_relationship_table([]) ->

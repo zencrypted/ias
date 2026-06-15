@@ -670,8 +670,12 @@ object_label(Kind) ->
 
 certificate_ref(not_found) ->
     <<"not linked yet">>;
-certificate_ref(Certificate) ->
-    object_ref(certificate, maps:get(id, Certificate, undefined)).
+certificate_ref(#{id := Id}) ->
+    object_ref(certificate, Id);
+certificate_ref(Id) when is_binary(Id); is_list(Id) ->
+    object_ref(certificate, Id);
+certificate_ref(_) ->
+    <<"not found">>.
 
 device_ref(not_found) ->
     <<"not linked yet">>;
