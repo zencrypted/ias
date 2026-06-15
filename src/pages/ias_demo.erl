@@ -84,6 +84,8 @@ rows(#{kind := certificate} = Object) ->
         {"Issued User", user_ref(maps:get(issued_user_id, Metadata, undefined))},
         {"Source Security Profile", profile_ref(maps:get(source_security_profile, Metadata, undefined))},
         {"Issued From Enrollment", enrollment_ref(issued_from_enrollment_id(Object))},
+        {"Issued From Enrollment Certificate", certificate_ref(issued_from_certificate_id(Object))},
+        {"Issued Certificate", certificate_ref(issued_certificate_id(Object))},
         {"Subject", maps:get(subject, Object, undefined)},
         {"Subject CN", maps:get(subject_cn, Object, undefined)},
         {"Issuer", maps:get(issuer, Object, undefined)},
@@ -281,6 +283,15 @@ issued_from_enrollment_id(Object) ->
              maps:get(source_kind, Relationship, undefined) =:= cmp_enrollment_result] of
         [EnrollmentId | _] -> EnrollmentId;
         [] -> undefined
+    end.
+
+issued_from_certificate_id(Object) ->
+    case [maps:get(source_id, Relationship, undefined)
+          || Relationship <- ias_relationship_link:relationships_for(Object),
+             maps:get(relation_type, Relationship, undefined) =:= issues,
+             maps:get(source_kind, Relationship, undefined) =:= certificate] of
+        [CertificateId | _] -> CertificateId;
+        [] -> not_found
     end.
 
 issued_certificate_id(Object) ->
@@ -574,6 +585,8 @@ relationship_rows(#{kind := device}, Relationships) ->
     ]);
 relationship_rows(#{kind := certificate}, Relationships) ->
     key_value_table([
+        {"Issued From", linked_sources(issues, Relationships)},
+        {"Issued Certificate", linked_targets(issues, Relationships)},
         {"Used By Device", linked_sources(uses_certificate, Relationships)},
         {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
@@ -669,6 +682,8 @@ object_label(Kind) ->
     ias_html:text(Kind).
 
 certificate_ref(not_found) ->
+    <<"not linked yet">>;
+certificate_ref(undefined) ->
     <<"not linked yet">>;
 certificate_ref(#{id := Id}) ->
     object_ref(certificate, Id);

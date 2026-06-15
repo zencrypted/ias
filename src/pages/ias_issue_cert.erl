@@ -7,7 +7,8 @@ event(init) ->
     nitro:insert_bottom(stand, content());
 event({issue_cert_demo, UserId}) ->
     SubjectCN = field_value(nitro:q(issue_subject), <<"peer_new">>),
-    Result = ias_certificate_issue_demo:issue(UserId, SubjectCN, ias_demo_data:profiles()),
+    SourceCertificateId = optional_field(nitro:q(issue_source_certificate)),
+    Result = issue_certificate(UserId, SubjectCN, SourceCertificateId),
     nitro:update(issue_result_id(UserId), issue_result(Result));
 event(_) ->
     ok.
@@ -32,6 +33,11 @@ selector(Users) ->
                    value = <<"peer_new">>,
                    onkeyup = update_subject_js(),
                    onchange = update_subject_js()}
+        ]},
+        #panel{body = [
+            #span{body = ias_html:text("Enrollment Certificate: ")},
+            #select{id = <<"issue_source_certificate">>,
+                    body = source_certificate_options()}
         ]},
         #panel{body = [
             #span{body = ias_html:text("Selected User: ")},
@@ -227,7 +233,7 @@ issue_controls(UserId) ->
            body = [
                #link{class = [button, sgreen],
                      body = ias_html:text("Issue Certificate"),
-                     source = [issue_subject],
+                     source = [issue_subject, issue_source_certificate],
                      postback = {issue_cert_demo, UserId}},
                #panel{id = issue_result_id(UserId)}
            ]}.
@@ -253,6 +259,8 @@ issue_result({error, user_not_found}) ->
     issue_error("User not found");
 issue_result({error, profile_not_found}) ->
     issue_error("Security profile not found");
+issue_result({error, source_certificate_not_found}) ->
+    issue_error("Enrollment certificate not found");
 issue_result({error, Reason}) ->
     issue_error(Reason).
 
@@ -339,3 +347,36 @@ field_value(Value, Default) ->
         <<>> -> Default;
         _ -> Text
     end.
+
+optional_field(undefined) ->
+    undefined;
+optional_field(<<>>) ->
+    undefined;
+optional_field(Value) ->
+    Text = ias_html:text(Value),
+    case Text of
+        <<>> -> undefined;
+        _ -> Text
+    end.
+
+issue_certificate(UserId, SubjectCN, undefined) ->
+    ias_certificate_issue_demo:issue(UserId, SubjectCN, ias_demo_data:profiles());
+issue_certificate(UserId, SubjectCN, SourceCertificateId) ->
+    ias_certificate_issue_demo:issue_from_certificate(SourceCertificateId, UserId,
+                                                      SubjectCN, ias_demo_data:profiles()).
+
+source_certificate_options() ->
+    [#option{value = <<>>,
+             selected = true,
+             body = ias_html:text("none")} |
+     [source_certificate_option(Certificate)
+      || Certificate <- enrollment_certificates()]].
+
+source_certificate_option(Certificate) ->
+    Id = maps:get(id, Certificate, undefined),
+    #option{value = ias_html:text(Id),
+            body = ias_html:join([<<"Certificate #">>, Id])}.
+
+enrollment_certificates() ->
+    [Certificate || Certificate <- ias_demo_store:certificates(),
+                    maps:get(source, Certificate, undefined) =:= cmp_demo_enrollment].

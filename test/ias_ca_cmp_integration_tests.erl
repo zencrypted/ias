@@ -40,6 +40,44 @@ issued_certificate_origin_test() ->
         maps:get(source_id, Relationship) =:= EnrollmentId
     end, Relationships)).
 
+enrollment_certificate_issues_demo_certificate_test() ->
+    ias_demo_store:clear(),
+    EnrollmentId = ias_demo_store:add_enrollment_result(enrollment_result()),
+    {ok, EnrollmentCertificate} = ias_cert_enrollment_import:import(EnrollmentId),
+    EnrollmentCertificateId = maps:get(id, EnrollmentCertificate),
+
+    {ok, IssuedCertificate} =
+        ias_certificate_issue_demo:issue_from_certificate(EnrollmentCertificateId,
+                                                          alice,
+                                                          <<"alice-vpn">>,
+                                                          ias_demo_data:profiles()),
+
+    ?assertEqual(EnrollmentCertificateId,
+                 maps:get(source_certificate_id, IssuedCertificate)),
+    ?assert(lists:any(fun(Relationship) ->
+        maps:get(relation_type, Relationship) =:= issues andalso
+        maps:get(source_kind, Relationship) =:= certificate andalso
+        maps:get(source_id, Relationship) =:= EnrollmentCertificateId andalso
+        maps:get(target_kind, Relationship) =:= certificate andalso
+        maps:get(target_id, Relationship) =:= maps:get(id, IssuedCertificate)
+    end, ias_demo_store:relationships())),
+    ?assertEqual([], maps:get(unknown, ias_relationship_graph:categorized_relationships())),
+    ?assertEqual([], maps:get(broken, ias_relationship_graph:categorized_relationships())).
+
+normal_demo_issuance_does_not_create_lifecycle_link_test() ->
+    ias_demo_store:clear(),
+
+    {ok, IssuedCertificate} =
+        ias_certificate_issue_demo:issue(alice, <<"alice-vpn">>,
+                                         ias_demo_data:profiles()),
+
+    ?assertEqual(undefined, maps:get(source_certificate_id, IssuedCertificate)),
+    ?assertEqual([],
+                 [Relationship || Relationship <- ias_demo_store:relationships(),
+                                  maps:get(relation_type, Relationship) =:= issues,
+                                  maps:get(target_id, Relationship) =:=
+                                      maps:get(id, IssuedCertificate)]).
+
 metadata_only_storage_test() ->
     ias_demo_store:clear(),
     EnrollmentId = ias_demo_store:add_enrollment_result(enrollment_result(#{

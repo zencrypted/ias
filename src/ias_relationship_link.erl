@@ -79,6 +79,9 @@ create_for_objects(issues, #{kind := cmp_enrollment_result} = Enrollment,
 create_for_objects(issues, #{kind := certificate} = Certificate,
                    #{kind := cmp_enrollment_result} = Enrollment) ->
     create_relationship(issues, Enrollment, Certificate);
+create_for_objects(issues, #{kind := certificate} = SourceCertificate,
+                   #{kind := certificate} = TargetCertificate) ->
+    create_relationship(issues, SourceCertificate, TargetCertificate);
 create_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 
@@ -161,6 +164,9 @@ canonical_for_objects(issues, #{kind := cmp_enrollment_result} = Enrollment,
 canonical_for_objects(issues, #{kind := certificate} = Certificate,
                       #{kind := cmp_enrollment_result} = Enrollment) ->
     {ok, issues, Enrollment, Certificate};
+canonical_for_objects(issues, #{kind := certificate} = SourceCertificate,
+                      #{kind := certificate} = TargetCertificate) ->
+    {ok, issues, SourceCertificate, TargetCertificate};
 canonical_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 

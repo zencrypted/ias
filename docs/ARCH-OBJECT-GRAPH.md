@@ -77,8 +77,23 @@ Device
 ```text
 Certificate Enrollment
  └─ issues
+      └─ Enrollment Certificate
+```
+
+### Enrollment Certificate -> Issued Certificate
+
+```text
+Enrollment Certificate
+ └─ issues
       └─ Issued Certificate
 ```
+
+The graph uses `issues` in the source-to-target lifecycle direction. This keeps
+relationship direction consistent with the rest of IAS: the object that causes
+or owns the relationship is the source, and the resulting object is the target.
+The inverse name `issued_from` is a useful display label, but storing it as the
+relationship type would make graph traversal inconsistent with existing
+source-to-target edges.
 
 ---
 
@@ -102,6 +117,8 @@ VPN Service
 Certificate Enrollment
       ↓
 Enrollment Certificate
+      ↓
+Issued Certificate
 ```
 
 ### Certificate Issuance Flow
