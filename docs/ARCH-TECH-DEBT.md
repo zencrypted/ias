@@ -154,3 +154,49 @@ Do not add these controls until the graph is large enough to justify the UI comp
 ### Priority
 
 Low
+
+---
+
+## TD-004: Bulk Verification Result Rendering
+
+**Status:** Open
+
+**Area:** Certificate Verification / Graph Analysis
+
+### Problem
+
+Bulk verification now creates verification audit records for all runtime certificates and shows a per-certificate result list after the action completes.
+
+This is correct for debugging, but the result panel can become large very quickly because verification records are append-only audit events.
+
+Repeated bulk verification runs may produce many records for the same certificates:
+
+```text
+Unique Verified Certificates: 9
+Total Verification Records: 15
+```
+
+The distinction is correct, but the UI may become noisy when every verification event is rendered inline.
+
+### Current Impact
+
+Low.
+
+The current runtime graph is still small, and the detailed result list is useful while the lifecycle is being tested.
+
+### Desired Direction
+
+Keep verification history append-only, but improve result rendering once the data grows.
+
+Possible improvements:
+
+- show a compact bulk verification summary by default;
+- collapse per-certificate details;
+- group verification events by certificate;
+- show latest verification first;
+- add an explicit "show verification history" action;
+- distinguish unique verified certificates from total verification records consistently across UI pages.
+
+### Priority
+
+Low
