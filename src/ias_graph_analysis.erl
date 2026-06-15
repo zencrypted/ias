@@ -3,7 +3,8 @@
 
 report() ->
     #{policy_mismatches => policy_mismatches(),
-      verified_certificates => ias_certificate_verification:verified_certificates(),
+      unique_verified_certificates => ias_certificate_verification:unique_verified_certificates(),
+      total_verification_records => ias_certificate_verification:total_verification_records(),
       failed_verifications => ias_certificate_verification:failed_verifications(),
       certificates_never_verified => ias_certificate_verification:certificates_never_verified(),
       verifications_without_security_policy => verifications_without_security_policy(),

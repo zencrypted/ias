@@ -81,6 +81,49 @@ export_demo_state_does_not_export_private_material_test() ->
     ?assertEqual(false, maps:get(private_key_stored, Exported)),
     ?assertEqual(false, maps:get(certificate_body_stored, Exported)).
 
+demo_state_export_includes_verification_objects_test() ->
+    ias_demo_store:clear(),
+    #{certificate := Certificate} = setup_demo_graph(),
+    {ok, Verification} = ias_certificate_verification:verify(verification_certificate(Certificate)),
+
+    Snapshot = decode_snapshot(ias_demo_state:export()),
+    Objects = maps:get(objects, Snapshot),
+    [ExportedVerification] = [Object || Object <- Objects,
+                                        maps:get(kind, Object, undefined) =:= verification],
+
+    ?assertEqual(maps:get(id, Verification), maps:get(id, ExportedVerification)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(certificate_id, ExportedVerification)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(certificate_subject, ExportedVerification)),
+    ?assertEqual(verified, maps:get(verification_status, ExportedVerification)),
+    ?assertEqual(allow, maps:get(authorization_status, ExportedVerification)),
+    ?assertEqual(administrator, maps:get(resolved_profile, ExportedVerification)),
+    ?assertEqual(<<"high_security">>, maps:get(resolved_policy, ExportedVerification)),
+    ?assertEqual(true, maps:get(trusted, ExportedVerification)),
+    ?assertEqual(true, maps:get(key_match, ExportedVerification)),
+    ?assertEqual(verification_demo, maps:get(source, ExportedVerification)),
+    ?assert(maps:is_key(created_at, ExportedVerification)).
+
+demo_state_import_restores_verification_objects_test() ->
+    ias_demo_store:clear(),
+    #{certificate := Certificate} = setup_demo_graph(),
+    {ok, Verification} = ias_certificate_verification:verify(verification_certificate(Certificate)),
+    BeforeAnalysis = warning_counts(ias_graph_analysis:report()),
+    Term = ias_demo_state:export(),
+
+    ok = ias_demo_state:clear(),
+    Result = ias_demo_state:import(Term),
+    AfterAnalysis = warning_counts(ias_graph_analysis:report()),
+
+    ?assertEqual(BeforeAnalysis, AfterAnalysis),
+    ?assertMatch({ok, #{kind := verification}}, ias_demo_store:get(maps:get(id, Verification))),
+    ?assert(lists:any(fun(Relationship) ->
+        maps:get(relation_type, Relationship, undefined) =:= verified_by andalso
+            maps:get(source_id, Relationship, undefined) =:= maps:get(id, Certificate) andalso
+            maps:get(target_id, Relationship, undefined) =:= maps:get(id, Verification)
+    end, ias_demo_store:relationships())),
+    ?assert(maps:get(imported_objects, Result) >= 4),
+    ?assert(maps:get(imported_relationships, Result) >= 4).
+
 setup_demo_graph() ->
     Device = ias_demo_store:add_device(#{id => <<"state_device">>,
                                          source => ovpn_demo_import,
@@ -109,3 +152,26 @@ setup_demo_graph() ->
 
 warning_counts(Report) ->
     maps:from_list([{Key, length(Value)} || {Key, Value} <- maps:to_list(Report)]).
+
+verification_certificate(Certificate) ->
+    Certificate#{certificate_id => maps:get(id, Certificate, undefined),
+                 subject_cn => maps:get(id, Certificate, undefined),
+                 issuer_cn => <<"Zencrypted Dev CA">>,
+                 profile => administrator_profile(),
+                 profile_id => administrator,
+                 claims => #{role => admin,
+                             services => [vpn, ias],
+                             attributes => [admin, issue_certificates, revoke_certificates],
+                             trust_level => elevated},
+                 trusted => true,
+                 key_match => true}.
+
+administrator_profile() ->
+    [Profile] = [Profile || Profile <- ias_demo_data:profiles(),
+                            maps:get(id, Profile, undefined) =:= administrator],
+    Profile.
+
+decode_snapshot(Term) ->
+    {ok, Tokens, _} = erl_scan:string(binary_to_list(Term)),
+    {ok, Snapshot} = erl_parse:parse_term(Tokens),
+    Snapshot.

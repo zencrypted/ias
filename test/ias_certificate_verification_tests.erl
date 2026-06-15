@@ -48,16 +48,29 @@ certificate_detail_shows_verification_history_test() ->
                  [maps:get(id, Item) || Item <- ias_certificate_verification:verification_history(Certificate)]),
     ?assertEqual(<<"Verified">>, ias_certificate_verification:certificate_status(Certificate)).
 
-graph_analysis_detects_verified_certificates_test() ->
+graph_analysis_unique_verified_certificates_test() ->
     ias_demo_store:clear(),
     {ok, Verification} = ias_certificate_verification:verify(
         certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
+    {ok, SecondVerification} = ias_certificate_verification:verify(
+        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
     Report = ias_graph_analysis:report(),
 
-    ?assert(lists:any(fun(Warning) ->
-        maps:get(certificate_id, Warning) =:= maps:get(certificate_id, Verification) andalso
-            maps:get(verification_id, Warning) =:= maps:get(id, Verification)
-    end, maps:get(verified_certificates, Report))).
+    [Warning] = maps:get(unique_verified_certificates, Report),
+    ?assertEqual(maps:get(certificate_id, Verification), maps:get(certificate_id, Warning)),
+    ?assertEqual([maps:get(id, Verification), maps:get(id, SecondVerification)],
+                 maps:get(verification_ids, Warning)).
+
+graph_analysis_total_verification_records_test() ->
+    ias_demo_store:clear(),
+    {ok, _Verification} = ias_certificate_verification:verify(
+        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
+    {ok, _SecondVerification} = ias_certificate_verification:verify(
+        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
+    Report = ias_graph_analysis:report(),
+
+    ?assertEqual(2, length(maps:get(total_verification_records, Report))),
+    ?assertEqual(1, length(maps:get(unique_verified_certificates, Report))).
 
 graph_analysis_detects_certificates_never_verified_test() ->
     ias_demo_store:clear(),
@@ -101,9 +114,23 @@ verification_detail_rendering_test() ->
     Html = iolist_to_binary(nitro:render(
         ias_graph_analysis_details:warning_blocks(ias_graph_analysis:report()))),
 
-    ?assertMatch({_, _}, binary:match(Html, <<"Verified certificates">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Unique Verified Certificates">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Verification #">>)),
     ?assertMatch({_, _}, binary:match(Html, maps:get(id, Verification))).
+
+graph_analysis_verification_history_grouping_test() ->
+    ias_demo_store:clear(),
+    {ok, Verification} = ias_certificate_verification:verify(
+        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
+    {ok, SecondVerification} = ias_certificate_verification:verify(
+        certificate(<<"peer_a">>, true, true, administrator_claims(), administrator)),
+    Html = iolist_to_binary(nitro:render(
+        ias_graph_analysis_details:warning_blocks(ias_graph_analysis:report()))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate #verify_certificate_peer_a">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Verifications:">>)),
+    ?assertMatch({_, _}, binary:match(Html, maps:get(id, Verification))),
+    ?assertMatch({_, _}, binary:match(Html, maps:get(id, SecondVerification))).
 
 runtime_certificate_selector_includes_supported_sources_test() ->
     ias_demo_store:clear(),
@@ -142,8 +169,8 @@ runtime_certificate_verification_updates_graph_analysis_test() ->
     end, maps:get(certificates_never_verified, After))),
     ?assert(lists:any(fun(Warning) ->
         maps:get(certificate_id, Warning) =:= maps:get(id, RuntimeCertificate) andalso
-            maps:get(verification_id, Warning) =:= maps:get(id, Verification)
-    end, maps:get(verified_certificates, After))),
+            maps:get(verification_ids, Warning) =:= [maps:get(id, Verification)]
+    end, maps:get(unique_verified_certificates, After))),
     ?assert(lists:any(edge(verified_by, certificate, maps:get(id, RuntimeCertificate),
                            verification, maps:get(id, Verification)),
                       ias_demo_store:relationships())).

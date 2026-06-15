@@ -1,6 +1,7 @@
 -module(ias_certificate_verification).
 -export([verify/1,
-         verified_certificates/0,
+         unique_verified_certificates/0,
+         total_verification_records/0,
          failed_verifications/0,
          certificates_never_verified/0,
          verification_history/1,
@@ -15,11 +16,11 @@ verify(Certificate) ->
     _ = link_security_policy(Verification),
     {ok, Verification}.
 
-verified_certificates() ->
-    [#{certificate_id => maps:get(source_id, Relationship, undefined),
-       verification_id => maps:get(target_id, Relationship, undefined)}
-     || Relationship <- ias_demo_store:relationships(),
-        maps:get(relation_type, Relationship, undefined) =:= verified_by].
+unique_verified_certificates() ->
+    grouped_verified_certificates(verified_by_relationships(), []).
+
+total_verification_records() ->
+    verifications().
 
 failed_verifications() ->
     [Verification || Verification <- verifications(),
@@ -164,6 +165,33 @@ verification_id(CertificateId) ->
 verifications() ->
     [Object || Object <- ias_demo_store:runtime_objects(),
                maps:get(kind, Object, undefined) =:= verification].
+
+verified_by_relationships() ->
+    [Relationship || Relationship <- ias_demo_store:relationships(),
+                     maps:get(relation_type, Relationship, undefined) =:= verified_by,
+                     maps:get(source_kind, Relationship, undefined) =:= certificate,
+                     maps:get(target_kind, Relationship, undefined) =:= verification].
+
+grouped_verified_certificates([], Acc) ->
+    lists:reverse(Acc);
+grouped_verified_certificates([Relationship | Rest], Acc) ->
+    CertificateId = maps:get(source_id, Relationship, undefined),
+    VerificationId = maps:get(target_id, Relationship, undefined),
+    case take_certificate_group(CertificateId, Acc, []) of
+        {not_found, Kept} ->
+            grouped_verified_certificates(Rest, [#{certificate_id => CertificateId,
+                                                   verification_ids => [VerificationId]} | Kept]);
+        {Group, Kept} ->
+            VerificationIds = maps:get(verification_ids, Group, []),
+            grouped_verified_certificates(Rest, [Group#{verification_ids => VerificationIds ++ [VerificationId]} | Kept])
+    end.
+
+take_certificate_group(_CertificateId, [], Kept) ->
+    {not_found, lists:reverse(Kept)};
+take_certificate_group(CertificateId, [#{certificate_id := CertificateId} = Group | Rest], Kept) ->
+    {Group, lists:reverse(Kept) ++ Rest};
+take_certificate_group(CertificateId, [Group | Rest], Kept) ->
+    take_certificate_group(CertificateId, Rest, [Group | Kept]).
 
 created_at() ->
     iolist_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second),

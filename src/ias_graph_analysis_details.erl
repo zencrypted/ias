@@ -11,10 +11,14 @@ warning_specs(Analysis) ->
          maps:get(policy_mismatches, Analysis, []),
          <<"Policy mismatches">>,
          fun policy_mismatch_detail/1},
-        {<<"Verified certificates">>,
-         maps:get(verified_certificates, Analysis, []),
-         <<"Verified certificates">>,
-         fun verified_certificate_detail/1},
+        {<<"Unique Verified Certificates">>,
+         maps:get(unique_verified_certificates, Analysis, []),
+         <<"Unique Verified Certificates">>,
+         fun unique_verified_certificate_detail/1},
+        {<<"Total Verification Records">>,
+         maps:get(total_verification_records, Analysis, []),
+         <<"Total Verification Records">>,
+         fun object_list_detail/1},
         {<<"Failed verifications">>,
          maps:get(failed_verifications, Analysis, []),
          <<"Failed verifications">>,
@@ -87,12 +91,15 @@ object_list_detail(Warning) ->
     #li{body = [object_link(maps:get(kind, Warning, undefined),
                             maps:get(id, Warning, undefined))]}.
 
-verified_certificate_detail(Warning) ->
+unique_verified_certificate_detail(Warning) ->
     #li{body = [
         object_link(certificate, maps:get(certificate_id, Warning, undefined)),
         #ul{body = [
-            #li{body = [ias_html:text("Verification: "),
-                        object_link(verification, maps:get(verification_id, Warning, undefined))]}
+            #li{body = [
+                ias_html:text("Verifications:"),
+                #ul{body = [#li{body = [object_link(verification, VerificationId)]}
+                            || VerificationId <- maps:get(verification_ids, Warning, [])]}
+            ]}
         ]}
     ]}.
 
