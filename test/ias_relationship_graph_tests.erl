@@ -6,10 +6,24 @@ relationship_type_is_known_test() ->
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(issued_certificate)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_certificate)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_security_policy)),
+    ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_service)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_vpn_service)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(issues)),
-    ?assertEqual(false, ias_relationship_graph:known_relationship_type(uses_service)),
     ?assertEqual(false, ias_relationship_graph:known_relationship_type(unknown_relation)).
+
+vpn_service_relationship_is_known_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"graph_vpn_device">>}),
+    Service = ias_demo_store:add_service(#{id => <<"graph_vpn_service">>}),
+    {ok, Relationship} = ias_relationship_link:create(uses_service,
+                                                       maps:get(id, Device),
+                                                       maps:get(id, Service)),
+
+    Categories = ias_relationship_graph:categorized_relationships(),
+
+    ?assertEqual([maps:get(id, Relationship)], ids(maps:get(known, Categories))),
+    ?assertEqual([], maps:get(unknown, Categories)),
+    ?assertEqual([], maps:get(broken, Categories)).
 
 relationship_tree_render_test() ->
     ias_demo_store:clear(),

@@ -9,6 +9,7 @@ known_relationship_type(uses_security_profile) -> true;
 known_relationship_type(issued_certificate) -> true;
 known_relationship_type(uses_certificate) -> true;
 known_relationship_type(uses_security_policy) -> true;
+known_relationship_type(uses_service) -> true;
 known_relationship_type(uses_vpn_service) -> true;
 known_relationship_type(issues) -> true;
 known_relationship_type(_RelationType) -> false.
