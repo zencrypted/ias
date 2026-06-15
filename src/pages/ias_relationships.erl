@@ -52,27 +52,16 @@ relationship_table([], EmptyLabel) ->
                ]}}
     ]};
 relationship_table(Relationships, _EmptyLabel) ->
-    #panel{class = <<"ias-table-container">>, body = [
-        #table{class = <<"ias-table">>,
-               body = #tbody{body = [relationship_header() |
-                                      [relationship_row(Relationship)
-                                       || Relationship <- Relationships]]}}
-    ]}.
+    #panel{class = <<"ias-relationship-tree">>,
+           body = [relationship_edge(Relationship) || Relationship <- Relationships]}.
 
-relationship_header() ->
-    #tr{cells = [
-        #th{body = ias_html:text("Source")},
-        #th{body = ias_html:text("Relationship")},
-        #th{body = ias_html:text("Target")}
-    ]}.
-
-relationship_row(Relationship) ->
-    #tr{cells = [
-        #td{body = object_label(maps:get(source_id, Relationship, undefined))},
-        #td{body = ias_html:join([<<"-> ">>,
-                                  maps:get(relation_type, Relationship, undefined),
-                                  <<" ->">>])},
-        #td{body = object_label(maps:get(target_id, Relationship, undefined))}
+relationship_edge(Relationship) ->
+    #panel{class = <<"ias-tree-line">>, body = [
+        #panel{body = object_label(maps:get(source_id, Relationship, undefined))},
+        #panel{style = <<"padding-left:18px;">>,
+               body = ias_html:join([<<"-> ">>, maps:get(relation_type, Relationship, undefined)])},
+        #panel{style = <<"padding-left:18px;">>,
+               body = ias_html:join([<<"-> ">>, object_label(maps:get(target_id, Relationship, undefined))])}
     ]}.
 
 broken_relationship_table([]) ->
