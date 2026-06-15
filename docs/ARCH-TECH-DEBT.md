@@ -200,3 +200,61 @@ Possible improvements:
 ### Priority
 
 Low
+
+---
+
+## TD-005: Object Link Tooltip Hints
+
+**Status:** Open
+
+**Area:** IAS UI / Relationship Explorer
+
+### Problem
+
+IAS pages now contain many clickable object references:
+
+- `User #...`
+- `Device #...`
+- `Certificate #...`
+- `Security Profile #...`
+- `Security Policy #...`
+- `VPN Service #...`
+- `Verification #...`
+
+These references are rendered as blue links, but the UI does not explain what will happen when the operator clicks them.
+
+This is increasingly confusing because the same page may contain links to different object kinds, lifecycle records, policies, certificates, and graph diagnostics.
+
+### Current Impact
+
+Medium.
+
+The graph is already useful, but new users must infer link behavior from naming conventions alone. This makes Relationship Explorer and Graph Analysis harder to understand than necessary.
+
+### Desired Direction
+
+Add lightweight tooltip hints to object links.
+
+The first iteration should be simple and consistent:
+
+```text
+Certificate #issued_certificate_alice_...
+Tooltip: Certificate — open certificate details
+
+Security Policy #high_security
+Tooltip: Security Policy — open policy details
+
+Verification #verification_...
+Tooltip: Verification — open verification record
+```
+
+The tooltip should explain two things:
+
+1. the object kind;
+2. the navigation action.
+
+Do not turn tooltips into large data cards yet. Keep them short and stable.
+
+### Priority
+
+Medium
