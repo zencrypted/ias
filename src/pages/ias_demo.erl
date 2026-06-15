@@ -40,7 +40,8 @@ detail(Object) ->
         key_value_table(rows(Object)),
         certificate_lifecycle_preview(Object),
         security_profile_preview(Object),
-        relationship_preview(Object)
+        relationship_preview(Object),
+        policy_consistency_preview(Object)
     ]}.
 
 not_found() ->
@@ -249,6 +250,82 @@ relationship_preview(Object) ->
             []
     end.
 
+policy_consistency_preview(#{kind := device} = Object) ->
+    DeviceId = maps:get(id, Object, undefined),
+    CertificateId = linked_certificate_id(Object),
+    Consistency = ias_policy_consistency:evaluate_policy_consistency(DeviceId, CertificateId),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Policy Consistency")},
+        key_value_table([
+            {"Device Policy", policy_value(maps:get(device_policy, Consistency, not_found))},
+            {"Current Certificate Policy", policy_value(maps:get(certificate_policy, Consistency, not_found))},
+            {"Policy Match", policy_match_text(maps:get(match, Consistency, false))},
+            {"Reason", policy_reason(Consistency)}
+        ])
+    ]};
+policy_consistency_preview(#{kind := certificate} = Object) ->
+    CertificateId = maps:get(id, Object, undefined),
+    DeviceId = linked_device_id(Object),
+    Consistency = ias_policy_consistency:evaluate_policy_consistency(DeviceId, CertificateId),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Policy Consistency")},
+        key_value_table([
+            {"Used By Device", linked_object_ref(device, DeviceId)},
+            {"Device Policy", policy_value(maps:get(device_policy, Consistency, not_found))},
+            {"Certificate Policy", policy_value(maps:get(certificate_policy, Consistency, not_found))},
+            {"Policy Match", policy_match_text(maps:get(match, Consistency, false))},
+            {"Reason", policy_reason(Consistency)}
+        ])
+    ]};
+policy_consistency_preview(_Object) ->
+    [].
+
+linked_certificate_id(Object) ->
+    case [maps:get(target_id, Relationship, undefined)
+          || Relationship <- ias_relationship_link:relationships_for(Object),
+             maps:get(relation_type, Relationship, undefined) =:= uses_certificate,
+             maps:get(target_kind, Relationship, undefined) =:= certificate] of
+        [CertificateId | _] -> CertificateId;
+        [] -> undefined
+    end.
+
+linked_device_id(Object) ->
+    case [maps:get(source_id, Relationship, undefined)
+          || Relationship <- ias_relationship_link:relationships_for(Object),
+             maps:get(relation_type, Relationship, undefined) =:= uses_certificate,
+             maps:get(source_kind, Relationship, undefined) =:= device] of
+        [DeviceId | _] -> DeviceId;
+        [] -> undefined
+    end.
+
+linked_object_ref(_Kind, undefined) ->
+    <<"not linked yet">>;
+linked_object_ref(Kind, Id) ->
+    object_ref(Kind, Id).
+
+policy_match_text(true) ->
+    <<"yes">>;
+policy_match_text(false) ->
+    <<"no">>.
+
+policy_value(not_found) ->
+    <<"not linked yet">>;
+policy_value(Value) ->
+    ias_html:text(Value).
+
+policy_reason(#{reason := <<"no policy available">>}) ->
+    <<"no policy available">>;
+policy_reason(#{match := true}) ->
+    <<"policies match">>;
+policy_reason(Consistency) ->
+    #panel{body = [
+        ias_html:join([<<"device requires ">>,
+                       policy_value(maps:get(device_policy, Consistency, not_found))]),
+        #br{},
+        ias_html:join([<<"certificate provides ">>,
+                       policy_value(maps:get(certificate_policy, Consistency, not_found))])
+    ]}.
+
 certificate_lifecycle_preview(#{kind := device} = Object) ->
     Status = ias_certificate_role:device_status(Object),
     Transition = ias_certificate_role:replacement_preview(Object),
@@ -360,7 +437,7 @@ candidate_row(Type, Candidate, RelationType, SourceId) ->
     #tr{cells = [
         #td{style = <<"width:24%;">>, body = ias_html:text(Type)},
         #td{style = <<"word-break:break-all;white-space:normal;">>,
-            body = candidate_link(Candidate)},
+            body = candidate_body(Candidate, RelationType, SourceId)},
         #td{style = <<"width:90px;white-space:nowrap;">>,
             body = candidate_action(Candidate, RelationType, SourceId)}
     ]}.
@@ -388,6 +465,41 @@ candidate_link(Candidate) ->
           body = ias_html:join([candidate_label(Candidate), <<" #">>, TextId,
                                 <<" (score ">>, maps:get(relationship_score, Candidate, 0),
                                 <<")">>])}.
+
+candidate_body(Candidate, RelationType, SourceId) ->
+    case candidate_policy_warning(Candidate, RelationType, SourceId) of
+        [] ->
+            candidate_link(Candidate);
+        Warning ->
+            #panel{body = [candidate_link(Candidate), #br{} | Warning]}
+    end.
+
+candidate_policy_warning(#{kind := certificate} = Candidate, uses_certificate, SourceId) ->
+    case ias_demo_store:get(SourceId) of
+        {ok, #{kind := device}} ->
+            Consistency = ias_policy_consistency:evaluate_policy_consistency(
+                SourceId, maps:get(id, Candidate, undefined)),
+            case maps:get(match, Consistency, false) of
+                true -> [];
+                false -> policy_mismatch_lines(Consistency)
+            end;
+        _ ->
+            []
+    end;
+candidate_policy_warning(_Candidate, _RelationType, _SourceId) ->
+    [].
+
+policy_mismatch_lines(#{reason := <<"no policy available">>}) ->
+    [];
+policy_mismatch_lines(Consistency) ->
+    [#span{style = <<"color:#b45309;font-size:12px;">>,
+           body = ias_html:text("Policy mismatch:")},
+     #br{},
+     #span{style = <<"color:#b45309;font-size:12px;">>,
+           body = ias_html:join([<<"device=">>,
+                                 policy_value(maps:get(device_policy, Consistency, not_found)),
+                                 <<" certificate=">>,
+                                 policy_value(maps:get(certificate_policy, Consistency, not_found))])}].
 
 candidate_label(#{kind := certificate}) ->
     <<"Certificate">>;
