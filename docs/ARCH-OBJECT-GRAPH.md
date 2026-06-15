@@ -72,7 +72,7 @@ Device
       └─ VPN Service
 ```
 
-### Certificate Enrollment -> Issued Certificate
+### Certificate Enrollment -> Enrollment Certificate
 
 ```text
 Certificate Enrollment
@@ -94,6 +94,10 @@ or owns the relationship is the source, and the resulting object is the target.
 The inverse name `issued_from` is a useful display label, but storing it as the
 relationship type would make graph traversal inconsistent with existing
 source-to-target edges.
+
+The explicit linkage key for the second edge is `source_certificate_id` on the
+issued certificate. IAS creates the edge only when issuance was requested from
+a concrete enrollment certificate object.
 
 ---
 

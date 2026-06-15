@@ -61,8 +61,12 @@ enrollment_certificate_issues_demo_certificate_test() ->
         maps:get(target_kind, Relationship) =:= certificate andalso
         maps:get(target_id, Relationship) =:= maps:get(id, IssuedCertificate)
     end, ias_demo_store:relationships())),
+    ?assertEqual(2, length([Relationship || Relationship <- ias_demo_store:relationships(),
+                                            maps:get(relation_type, Relationship) =:= issues])),
     ?assertEqual([], maps:get(unknown, ias_relationship_graph:categorized_relationships())),
-    ?assertEqual([], maps:get(broken, ias_relationship_graph:categorized_relationships())).
+    ?assertEqual([], maps:get(broken, ias_relationship_graph:categorized_relationships())),
+    ?assertEqual([], maps:get(enrollment_certificates_without_issued_certificate,
+                              ias_graph_analysis:report())).
 
 normal_demo_issuance_does_not_create_lifecycle_link_test() ->
     ias_demo_store:clear(),
