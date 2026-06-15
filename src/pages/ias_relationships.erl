@@ -14,6 +14,7 @@ content() ->
     Summary = ias_relationship_graph:summary(),
     Categories = ias_relationship_graph:categorized_relationships(),
     Report = ias_relationship_graph:graph_consistency_report(),
+    Analysis = ias_graph_analysis:report(),
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Relationship Explorer")},
         #p{body = ias_html:text("Read-only IAS object graph inspection.")},
@@ -25,7 +26,9 @@ content() ->
         #h3{body = ias_html:text("Broken Relationships")},
         broken_relationship_table(maps:get(broken, Categories, [])),
         #h3{body = ias_html:text("Graph Consistency Checks")},
-        consistency_table(Report)
+        consistency_table(Report),
+        #h3{body = ias_html:text("GRAPH ANALYSIS")},
+        analysis_table(Analysis)
     ]}.
 
 summary_panel(Summary) ->
@@ -108,6 +111,83 @@ consistency_table(Report) ->
                                         #td{body = ias_html:text(Value)}
                                     ]} || {Label, Value} <- Rows]}}
     ]}.
+
+analysis_table(Analysis) ->
+    Warnings = analysis_warnings(Analysis),
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [analysis_header() |
+                                      lists:append([analysis_rows(Warning)
+                                                    || Warning <- Warnings])]}}
+    ]}.
+
+analysis_header() ->
+    #tr{cells = [
+        #th{body = ias_html:text("Warnings")},
+        #th{body = ias_html:text("Count")},
+        #th{body = ias_html:text("Details")}
+    ]}.
+
+analysis_warnings(Analysis) ->
+    [
+        {<<"Policy mismatches">>, maps:get(policy_mismatches, Analysis, []), fun policy_mismatch_detail/1},
+        {<<"Devices without security policy">>, maps:get(devices_without_security_policy, Analysis, []), fun object_detail/1},
+        {<<"Certificates without security policy">>, maps:get(certificates_without_security_policy, Analysis, []), fun object_detail/1},
+        {<<"Devices without VPN service">>, maps:get(devices_without_vpn_service, Analysis, []), fun object_detail/1},
+        {<<"Enrollment certificates without issued certificate">>,
+         maps:get(enrollment_certificates_without_issued_certificate, Analysis, []), fun object_detail/1},
+        {<<"Certificates linked to multiple devices">>,
+         maps:get(certificates_linked_to_multiple_devices, Analysis, []), fun multiple_device_detail/1},
+        {<<"Devices with replacement available">>,
+         maps:get(devices_with_replacement_available, Analysis, []), fun replacement_detail/1}
+    ].
+
+analysis_rows({Label, Warnings, DetailFun}) ->
+    Summary = #tr{cells = [
+        #th{body = ias_html:text(Label)},
+        #td{body = ias_html:text(length(Warnings))},
+        #td{body = ias_html:text(summary_detail(Warnings))}
+    ]},
+    [Summary | detail_rows(Label, Warnings, DetailFun)].
+
+summary_detail([]) ->
+    <<"none">>;
+summary_detail(_Warnings) ->
+    <<"see details">>.
+
+detail_rows(_Label, [], _DetailFun) ->
+    [];
+detail_rows(Label, Warnings, DetailFun) ->
+    [#tr{cells = [
+        #td{body = ias_html:text(Label)},
+        #td{body = ias_html:text(<<"">>)},
+        #td{body = ias_html:text(DetailFun(Warning))}
+    ]} || Warning <- Warnings].
+
+policy_mismatch_detail(Warning) ->
+    ias_html:join([
+        <<"Device ">>, maps:get(device_id, Warning, undefined),
+        <<" policy ">>, maps:get(device_policy, Warning, not_found),
+        <<"; Certificate ">>, maps:get(certificate_id, Warning, undefined),
+        <<" policy ">>, maps:get(certificate_policy, Warning, not_found)
+    ]).
+
+object_detail(Warning) ->
+    ias_html:join([maps:get(kind, Warning, undefined), <<" ">>,
+                   maps:get(id, Warning, undefined)]).
+
+multiple_device_detail(Warning) ->
+    ias_html:join([
+        <<"Certificate ">>, maps:get(certificate_id, Warning, undefined),
+        <<" linked to devices ">>, ias_html:join_csv(maps:get(device_ids, Warning, []))
+    ]).
+
+replacement_detail(Warning) ->
+    ias_html:join([
+        <<"Device ">>, maps:get(device_id, Warning, undefined),
+        <<" current ">>, maps:get(current_certificate_id, Warning, not_found),
+        <<" candidate ">>, maps:get(candidate_certificate_id, Warning, not_found)
+    ]).
 
 object_label(Id) ->
     case ias_demo_store:get(Id) of
