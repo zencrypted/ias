@@ -45,8 +45,16 @@ enrollment_certificate_issues_demo_certificate_test() ->
     EnrollmentId = ias_demo_store:add_enrollment_result(enrollment_result()),
     {ok, EnrollmentCertificate} = ias_cert_enrollment_import:import(EnrollmentId),
     EnrollmentCertificateId = maps:get(id, EnrollmentCertificate),
+    ?assertEqual([#{id => EnrollmentCertificateId, kind => certificate}],
+                 maps:get(enrollment_certificates_without_issued_certificate,
+                          ias_graph_analysis:report())),
 
     {ok, IssuedCertificate} =
+        ias_certificate_issue_demo:issue_from_certificate(EnrollmentCertificateId,
+                                                          alice,
+                                                          <<"alice-vpn">>,
+                                                          ias_demo_data:profiles()),
+    {ok, RepeatedIssuedCertificate} =
         ias_certificate_issue_demo:issue_from_certificate(EnrollmentCertificateId,
                                                           alice,
                                                           <<"alice-vpn">>,
@@ -54,6 +62,8 @@ enrollment_certificate_issues_demo_certificate_test() ->
 
     ?assertEqual(EnrollmentCertificateId,
                  maps:get(source_certificate_id, IssuedCertificate)),
+    ?assertEqual(maps:get(id, IssuedCertificate),
+                 maps:get(id, RepeatedIssuedCertificate)),
     ?assert(lists:any(fun(Relationship) ->
         maps:get(relation_type, Relationship) =:= issues andalso
         maps:get(source_kind, Relationship) =:= certificate andalso

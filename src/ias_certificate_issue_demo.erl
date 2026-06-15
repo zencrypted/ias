@@ -1,5 +1,5 @@
 -module(ias_certificate_issue_demo).
--export([issue/3, issue_from_certificate/4]).
+-export([issue/3, issue_from_certificate/4, issued_certificate_for_source/1]).
 
 issue(UserId, SubjectCN, Profiles) ->
     case ias_demo_store:get(UserId) of
@@ -13,9 +13,27 @@ issue(UserId, SubjectCN, Profiles) ->
 issue_from_certificate(SourceCertificateId, UserId, SubjectCN, Profiles) ->
     case ias_demo_store:get(SourceCertificateId) of
         {ok, #{kind := certificate, source := cmp_demo_enrollment} = SourceCertificate} ->
-            issue_from_enrollment_certificate(SourceCertificate, UserId, SubjectCN, Profiles);
+            case issued_certificate_for_source(maps:get(id, SourceCertificate, undefined)) of
+                {ok, Certificate} ->
+                    {ok, Certificate};
+                not_found ->
+                    issue_from_enrollment_certificate(SourceCertificate, UserId, SubjectCN, Profiles)
+            end;
         _ ->
             {error, source_certificate_not_found}
+    end.
+
+issued_certificate_for_source(SourceCertificateId) ->
+    case [Certificate
+          || Relationship <- ias_demo_store:relationships(),
+             maps:get(relation_type, Relationship, undefined) =:= issues,
+             maps:get(source_kind, Relationship, undefined) =:= certificate,
+             maps:get(source_id, Relationship, undefined) =:= SourceCertificateId,
+             maps:get(target_kind, Relationship, undefined) =:= certificate,
+             {ok, Certificate} <- [ias_demo_store:get(maps:get(target_id, Relationship, undefined))],
+             maps:get(kind, Certificate, undefined) =:= certificate] of
+        [Certificate | _] -> {ok, Certificate};
+        [] -> not_found
     end.
 
 issue_from_enrollment_certificate(SourceCertificate, UserId, SubjectCN, Profiles) ->

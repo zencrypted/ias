@@ -30,6 +30,10 @@ event(import_cert_demo) ->
         not_found ->
             nitro:update(enroll_import_result, certificate_import_not_found())
     end;
+event({issue_enrollment_certificate, CertificateId}) ->
+    Result = issue_enrollment_certificate(CertificateId),
+    nitro:update(enroll_lifecycle_result_id(CertificateId),
+                 enrollment_lifecycle_result(CertificateId, Result));
 event(_) ->
     ok.
 
@@ -174,7 +178,8 @@ certificate_import_result(Stored) ->
                ]),
                #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]),
                      style = <<"display:inline-block;margin-top:8px;padding:7px 10px;border:1px solid #93c5fd;border-radius:5px;background:#ffffff;color:#1d4ed8;text-decoration:none;font-size:12px;font-weight:600;">>,
-                     body = ias_html:text("View Demo Object")}
+                     body = ias_html:text("View Demo Object")},
+               enrollment_lifecycle_panel(Stored)
            ]}.
 
 certificate_import_not_found() ->
@@ -193,8 +198,13 @@ key_value_table(Rows) ->
 key_value_row(Label, Value) ->
     #tr{cells = [
         #th{body = ias_html:text(Label)},
-        #td{body = ias_html:text(Value)}
+        #td{body = cell_body(Value)}
     ]}.
+
+cell_body(#link{} = Link) ->
+    Link;
+cell_body(Value) ->
+    ias_html:text(Value).
 
 field_value(undefined, Default) ->
     Default;
@@ -206,3 +216,80 @@ field_value(Value, Default) ->
         <<>> -> Default;
         _ -> Text
     end.
+
+enrollment_lifecycle_panel(Certificate) ->
+    CertificateId = maps:get(id, Certificate, undefined),
+    #panel{id = enroll_lifecycle_result_id(CertificateId),
+           style = <<"margin-top:14px;">>,
+           body = enrollment_lifecycle_body(Certificate)}.
+
+enrollment_lifecycle_result(CertificateId, {ok, _IssuedCertificate}) ->
+    case ias_demo_store:get(CertificateId) of
+        {ok, Certificate} ->
+            enrollment_lifecycle_panel(Certificate);
+        not_found ->
+            lifecycle_error_panel("Enrollment certificate not found")
+    end;
+enrollment_lifecycle_result(_CertificateId, {error, source_certificate_not_found}) ->
+    lifecycle_error_panel("Enrollment certificate not found");
+enrollment_lifecycle_result(_CertificateId, {error, user_not_found}) ->
+    lifecycle_error_panel("Issue user not found");
+enrollment_lifecycle_result(_CertificateId, {error, profile_not_found}) ->
+    lifecycle_error_panel("Security profile not found");
+enrollment_lifecycle_result(_CertificateId, {error, Reason}) ->
+    lifecycle_error_panel(Reason).
+
+enrollment_lifecycle_body(Certificate) ->
+    CertificateId = maps:get(id, Certificate, undefined),
+    case ias_certificate_issue_demo:issued_certificate_for_source(CertificateId) of
+        {ok, IssuedCertificate} ->
+            [
+                #h3{body = ias_html:text("Certificate Lifecycle")},
+                key_value_table([
+                    {"Status", <<"Issued">>},
+                    {"Issued Certificate", certificate_link(IssuedCertificate)}
+                ])
+            ];
+        not_found ->
+            [
+                #h3{body = ias_html:text("Certificate Lifecycle")},
+                key_value_table([
+                    {"Status", <<"Pending">>}
+                ]),
+                #link{id = enroll_lifecycle_issue_button,
+                      class = [button, sgreen],
+                      body = ias_html:text("Issue Certificate"),
+                      postback = {issue_enrollment_certificate, CertificateId}}
+            ]
+    end.
+
+issue_enrollment_certificate(CertificateId) ->
+    case ias_demo_store:get(CertificateId) of
+        {ok, Certificate} ->
+            SubjectCN = lifecycle_subject(Certificate),
+            ias_certificate_issue_demo:issue_from_certificate(CertificateId, alice,
+                                                              SubjectCN, ias_demo_data:profiles());
+        not_found ->
+            {error, source_certificate_not_found}
+    end.
+
+lifecycle_subject(Certificate) ->
+    case maps:get(requested_cn, Certificate, <<"peer_new">>) of
+        <<"not found">> -> maps:get(enrollment_cn, Certificate, <<"peer_new">>);
+        Value -> Value
+    end.
+
+certificate_link(Certificate) ->
+    Id = maps:get(id, Certificate, undefined),
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]),
+          body = ias_html:join([<<"Certificate #">>, Id])}.
+
+lifecycle_error_panel(Reason) ->
+    #panel{style = <<"padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
+           body = [
+               #h3{body = ias_html:text("Certificate lifecycle issue failed")},
+               #p{body = ias_html:text(Reason)}
+           ]}.
+
+enroll_lifecycle_result_id(CertificateId) ->
+    ias_html:join([<<"enroll_lifecycle_">>, ias_html:text(CertificateId)]).
