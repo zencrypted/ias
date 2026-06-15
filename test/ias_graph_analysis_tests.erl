@@ -90,5 +90,86 @@ device_with_replacement_available_warning_test() ->
     ?assertEqual(maps:get(id, Current), maps:get(current_certificate_id, Warning)),
     ?assertEqual(maps:get(id, Candidate), maps:get(candidate_certificate_id, Warning)).
 
+graph_analysis_pending_enrollment_details_test() ->
+    ias_demo_store:clear(),
+    _Certificate =
+        ias_demo_store:add_certificate(#{id => <<"analysis_pending_enrollment_certificate">>,
+                                         source => cmp_demo_enrollment}),
+
+    Html = rendered_details(),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Pending enrollment certificates">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate #analysis_pending_enrollment_certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"/app/demo.htm?id=analysis_pending_enrollment_certificate">>)).
+
+graph_analysis_policy_mismatch_details_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"analysis_mismatch_device">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"analysis_mismatch_certificate">>}),
+    {ok, _} = ias_relationship_link:create(uses_certificate,
+                                           maps:get(id, Device),
+                                           maps:get(id, Certificate)),
+    {ok, _} = ias_relationship_link:create(uses_security_policy,
+                                           maps:get(id, Device),
+                                           <<"standard">>),
+    {ok, _} = ias_relationship_link:create(uses_security_policy,
+                                           maps:get(id, Certificate),
+                                           <<"high_security">>),
+
+    Html = rendered_details(),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Policy mismatch">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Device #analysis_mismatch_device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate #analysis_mismatch_certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Device Policy: standard">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate Policy: high_security">>)).
+
+graph_analysis_multiple_devices_details_test() ->
+    ias_demo_store:clear(),
+    DeviceA = ias_demo_store:add_device(#{id => <<"analysis_multi_device_a">>}),
+    DeviceB = ias_demo_store:add_device(#{id => <<"analysis_multi_device_b">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"analysis_multi_certificate">>}),
+    {ok, _} = ias_relationship_link:create(uses_certificate,
+                                           maps:get(id, DeviceA),
+                                           maps:get(id, Certificate)),
+    {ok, _} = ias_relationship_link:create(uses_certificate,
+                                           maps:get(id, DeviceB),
+                                           maps:get(id, Certificate)),
+
+    Html = rendered_details(),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate linked to multiple devices">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate #analysis_multi_certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Device #analysis_multi_device_a">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Device #analysis_multi_device_b">>)).
+
+graph_analysis_replacement_details_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"analysis_detail_replace_device">>,
+                                         import_id => <<"analysis_detail_replace">>,
+                                         type => <<"router-1">>}),
+    Current = ias_demo_store:add_certificate(#{id => <<"analysis_detail_current_certificate">>,
+                                               import_id => <<"analysis_detail_replace">>,
+                                               source => ovpn_demo_import}),
+    _Candidate = ias_demo_store:add_certificate(#{id => <<"analysis_detail_candidate_certificate">>,
+                                                  source => cmp_demo_enrollment,
+                                                  requested_cn => <<"router-1">>,
+                                                  enrollment_cn => <<"router-1-20260615">>}),
+    {ok, _} = ias_relationship_link:create(uses_certificate,
+                                           maps:get(id, Device),
+                                           maps:get(id, Current)),
+
+    Html = rendered_details(),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Device with replacement available">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Device #analysis_detail_replace_device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Current Certificate:">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate #analysis_detail_current_certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Candidate Certificate:">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate #analysis_detail_candidate_certificate">>)).
+
+rendered_details() ->
+    iolist_to_binary(nitro:render(ias_graph_analysis_details:warning_blocks(ias_graph_analysis:report()))).
+
 has_id(Id) ->
     fun(Warning) -> maps:get(id, Warning, undefined) =:= Id end.
