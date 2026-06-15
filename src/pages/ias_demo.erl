@@ -1,5 +1,5 @@
 -module(ias_demo).
--export([event/1]).
+-export([event/1, relationship_rows/2]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -659,18 +659,37 @@ relationship_rows(_Object, _Relationships) ->
     [].
 
 linked_targets(RelationType, Relationships) ->
-    Links = [object_ref(maps:get(target_kind, Relationship, undefined),
-                        maps:get(target_id, Relationship, undefined))
-             || Relationship <- Relationships,
-                maps:get(relation_type, Relationship, undefined) =:= RelationType],
-    links_or_not_found(Links).
+    Entries = [relationship_entry(target, Relationship)
+               || Relationship <- Relationships,
+                  maps:get(relation_type, Relationship, undefined) =:= RelationType],
+    links_or_not_found(Entries).
 
 linked_sources(RelationType, Relationships) ->
-    Links = [object_ref(maps:get(source_kind, Relationship, undefined),
-                        maps:get(source_id, Relationship, undefined))
-             || Relationship <- Relationships,
-                maps:get(relation_type, Relationship, undefined) =:= RelationType],
-    links_or_not_found(Links).
+    Entries = [relationship_entry(source, Relationship)
+               || Relationship <- Relationships,
+                  maps:get(relation_type, Relationship, undefined) =:= RelationType],
+    links_or_not_found(Entries).
+
+relationship_entry(target, Relationship) ->
+    relationship_entry(maps:get(target_kind, Relationship, undefined),
+                       maps:get(target_id, Relationship, undefined),
+                       Relationship);
+relationship_entry(source, Relationship) ->
+    relationship_entry(maps:get(source_kind, Relationship, undefined),
+                       maps:get(source_id, Relationship, undefined),
+                       Relationship).
+
+relationship_entry(Kind, Id, Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            #panel{body = [
+                object_ref(Kind, Id),
+                ias_html:text(" "),
+                unlink_link(maps:get(id, Relationship, undefined))
+            ]};
+        false ->
+            object_ref(Kind, Id)
+    end.
 
 links_or_not_found([]) ->
     <<"not linked yet">>;

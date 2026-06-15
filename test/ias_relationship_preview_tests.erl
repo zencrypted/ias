@@ -338,6 +338,45 @@ unlink_updates_graph_analysis_test() ->
     ?assert(lists:any(has_id(maps:get(id, Device)),
                       maps:get(devices_without_security_policy, After))).
 
+relationship_section_shows_unlink_for_device_certificate_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"section_unlink_device">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"section_unlink_certificate">>}),
+    {ok, _Relationship} = ias_relationship_link:create(uses_certificate,
+                                                       maps:get(id, Device),
+                                                       maps:get(id, Certificate)),
+
+    Html = rendered_relationship_rows(Device),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Certificate #section_unlink_certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Unlink">>)).
+
+relationship_section_shows_unlink_for_security_policy_test() ->
+    ias_demo_store:clear(),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"section_policy_certificate">>}),
+    {ok, _Relationship} = ias_relationship_link:create(uses_security_policy,
+                                                       maps:get(id, Certificate),
+                                                       <<"standard">>),
+
+    Html = rendered_relationship_rows(Certificate),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Security Policy #standard">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Unlink">>)).
+
+relationship_section_hides_unlink_for_lifecycle_relationship_test() ->
+    ias_demo_store:clear(),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"section_lifecycle_certificate">>}),
+    Verification = ias_demo_store:put_runtime_object(#{id => <<"section_lifecycle_verification">>,
+                                                       kind => verification}),
+    {ok, _Relationship} = ias_relationship_link:create(verified_by,
+                                                       maps:get(id, Certificate),
+                                                       maps:get(id, Verification)),
+
+    Html = rendered_relationship_rows(Certificate),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Verification #section_lifecycle_verification">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Unlink">>)).
+
 score_zero_candidates_are_excluded_from_suggested_test() ->
     Candidates = [
         #{id => <<"suggested">>, relationship_score => 20},
@@ -461,3 +500,7 @@ security_policy_relationships() ->
 
 has_id(Id) ->
     fun(Warning) -> maps:get(id, Warning, undefined) =:= Id end.
+
+rendered_relationship_rows(Object) ->
+    iolist_to_binary(nitro:render(
+        ias_demo:relationship_rows(Object, ias_relationship_link:relationships_for(Object)))).
