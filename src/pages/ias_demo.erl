@@ -1,6 +1,7 @@
 -module(ias_demo).
 -export([event/1, relationship_rows/2, certificate_lifecycle_preview/1,
-         operational_readiness_preview/1, effective_status_preview/1]).
+         operational_readiness_preview/1, effective_status_preview/1,
+         authorization_decision_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -54,6 +55,7 @@ detail(Object) ->
         certificate_lifecycle_preview(Object),
         operational_readiness_preview(Object),
         effective_status_preview(Object),
+        authorization_decision_preview(Object),
         security_profile_preview(Object),
         relationship_preview(Object),
         policy_consistency_preview(Object)
@@ -524,6 +526,35 @@ status_reasons([]) ->
 status_reasons(Reasons) ->
     #panel{body = [
         #ul{body = [#li{body = ias_html:text(maps:get(text, Reason, undefined))}
+                    || Reason <- Reasons]}
+    ]}.
+
+authorization_decision_preview(#{kind := device} = Object) ->
+    Decision = ias_authorization_decision:device_decision(maps:get(id, Object, undefined),
+                                                          access_vpn),
+    authorization_decision_card(access_vpn, Decision);
+authorization_decision_preview(#{kind := certificate} = Object) ->
+    Decision = ias_authorization_decision:certificate_decision(maps:get(id, Object, undefined),
+                                                               use_ias),
+    authorization_decision_card(use_ias, Decision);
+authorization_decision_preview(_Object) ->
+    [].
+
+authorization_decision_card(Action, Decision) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("AUTHORIZATION DECISION PREVIEW")},
+        key_value_table([
+            {"Action", Action},
+            {"Decision", maps:get(decision, Decision, deny)},
+            {"Reasons", decision_reasons(maps:get(reasons, Decision, []))}
+        ])
+    ]}.
+
+decision_reasons([]) ->
+    <<"none">>;
+decision_reasons(Reasons) ->
+    #panel{body = [
+        #ul{body = [#li{body = ias_html:text(Reason)}
                     || Reason <- Reasons]}
     ]}.
 

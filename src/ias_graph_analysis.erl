@@ -3,6 +3,10 @@
 
 report() ->
     #{policy_mismatches => policy_mismatches(),
+      authorization_allowed_devices => authorization_allowed_devices(),
+      authorization_denied_devices => authorization_denied_devices(),
+      authorization_allowed_certificates => authorization_allowed_certificates(),
+      authorization_denied_certificates => authorization_denied_certificates(),
       effective_certificate_statuses => effective_certificate_statuses(),
       effective_device_statuses => effective_device_statuses(),
       device_operational_readiness => devices_operational_readiness(),
@@ -22,6 +26,32 @@ report() ->
           enrollment_certificates_without_issued_certificate(),
       certificates_linked_to_multiple_devices => certificates_linked_to_multiple_devices(),
       devices_with_replacement_available => devices_with_replacement_available()}.
+
+authorization_allowed_devices() ->
+    [Decision || Decision <- device_authorization_decisions(),
+                 maps:get(decision, Decision, deny) =:= allow].
+
+authorization_denied_devices() ->
+    [Decision || Decision <- device_authorization_decisions(),
+                 maps:get(decision, Decision, deny) =:= deny].
+
+authorization_allowed_certificates() ->
+    [Decision || Decision <- certificate_authorization_decisions(),
+                 maps:get(decision, Decision, deny) =:= allow].
+
+authorization_denied_certificates() ->
+    [Decision || Decision <- certificate_authorization_decisions(),
+                 maps:get(decision, Decision, deny) =:= deny].
+
+device_authorization_decisions() ->
+    [ias_authorization_decision:device_decision(maps:get(id, Device, undefined),
+                                                access_vpn)
+     || Device <- ias_demo_store:devices()].
+
+certificate_authorization_decisions() ->
+    [ias_authorization_decision:certificate_decision(maps:get(id, Certificate, undefined),
+                                                     use_ias)
+     || Certificate <- ias_demo_store:certificates()].
 
 effective_certificate_statuses() ->
     [ias_trust_status:effective_certificate_status(maps:get(id, Certificate, undefined))

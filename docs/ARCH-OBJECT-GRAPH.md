@@ -206,12 +206,17 @@ Effective Trust
 Authorization Decision
 ```
 
-Status: planned
+Status: preview implemented
 
 The authorization decision engine is the final IAS trust layer. It answers
 whether a subject is allowed to perform an action on a resource after identity,
 certificate, verification, revocation, replacement, operational readiness, and
 policy state have already been resolved.
+
+Stage 18A implements this as a read-only decision preview. IAS computes
+authorization decisions from Effective Trust Status and Device Operational
+Readiness, but does not create authorization decision records, mutate runtime
+state, call CA/CMP, call LDAP, or enforce VPN access.
 
 Subjects:
 
@@ -248,10 +253,10 @@ Reason examples:
 - missing required claim
 - insufficient role
 
-The authorization decision should be modeled as an explicit runtime decision
-record once IAS moves from graph inspection to policy enforcement. Until then,
-Effective Trust Status and Device Operational Readiness provide the inputs for
-this final decision layer.
+The authorization decision may be modeled as an explicit runtime decision record
+once IAS moves from graph inspection to policy enforcement. In the current
+preview implementation, Effective Trust Status and Device Operational Readiness
+provide the inputs for this final decision layer.
 
 ### Guided Lifecycle Workflows
 
