@@ -86,6 +86,18 @@ demo_pages_render_effective_status_sections_test() ->
     ?assertMatch({_, _}, binary:match(FullCertificateHtml, <<"EFFECTIVE TRUST STATUS">>)),
     ?assertMatch({_, _}, binary:match(FullCertificateHtml, <<"trusted">>)).
 
+effective_status_reasons_render_multiple_items_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"trust_multi_reason_device">>,
+                                         source => ovpn_demo_import}),
+
+    Html = iolist_to_binary(nitro:render(ias_demo:effective_status_preview(Device))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"EFFECTIVE AUTHORIZATION STATUS">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"no vpn service">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"no security policy">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"no current certificate">>)).
+
 setup_ready_device() ->
     setup_device(true).
 

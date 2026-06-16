@@ -522,8 +522,10 @@ effective_status_preview(_Object) ->
 status_reasons([]) ->
     <<"none">>;
 status_reasons(Reasons) ->
-    #ul{body = [#li{body = ias_html:text(maps:get(text, Reason, undefined))}
-                || Reason <- Reasons]}.
+    #panel{body = [
+        #ul{body = [#li{body = ias_html:text(maps:get(text, Reason, undefined))}
+                    || Reason <- Reasons]}
+    ]}.
 
 device_readiness(Device) ->
     DeviceId = maps:get(id, Device, undefined),
