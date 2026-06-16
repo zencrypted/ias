@@ -125,6 +125,12 @@ create_for_objects(new_certificate, #{kind := certificate_replacement} = Replace
 create_for_objects(new_certificate, #{kind := certificate} = Certificate,
                    #{kind := certificate_replacement} = Replacement) ->
     create_relationship(new_certificate, Replacement, Certificate);
+create_for_objects(revoked_by, #{kind := certificate} = Certificate,
+                   #{kind := certificate_revocation} = Revocation) ->
+    create_relationship(revoked_by, Certificate, Revocation);
+create_for_objects(revoked_by, #{kind := certificate_revocation} = Revocation,
+                   #{kind := certificate} = Certificate) ->
+    create_relationship(revoked_by, Certificate, Revocation);
 create_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 
@@ -234,6 +240,12 @@ canonical_for_objects(new_certificate, #{kind := certificate_replacement} = Repl
 canonical_for_objects(new_certificate, #{kind := certificate} = Certificate,
                       #{kind := certificate_replacement} = Replacement) ->
     {ok, new_certificate, Replacement, Certificate};
+canonical_for_objects(revoked_by, #{kind := certificate} = Certificate,
+                      #{kind := certificate_revocation} = Revocation) ->
+    {ok, revoked_by, Certificate, Revocation};
+canonical_for_objects(revoked_by, #{kind := certificate_revocation} = Revocation,
+                      #{kind := certificate} = Certificate) ->
+    {ok, revoked_by, Certificate, Revocation};
 canonical_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 

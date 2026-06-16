@@ -41,7 +41,8 @@ readiness_rows(Readiness, ready) ->
                  object_or_value(security_policy, maps:get(security_policy_id, Readiness, not_found))]},
      #li{body = [ias_html:text("Current Certificate: "),
                  object_or_value(certificate, maps:get(current_certificate_id, Readiness, not_found))]},
-     #li{body = ias_html:text("Certificate Verification: verified")}];
+     #li{body = ias_html:text("Certificate Verification: verified")},
+     #li{body = ias_html:text("Certificate Revocation: active")}];
 readiness_rows(Readiness, incomplete) ->
     [#li{body = ias_html:text("Status: INCOMPLETE")},
      #li{body = [ias_html:text("VPN Service: "),
@@ -52,6 +53,8 @@ readiness_rows(Readiness, incomplete) ->
                  object_or_value(certificate, maps:get(current_certificate_id, Readiness, not_found))]},
      #li{body = ias_html:join([<<"Certificate Verification: ">>,
                                maps:get(certificate_verification, Readiness, not_verified)])},
+     #li{body = ias_html:join([<<"Certificate Revocation: ">>,
+                               maps:get(certificate_revocation, Readiness, active)])},
      #li{body = [ias_html:text("Missing:"),
                  bullet_list(maps:get(missing, Readiness, []), <<"none">>)]},
      #li{body = [ias_html:text("Suggested Actions:"),
@@ -116,6 +119,18 @@ warning_specs(Analysis) ->
          maps:get(certificates_never_verified, Analysis, []),
          <<"Certificates never verified">>,
          fun object_list_detail/1},
+        {<<"Revoked Certificates">>,
+         maps:get(revoked_certificates, Analysis, []),
+         <<"Revoked Certificates">>,
+         fun revoked_certificate_detail/1},
+        {<<"Certificates using revoked current certificate">>,
+         maps:get(certificates_using_revoked_current_certificate, Analysis, []),
+         <<"Certificates using revoked current certificate">>,
+         fun object_list_detail/1},
+        {<<"Devices with revoked current certificate">>,
+         maps:get(devices_with_revoked_current_certificate, Analysis, []),
+         <<"Devices with revoked current certificate">>,
+         fun revoked_device_detail/1},
         {<<"Verifications without security policy">>,
          maps:get(verifications_without_security_policy, Analysis, []),
          <<"Verifications without security policy">>,
@@ -205,6 +220,28 @@ failed_verification_detail(Warning) ->
         ]}
     ]}.
 
+revoked_certificate_detail(Warning) ->
+    #li{body = [
+        object_link(certificate, maps:get(id, Warning, undefined)),
+        #ul{body = [
+            #li{body = [ias_html:text("Revocation Record: "),
+                        object_or_value(certificate_revocation,
+                                        maps:get(revocation_id, Warning, not_found))]}
+        ]}
+    ]}.
+
+revoked_device_detail(Warning) ->
+    #li{body = [
+        object_link(device, maps:get(device_id, Warning, undefined)),
+        #ul{body = [
+            #li{body = [ias_html:text("Current Certificate: "),
+                        object_or_value(certificate, maps:get(certificate_id, Warning, not_found))]},
+            #li{body = [ias_html:text("Revocation Record: "),
+                        object_or_value(certificate_revocation,
+                                        maps:get(revocation_id, Warning, not_found))]}
+        ]}
+    ]}.
+
 multiple_device_detail(Warning) ->
     #li{body = [
         object_link(certificate, maps:get(certificate_id, Warning, undefined)),
@@ -261,6 +298,8 @@ object_label(cmp_enrollment_result) ->
     <<"Certificate Enrollment">>;
 object_label(certificate_replacement) ->
     <<"Certificate Replacement">>;
+object_label(certificate_revocation) ->
+    <<"Certificate Revocation">>;
 object_label(Kind) ->
     ias_html:text(Kind).
 

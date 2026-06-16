@@ -19,6 +19,10 @@ event({replace_certificate, DeviceId}) ->
     _ = ias_certificate_replacement:replace(DeviceId),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event({revoke_certificate, CertificateId}) ->
+    _ = ias_certificate_revocation:revoke(CertificateId),
+    nitro:clear(stand),
+    nitro:insert_bottom(stand, content());
 event(_) ->
     ok.
 
@@ -82,6 +86,8 @@ title(#{kind := cmp_enrollment_result}) ->
     <<"Certificate Enrollment Metadata">>;
 title(#{kind := certificate_replacement}) ->
     <<"Certificate Replacement Metadata">>;
+title(#{kind := certificate_revocation}) ->
+    <<"Certificate Revocation Metadata">>;
 title(_) ->
     <<"Demo Metadata">>.
 
@@ -179,6 +185,12 @@ rows(#{kind := certificate_replacement} = Object) ->
         {"Device", object_ref(device, maps:get(device_id, Object, undefined))},
         {"Old Certificate", object_ref(certificate, maps:get(old_certificate_id, Object, undefined))},
         {"New Certificate", object_ref(certificate, maps:get(new_certificate_id, Object, undefined))},
+        {"Status", maps:get(status, Object, undefined)}
+    ] ++ created_row(Object);
+rows(#{kind := certificate_revocation} = Object) ->
+    common_rows(Object) ++ [
+        {"Certificate", object_ref(certificate, maps:get(certificate_id, Object, undefined))},
+        {"Reason", maps:get(reason, Object, undefined)},
         {"Status", maps:get(status, Object, undefined)}
     ] ++ created_row(Object);
 rows(Object) ->
@@ -305,6 +317,11 @@ relationship_preview(Object) ->
                         relationships_table(Object)
                     ]};
                 certificate_replacement ->
+                    #panel{class = <<"ias-status-card">>, body = [
+                        #h3{body = ias_html:text("Relationship Preview")},
+                        relationships_table(Object)
+                    ]};
+                certificate_revocation ->
                     #panel{class = <<"ias-status-card">>, body = [
                         #h3{body = ias_html:text("Relationship Preview")},
                         relationships_table(Object)
@@ -449,7 +466,10 @@ certificate_lifecycle_preview(#{kind := certificate} = Object) ->
             {"Origin", lifecycle_text(maps:get(origin, Role, unknown))},
             {"Role", lifecycle_text(maps:get(role, Role, unassigned))},
             {"Used By Device", device_ref(maps:get(used_by_device, Role, not_found))},
-            {"Verification History", verification_history(Object)}
+            {"Verification History", verification_history(Object)},
+            {"Revocation Status", revocation_status(Object)},
+            {"Revocation Record", revocation_record(Object)},
+            {"Action", revocation_action(Object)}
         ])
     ]};
 certificate_lifecycle_preview(_Object) ->
@@ -468,6 +488,8 @@ operational_readiness_preview(#{kind := device} = Object) ->
                                                          maps:get(current_certificate_id, Readiness, not_found))},
             {"Certificate Verification", readiness_text(
                 maps:get(certificate_verification, Readiness, not_verified))},
+            {"Certificate Revocation", readiness_text(
+                maps:get(certificate_revocation, Readiness, active))},
             {"Overall Status", readiness_status_text(maps:get(status, Readiness, incomplete))}
         ]),
         suggested_actions_panel(Readiness)
@@ -485,6 +507,7 @@ device_readiness(Device) ->
                 security_policy_id => not_found,
                 current_certificate_id => not_found,
                 certificate_verification => not_verified,
+                certificate_revocation => active,
                 suggested_actions => []}
     end.
 
@@ -523,6 +546,10 @@ readiness_action_target(<<"Link Certificate Security Policy">>, Readiness) ->
 readiness_action_target(<<"Verify Current Certificate">>, Readiness) ->
     {certificate, maps:get(current_certificate_id, Readiness, not_found),
      <<"Open Current Certificate">>};
+readiness_action_target(<<"Replace Certificate">>, Readiness) ->
+    {device, maps:get(device_id, Readiness, not_found), <<"Open Device">>};
+readiness_action_target(<<"Link New Certificate">>, Readiness) ->
+    {device, maps:get(device_id, Readiness, not_found), <<"Open Device">>};
 readiness_action_target(_Action, Readiness) ->
     {device, maps:get(device_id, Readiness, not_found), <<"Open Device">>}.
 
@@ -732,6 +759,7 @@ relationship_rows(#{kind := certificate}, Relationships) ->
         {"Issued From", linked_sources(issues, Relationships)},
         {"Issued Certificate", linked_targets(issues, Relationships)},
         {"Verification History", linked_targets(verified_by, Relationships)},
+        {"Revocation Record", linked_targets(revoked_by, Relationships)},
         {"Used By Device", linked_sources(uses_certificate, Relationships)},
         {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
@@ -758,6 +786,10 @@ relationship_rows(#{kind := certificate_replacement}, Relationships) ->
         {"Device", linked_sources(replaced_certificate_by, Relationships)},
         {"Old Certificate", linked_targets(old_certificate, Relationships)},
         {"New Certificate", linked_targets(new_certificate, Relationships)}
+    ]);
+relationship_rows(#{kind := certificate_revocation}, Relationships) ->
+    key_value_table([
+        {"Certificate", linked_sources(revoked_by, Relationships)}
     ]);
 relationship_rows(_Object, _Relationships) ->
     [].
@@ -848,6 +880,8 @@ object_label(cmp_enrollment_result) ->
     <<"Certificate Enrollment">>;
 object_label(certificate_replacement) ->
     <<"Certificate Replacement">>;
+object_label(certificate_revocation) ->
+    <<"Certificate Revocation">>;
 object_label(Kind) ->
     ias_html:text(Kind).
 
@@ -871,6 +905,30 @@ verification_history(Certificate) ->
     Links = [object_ref(verification, maps:get(id, Verification, undefined))
              || Verification <- ias_certificate_verification:verification_history(Certificate)],
     links_or_not_found(Links).
+
+revocation_status(Certificate) ->
+    case ias_certificate_revocation:revocation_for_certificate(Certificate) of
+        not_found ->
+            <<"active">>;
+        _Revocation ->
+            <<"revoked">>
+    end.
+
+revocation_record(Certificate) ->
+    case ias_certificate_revocation:revocation_for_certificate(Certificate) of
+        not_found -> <<"not linked yet">>;
+        Revocation -> object_ref(certificate_revocation, maps:get(id, Revocation, undefined))
+    end.
+
+revocation_action(Certificate) ->
+    case ias_certificate_revocation:revocation_for_certificate(Certificate) of
+        not_found ->
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Revoke"),
+                  postback = {revoke_certificate, maps:get(id, Certificate, undefined)}};
+        _Revocation ->
+            <<"not available">>
+    end.
 
 user_ref(undefined) ->
     <<"not linked yet">>;

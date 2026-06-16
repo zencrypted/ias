@@ -16,6 +16,7 @@ known_relationship_type(issues) -> true;
 known_relationship_type(replaced_certificate_by) -> true;
 known_relationship_type(old_certificate) -> true;
 known_relationship_type(new_certificate) -> true;
+known_relationship_type(revoked_by) -> true;
 known_relationship_type(_RelationType) -> false.
 
 categorized_relationships() ->

@@ -239,10 +239,11 @@ kind_order(device) -> 2;
 kind_order(certificate) -> 3;
 kind_order(verification) -> 4;
 kind_order(certificate_replacement) -> 5;
-kind_order(vpn_service) -> 6;
-kind_order(security_profile) -> 7;
-kind_order(security_policy) -> 8;
-kind_order(relationship) -> 9;
+kind_order(certificate_revocation) -> 6;
+kind_order(vpn_service) -> 7;
+kind_order(security_profile) -> 8;
+kind_order(security_policy) -> 9;
+kind_order(relationship) -> 10;
 kind_order(_) -> 99.
 
 import_id() ->

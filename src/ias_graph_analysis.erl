@@ -8,6 +8,10 @@ report() ->
       total_verification_records => ias_certificate_verification:total_verification_records(),
       failed_verifications => ias_certificate_verification:failed_verifications(),
       certificates_never_verified => ias_certificate_verification:certificates_never_verified(),
+      revoked_certificates => revoked_certificates(),
+      certificates_using_revoked_current_certificate =>
+          certificates_using_revoked_current_certificate(),
+      devices_with_revoked_current_certificate => devices_with_revoked_current_certificate(),
       verifications_without_security_policy => verifications_without_security_policy(),
       devices_without_security_policy => devices_without_security_policy(),
       certificates_without_security_policy => certificates_without_security_policy(),
@@ -58,6 +62,23 @@ devices_with_replacement_available() ->
         Status <- [ias_certificate_role:device_status(Device)],
         maps:get(state, Status, undefined) =:= replacement_available].
 
+revoked_certificates() ->
+    [revoked_certificate_warning(Certificate)
+     || Certificate <- ias_demo_store:certificates(),
+        ias_certificate_revocation:revoked(Certificate)].
+
+devices_with_revoked_current_certificate() ->
+    [revoked_current_certificate_warning(Device, CurrentCertificate)
+     || Device <- ias_demo_store:devices(),
+        CurrentCertificate <- [current_certificate(Device)],
+        CurrentCertificate =/= not_found,
+        ias_certificate_revocation:revoked(CurrentCertificate)].
+
+certificates_using_revoked_current_certificate() ->
+    dedupe_warnings([#{id => maps:get(certificate_id, Warning, undefined),
+                       kind => certificate}
+                    || Warning <- devices_with_revoked_current_certificate()]).
+
 devices_operational_readiness() ->
     Results = [device_readiness(Device) || Device <- ias_demo_store:devices()],
     #{ready => [Result || Result <- Results,
@@ -76,9 +97,10 @@ device_readiness(Device) ->
     CurrentCertificateId = certificate_id(CurrentCertificate),
     CertificatePolicyId = certificate_security_policy_id(CurrentCertificate),
     VerificationStatus = certificate_verification_status(CurrentCertificate),
+    RevocationStatus = certificate_revocation_status(CurrentCertificate),
     PolicyConsistency = policy_consistency(DeviceId, CurrentCertificateId),
     Missing = missing_requirements(VpnServiceId, DevicePolicyId, CurrentCertificate,
-                                   CertificatePolicyId, VerificationStatus,
+                                   CertificatePolicyId, VerificationStatus, RevocationStatus,
                                    PolicyConsistency),
     Status = readiness_status(Missing),
     #{device_id => DeviceId,
@@ -89,6 +111,7 @@ device_readiness(Device) ->
       current_certificate_id => CurrentCertificateId,
       certificate_security_policy_id => CertificatePolicyId,
       certificate_verification => VerificationStatus,
+      certificate_revocation => RevocationStatus,
       policy_match => maps:get(match, PolicyConsistency, false),
       missing => Missing,
       suggested_actions => suggested_actions(Missing)}.
@@ -126,6 +149,25 @@ replacement_warning(Device, Status) ->
     #{device_id => maps:get(id, Device, undefined),
       current_certificate_id => certificate_id(maps:get(current_certificate, Status, not_found)),
       candidate_certificate_id => certificate_id(maps:get(candidate_certificate, Status, not_found))}.
+
+revoked_certificate_warning(Certificate) ->
+    Revocation = ias_certificate_revocation:revocation_for_certificate(Certificate),
+    #{id => maps:get(id, Certificate, undefined),
+      kind => certificate,
+      revocation_id => revocation_id(Revocation)}.
+
+revoked_current_certificate_warning(Device, Certificate) ->
+    Revocation = ias_certificate_revocation:revocation_for_certificate(Certificate),
+    #{device_id => maps:get(id, Device, undefined),
+      certificate_id => maps:get(id, Certificate, undefined),
+      revocation_id => revocation_id(Revocation)}.
+
+revocation_id(not_found) ->
+    not_found;
+revocation_id(#{id := Id}) ->
+    Id;
+revocation_id(_) ->
+    not_found.
 
 active_security_policy(Object) ->
     ObjectId = maps:get(id, Object, undefined),
@@ -183,6 +225,14 @@ certificate_verification_status(#{kind := certificate} = Certificate) ->
 certificate_verification_status(_Certificate) ->
     not_verified.
 
+certificate_revocation_status(#{kind := certificate} = Certificate) ->
+    case ias_certificate_revocation:revoked(Certificate) of
+        true -> revoked;
+        false -> active
+    end;
+certificate_revocation_status(_Certificate) ->
+    active.
+
 policy_consistency(_DeviceId, not_found) ->
     #{match => false,
       reason => <<"no current certificate">>};
@@ -190,7 +240,8 @@ policy_consistency(DeviceId, CertificateId) ->
     ias_policy_consistency:evaluate_policy_consistency(DeviceId, CertificateId).
 
 missing_requirements(VpnServiceId, DevicePolicyId, CurrentCertificate,
-                     CertificatePolicyId, VerificationStatus, PolicyConsistency) ->
+                     CertificatePolicyId, VerificationStatus, RevocationStatus,
+                     PolicyConsistency) ->
     Missing = [],
     Missing1 = missing_if(VpnServiceId =:= not_found, <<"VPN Service">>, Missing),
     Missing2 = missing_if(DevicePolicyId =:= not_found, <<"Security Policy">>, Missing1),
@@ -201,12 +252,14 @@ missing_requirements(VpnServiceId, DevicePolicyId, CurrentCertificate,
                           <<"Certificate Security Policy">>, Missing3),
     Missing5 = missing_if(VerificationStatus =/= verified,
                           <<"Verified Certificate">>, Missing4),
-    Missing6 = missing_if(maps:get(match, PolicyConsistency, false) =:= false andalso
+    Missing6 = missing_if(RevocationStatus =:= revoked,
+                          <<"Current Certificate Revoked">>, Missing5),
+    Missing7 = missing_if(maps:get(match, PolicyConsistency, false) =:= false andalso
                           CurrentCertificate =/= not_found andalso
                           DevicePolicyId =/= not_found andalso
                           CertificatePolicyId =/= not_found,
-                          <<"Policy Match">>, Missing5),
-    lists:reverse(Missing6).
+                          <<"Policy Match">>, Missing6),
+    lists:reverse(Missing7).
 
 missing_if(true, Label, Missing) ->
     [Label | Missing];
@@ -228,6 +281,8 @@ suggested_action_specs() ->
      {<<"Current Certificate">>, <<"Link Certificate">>},
      {<<"Certificate Security Policy">>, <<"Link Certificate Security Policy">>},
      {<<"Verified Certificate">>, <<"Verify Current Certificate">>},
+     {<<"Current Certificate Revoked">>, <<"Replace Certificate">>},
+     {<<"Current Certificate Revoked">>, <<"Link New Certificate">>},
      {<<"Policy Match">>, <<"Resolve Security Policy mismatch">>}].
 
 has_vpn_service(Device) ->
@@ -269,6 +324,20 @@ linked_device_ids(Certificate) ->
         maps:get(target_kind, Relationship, undefined) =:= certificate,
         maps:get(target_id, Relationship, undefined) =:= CertificateId,
         resolves(maps:get(source_id, Relationship, undefined), device)].
+
+current_certificate(Device) ->
+    maps:get(current_certificate, ias_certificate_role:device_status(Device), not_found).
+
+dedupe_warnings(Warnings) ->
+    dedupe_warnings(Warnings, [], []).
+
+dedupe_warnings([], _Seen, Acc) ->
+    lists:reverse(Acc);
+dedupe_warnings([#{id := Id} = Warning | Rest], Seen, Acc) ->
+    case lists:member(Id, Seen) of
+        true -> dedupe_warnings(Rest, Seen, Acc);
+        false -> dedupe_warnings(Rest, [Id | Seen], [Warning | Acc])
+    end.
 
 certificate_id(not_found) ->
     not_found;
