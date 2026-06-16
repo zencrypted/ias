@@ -865,6 +865,7 @@ body.form-grid-page .app {
 }
 
 .ias-tree-source {
+  display: block;
   margin: 8px 0 12px 0;
 }
 
@@ -883,13 +884,15 @@ body.form-grid-page .app {
 }
 
 .ias-tree-children {
-  margin-left: 20px;
-  border-left: 1px solid var(--border-color, rgba(15, 23, 42, 0.08));
-  padding-left: 12px;
+  display: block;
+  margin-left: 32px !important;
+  padding-left: 16px !important;
+  border-left: 1px solid var(--border-color, rgba(15, 23, 42, 0.18));
 }
 
 .ias-tree-relation {
-  margin: 4px 0;
+  display: block;
+  margin: 6px 0 8px 0;
 }
 
 .ias-tree-relation-title {
@@ -897,9 +900,14 @@ body.form-grid-page .app {
 }
 
 .ias-tree-targets {
-  margin-left: 20px;
-  border-left: 1px solid var(--border-color, rgba(15, 23, 42, 0.08));
-  padding-left: 12px;
+  display: block;
+  margin-left: 32px !important;
+  padding-left: 16px !important;
+  border-left: 1px solid var(--border-color, rgba(15, 23, 42, 0.18));
+}
+
+.ias-tree-target {
+  margin: 4px 0;
 }
 
 .ias-tree-toggle {
