@@ -91,7 +91,6 @@ readiness_action_link({_Kind, not_found, Label}) ->
     #span{style = <<"color:#6b7280;font-size:12px;">>, body = ias_html:text(Label)};
 readiness_action_link({Kind, Id, Label}) ->
     #link{class = [button, sgreen],
-          style = <<"display:inline-block;">>,
           url = object_url(Kind, Id),
           body = ias_html:text(Label)}.
 
@@ -278,8 +277,7 @@ replacement_action_for_device(Device) ->
     case ias_certificate_replacement:action_state(Device) of
         replace ->
             #link{class = [button, sgreen],
-                  style = <<"display:inline-block;">>,
-                  body = ias_html:text("Replace Certificate"),
+                  body = ias_html:text("Replace"),
                   postback = {replace_certificate, maps:get(id, Device, undefined)}};
         {blocked, Reason} ->
             ias_html:join([<<"Replacement blocked: ">>, Reason]);

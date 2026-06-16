@@ -932,7 +932,10 @@ body.form-grid-page .app {
   margin: 2px 0 3px 0;
 }
 
-.ias-relationship-tree .button.sgreen {
+.ias-relationship-tree .button.sgreen,
+.ias-status-card .button.sgreen,
+.ias-analysis .button.sgreen,
+.ias-table .button.sgreen {
   min-width: 0;
   padding: 4px 8px;
   margin-left: 6px;

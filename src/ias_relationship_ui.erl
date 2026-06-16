@@ -73,7 +73,6 @@ protection_label(_Relationship) ->
 unlink_link(RelationshipId) ->
     #link{id = unlink_id(RelationshipId),
           class = [button, sgreen],
-          style = <<"display:inline-block;">>,
           body = ias_html:text("Unlink"),
           postback = {unlink_relationship, RelationshipId}}.
 

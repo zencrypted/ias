@@ -530,7 +530,6 @@ readiness_action_link({_Kind, not_found, Label}) ->
     #span{style = <<"color:#6b7280;font-size:12px;">>, body = ias_html:text(Label)};
 readiness_action_link({Kind, Id, Label}) ->
     #link{class = [button, sgreen],
-          style = <<"display:inline-block;">>,
           url = object_url(Kind, Id),
           body = ias_html:text(Label)}.
 
@@ -632,7 +631,6 @@ candidate_action(Candidate, RelationType, SourceId) ->
     case ias_relationship_link:status(RelationType, SourceId, TargetId) of
         link ->
             #link{class = [button, sgreen],
-                  style = <<"display:inline-block;">>,
                   body = ias_html:text("Link"),
                   postback = {link_relationship, RelationType, SourceId, TargetId}};
         {linked, _Relationship} ->
@@ -922,8 +920,7 @@ replacement_action(Device) ->
     case ias_certificate_replacement:action_state(Device) of
         replace ->
             #link{class = [button, sgreen],
-                  style = <<"display:inline-block;">>,
-                  body = ias_html:text("Replace Certificate"),
+                  body = ias_html:text("Replace"),
                   postback = {replace_certificate, DeviceId}};
         {blocked, Reason} ->
             ias_html:join([<<"Replacement blocked: ">>, Reason]);

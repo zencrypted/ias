@@ -8,7 +8,8 @@ replacement_available_action_is_shown_test() ->
 
     Html = iolist_to_binary(nitro:render(ias_demo:certificate_lifecycle_preview(Device))),
 
-    ?assertMatch({_, _}, binary:match(Html, <<"Replace Certificate">>)).
+    ?assertMatch({_, _}, binary:match(Html, <<"Replace">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Replace Certificate">>)).
 
 replacement_blocked_for_unverified_candidate_test() ->
     ias_demo_store:clear(),
