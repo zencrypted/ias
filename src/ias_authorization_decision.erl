@@ -43,11 +43,54 @@ certificate_action_decision(CertificateId, Action) ->
     Status = ias_trust_status:effective_certificate_status(CertificateId),
     case maps:get(trust, Status, unknown) of
         trusted ->
-            allow(certificate, CertificateId, Action);
+            certificate_profile_decision(CertificateId, Action);
         _ ->
             Reasons = unique_reasons(certificate_reasons(Status)),
             deny(certificate, CertificateId, Action, Reasons)
     end.
+
+certificate_profile_decision(CertificateId, Action) ->
+    case certificate_profile_id(CertificateId) of
+        not_found ->
+            deny(certificate, CertificateId, Action, [<<"profile not found">>]);
+        ProfileId ->
+            case profile_allows(ProfileId, Action) of
+                true ->
+                    allow(certificate, CertificateId, Action,
+                          [profile_reason(ProfileId, <<" allows ">>, Action)]);
+                false ->
+                    deny(certificate, CertificateId, Action,
+                         [profile_reason(ProfileId, <<" does not allow ">>, Action)])
+            end
+    end.
+
+certificate_profile_id(CertificateId) ->
+    case ias_demo_store:get(CertificateId) of
+        {ok, #{kind := certificate} = Certificate} ->
+            profile_id(Certificate);
+        _ ->
+            not_found
+    end.
+
+profile_id(Certificate) ->
+    case maps:get(profile_id, Certificate, maps:get(profile, Certificate, undefined)) of
+        undefined -> not_found;
+        <<"not found">> -> not_found;
+        not_found -> not_found;
+        ProfileId -> ProfileId
+    end.
+
+profile_allows(administrator, use_ias) -> true;
+profile_allows(<<"administrator">>, use_ias) -> true;
+profile_allows(administrator, issue_certificate) -> true;
+profile_allows(<<"administrator">>, issue_certificate) -> true;
+profile_allows(administrator, revoke_certificate) -> true;
+profile_allows(<<"administrator">>, revoke_certificate) -> true;
+profile_allows(default_user, access_vpn) -> true;
+profile_allows(<<"default_user">>, access_vpn) -> true;
+profile_allows(default_user, use_ias) -> true;
+profile_allows(<<"default_user">>, use_ias) -> true;
+profile_allows(_ProfileId, _Action) -> false.
 
 device_readiness(DeviceId) ->
     case [Readiness || Readiness <- maps:get(all,
@@ -101,11 +144,14 @@ trust_reason_texts(Status) ->
      || Reason <- maps:get(reasons, Status, [])].
 
 allow(SubjectKind, SubjectId, Action) ->
+    allow(SubjectKind, SubjectId, Action, []).
+
+allow(SubjectKind, SubjectId, Action, Reasons) ->
     #{subject_kind => SubjectKind,
       subject_id => normalize_id(SubjectId),
       action => Action,
       decision => allow,
-      reasons => []}.
+      reasons => Reasons}.
 
 deny(SubjectKind, SubjectId, Action, Reasons) ->
     #{subject_kind => SubjectKind,
@@ -116,6 +162,10 @@ deny(SubjectKind, SubjectId, Action, Reasons) ->
 
 normalize_id(Id) ->
     ias_html:text(Id).
+
+profile_reason(ProfileId, Text, Action) ->
+    ias_html:join([<<"profile ">>, ias_html:text(ProfileId), Text,
+                   ias_html:text(Action)]).
 
 unique_reasons(Reasons) ->
     unique_reasons(Reasons, [], []).

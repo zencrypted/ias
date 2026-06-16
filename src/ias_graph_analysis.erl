@@ -7,6 +7,8 @@ report() ->
       authorization_denied_devices => authorization_denied_devices(),
       authorization_allowed_certificates => authorization_allowed_certificates(),
       authorization_denied_certificates => authorization_denied_certificates(),
+      authorization_administrators => authorization_profile_certificates(administrator),
+      authorization_users => authorization_profile_certificates(default_user),
       effective_certificate_statuses => effective_certificate_statuses(),
       effective_device_statuses => effective_device_statuses(),
       device_operational_readiness => devices_operational_readiness(),
@@ -52,6 +54,20 @@ certificate_authorization_decisions() ->
     [ias_authorization_decision:certificate_decision(maps:get(id, Certificate, undefined),
                                                      use_ias)
      || Certificate <- ias_demo_store:certificates()].
+
+authorization_profile_certificates(ProfileId) ->
+    [#{id => maps:get(id, Certificate, undefined),
+       kind => certificate,
+       profile => ProfileId}
+     || Certificate <- ias_demo_store:certificates(),
+        certificate_profile_id(Certificate) =:= ProfileId].
+
+certificate_profile_id(Certificate) ->
+    case maps:get(profile_id, Certificate, maps:get(profile, Certificate, undefined)) of
+        <<"administrator">> -> administrator;
+        <<"default_user">> -> default_user;
+        ProfileId -> ProfileId
+    end.
 
 effective_certificate_statuses() ->
     [ias_trust_status:effective_certificate_status(maps:get(id, Certificate, undefined))

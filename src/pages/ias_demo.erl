@@ -1,7 +1,7 @@
 -module(ias_demo).
 -export([event/1, relationship_rows/2, certificate_lifecycle_preview/1,
          operational_readiness_preview/1, effective_status_preview/1,
-         authorization_decision_preview/1]).
+         authorization_decision_preview/1, authorization_matrix_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -56,6 +56,7 @@ detail(Object) ->
         operational_readiness_preview(Object),
         effective_status_preview(Object),
         authorization_decision_preview(Object),
+        authorization_matrix_preview(Object),
         security_profile_preview(Object),
         relationship_preview(Object),
         policy_consistency_preview(Object)
@@ -539,6 +540,39 @@ authorization_decision_preview(#{kind := certificate} = Object) ->
     authorization_decision_card(use_ias, Decision);
 authorization_decision_preview(_Object) ->
     [].
+
+authorization_matrix_preview(#{kind := certificate} = Object) ->
+    CertificateId = maps:get(id, Object, undefined),
+    Decisions = [ias_authorization_decision:certificate_decision(CertificateId, Action)
+                 || Action <- certificate_authorization_actions()],
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("AUTHORIZATION MATRIX")},
+        authorization_matrix_table(Decisions)
+    ]};
+authorization_matrix_preview(_Object) ->
+    [].
+
+certificate_authorization_actions() ->
+    [use_ias, issue_certificate, revoke_certificate].
+
+authorization_matrix_table(Decisions) ->
+    Header = #tr{cells = [
+        #th{body = ias_html:text("Action")},
+        #th{body = ias_html:text("Decision")},
+        #th{body = ias_html:text("Reasons")}
+    ]},
+    Rows = [authorization_matrix_row(Decision) || Decision <- Decisions],
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [Header | Rows]}}
+    ]}.
+
+authorization_matrix_row(Decision) ->
+    #tr{cells = [
+        #td{body = ias_html:text(maps:get(action, Decision, undefined))},
+        #td{body = ias_html:text(maps:get(decision, Decision, deny))},
+        #td{body = decision_reasons(maps:get(reasons, Decision, []))}
+    ]}.
 
 authorization_decision_card(Action, Decision) ->
     #panel{class = <<"ias-status-card">>, body = [

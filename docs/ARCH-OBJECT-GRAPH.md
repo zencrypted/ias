@@ -213,10 +213,22 @@ whether a subject is allowed to perform an action on a resource after identity,
 certificate, verification, revocation, replacement, operational readiness, and
 policy state have already been resolved.
 
-Stage 18A implements this as a read-only decision preview. IAS computes
-authorization decisions from Effective Trust Status and Device Operational
-Readiness, but does not create authorization decision records, mutate runtime
-state, call CA/CMP, call LDAP, or enforce VPN access.
+Stage 18A implements this as a read-only Status-Based Authorization preview.
+IAS computes authorization decisions from Effective Trust Status and Device
+Operational Readiness, but does not create authorization decision records,
+mutate runtime state, call CA/CMP, call LDAP, or enforce VPN access.
+
+Stage 18B adds Profile-Based Authorization preview. IAS resolves the certificate
+Security Profile and applies a minimal role/action matrix:
+
+- `administrator` may use IAS, issue certificates, and revoke certificates.
+- `default_user` may access VPN and use IAS, but may not issue or revoke
+  certificates.
+- certificates without a resolved profile are denied.
+
+This is intentionally not an ABAC engine, policy language, or rule editor. It is
+the first read-only role layer on top of the existing status-based decision
+preview.
 
 Subjects:
 
