@@ -869,8 +869,29 @@ body.form-grid-page .app {
   margin: 8px 0 12px 0;
 }
 
+.ias-tree-source > summary,
+.ias-tree-relation > summary {
+  outline-offset: 2px;
+}
+
+.ias-tree-source > summary:hover,
+.ias-tree-relation > summary:hover {
+  color: var(--accent, #4f46e5);
+}
+
 .ias-tree-source-title,
-.ias-tree-relation-title,
+.ias-tree-relation-title {
+  display: list-item;
+  cursor: pointer;
+  min-height: 1.8em;
+  white-space: nowrap;
+  list-style-position: outside;
+}
+
+.ias-tree-source-title {
+  font-weight: 600;
+}
+
 .ias-tree-target {
   display: flex;
   align-items: center;
@@ -879,8 +900,9 @@ body.form-grid-page .app {
   white-space: nowrap;
 }
 
-.ias-tree-source-title {
-  font-weight: 600;
+.ias-tree-source-title::-webkit-details-marker,
+.ias-tree-relation-title::-webkit-details-marker {
+  display: inline-block;
 }
 
 .ias-tree-children {
