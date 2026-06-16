@@ -258,3 +258,83 @@ Do not turn tooltips into large data cards yet. Keep them short and stable.
 ### Priority
 
 Medium
+
+---
+
+## TD-006: Device Readiness Action Hints Are Not Directly Actionable
+
+**Status:** Open
+
+**Area:** Device Operational Readiness / IAS UI
+
+### Problem
+
+Device Operational Readiness correctly reports when a device is incomplete and now identifies missing requirements such as:
+
+- VPN Service;
+- Security Policy;
+- Current Certificate;
+- Certificate Verification;
+- Certificate Security Policy.
+
+However, some suggested actions are not obvious from the device page.
+
+For example, the device page may show:
+
+```text
+Suggested Actions:
+- Link Certificate Security Policy
+```
+
+The required action is not actually a direct device relationship. It must be performed on the current certificate:
+
+```text
+Current Certificate -> uses_security_policy -> Security Policy
+```
+
+This is correct architecturally, but the UI makes the operator infer that they need to open the current certificate and link its policy there.
+
+### Current Impact
+
+Medium.
+
+The readiness calculation is correct, but the operator can mistake a missing certificate policy for a missing device policy. This is especially confusing because the same device page can already show:
+
+```text
+Device -> Security Policy: linked
+```
+
+while readiness still remains incomplete until:
+
+```text
+Current Certificate -> Security Policy
+```
+
+is linked.
+
+### Desired Direction
+
+Make suggested readiness actions explain where the action must be performed.
+
+Possible improvements:
+
+- render `Link Certificate Security Policy` as:
+
+```text
+Open current certificate and link its security policy
+```
+
+- add a direct link to the current certificate next to the hint;
+- optionally show a small inline explanation:
+
+```text
+Device policy is linked, but current certificate policy is missing.
+```
+
+- eventually add a safe convenience action from the device page that links the current certificate to the selected policy, but only after the semantics are stable.
+
+The first iteration should be explanatory only. Do not add automatic actions yet.
+
+### Priority
+
+Medium
