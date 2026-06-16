@@ -260,3 +260,57 @@ Do not turn tooltips into large data cards yet. Keep them short and stable.
 Medium
 
 ---
+
+## TD-006: Device Readiness Suggested Action Labels
+
+**Status:** Open
+
+**Area:** Device Operational Readiness / IAS UI
+
+### Problem
+
+Device Operational Readiness now renders suggested actions as navigational helpers.
+
+For example, after a current certificate is revoked, the device page may show:
+
+```text
+Suggested Actions
+- Link VPN Service        [Open Device]
+- Link Security Policy    [Open Device]
+- Replace Certificate     [Open Device]
+- Link New Certificate    [Open Device]
+```
+
+This is functionally correct because the buttons navigate to the object where the operator can take the next step. However, the repeated `Open Device` label is too generic and does not reflect the action being suggested.
+
+The operator has to read the left-side text and mentally connect it to a generic navigation button. This is especially awkward for actions like `Replace Certificate` or `Link New Certificate`, where the next target may be the device page, current certificate page, or candidate certificate context.
+
+### Current Impact
+
+Low to medium.
+
+The readiness workflow is usable and the navigation buttons work, but the suggested action area still feels like a debug/helper view rather than a polished operator workflow.
+
+### Desired Direction
+
+Make readiness suggested actions more explicit and action-oriented while keeping them navigational only.
+
+Possible labels:
+
+```text
+Link VPN Service          [Fix]
+Link Security Policy      [Fix]
+Replace Certificate       [Replace]
+Link New Certificate      [Open Candidate]
+Link Certificate Policy   [Open Certificate]
+```
+
+The button text should describe the next operator action more clearly than `Open Device`.
+
+Do not automatically create relationships in this step. This remains a navigation and UX improvement only.
+
+### Priority
+
+Low
+
+---
