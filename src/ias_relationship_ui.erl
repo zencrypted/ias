@@ -1,5 +1,5 @@
 -module(ias_relationship_ui).
--export([object_entry/2, object_entry/3, action/1, status_text/1, status_badge/1]).
+-export([object_entry/2, object_entry/3, object_ref/2, action/1, status_text/1, status_badge/1]).
 -include_lib("nitro/include/nitro.hrl").
 
 object_entry(source, Relationship) ->

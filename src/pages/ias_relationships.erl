@@ -87,20 +87,73 @@ grouped_relationship_sections(Relationships) ->
 relationship_group_section(Title, _Group, Relationships) ->
     #panel{class = <<"ias-relationship-group">>, body = [
         #h3{body = ias_html:join([Title, <<" (">>, length(Relationships), <<")">>])},
-        #table{class = <<"ias-table">>,
-               body = #tbody{body = [relationship_group_header() |
-                                      [relationship_row(Relationship)
-                                       || Relationship <- Relationships]]}}
+        #panel{class = <<"ias-relationship-tree">>,
+               body = relationship_tree(Relationships)}
     ]}.
 
-relationship_group_header() ->
-    #tr{cells = [
-        #th{body = ias_html:text("Source")},
-        #th{body = ias_html:text("Relationship")},
-        #th{body = ias_html:text("Target")},
-        #th{body = ias_html:text("Status")},
-        #th{body = ias_html:text("Action")}
-    ]}.
+relationship_tree(Relationships) ->
+    SourceGroups = group_relationships_by_source(Relationships),
+    lists:append([relationship_source_block(Source, Items)
+                  || {Source, Items} <- SourceGroups]).
+
+group_relationships_by_source(Relationships) ->
+    Sorted = lists:sort(fun relationship_before/2, Relationships),
+    group_relationships_by_source(Sorted, []).
+
+group_relationships_by_source([], Acc) ->
+    lists:reverse(Acc);
+group_relationships_by_source([Relationship | Rest], []) ->
+    Source = relationship_source(Relationship),
+    group_relationships_by_source(Rest, [{Source, [Relationship]}]);
+group_relationships_by_source([Relationship | Rest], [{Source, Items} | AccRest] = Acc) ->
+    CurrentSource = relationship_source(Relationship),
+    case CurrentSource =:= Source of
+        true ->
+            group_relationships_by_source(Rest, [{Source, Items ++ [Relationship]} | AccRest]);
+        false ->
+            group_relationships_by_source(Rest, [{CurrentSource, [Relationship]} | Acc])
+    end.
+
+relationship_source(Relationship) ->
+    {maps:get(source_kind, Relationship, undefined),
+     maps:get(source_id, Relationship, undefined)}.
+
+relationship_source_block({SourceKind, SourceId}, Relationships) ->
+    [tree_line(0, [ias_relationship_ui:object_ref(SourceKind, SourceId)]) |
+     lists:append([relationship_lines(Relationship) || Relationship <- Relationships])].
+
+relationship_lines(Relationship) ->
+    [tree_line(1, [<<"+-- ">>, relation_label(Relationship)]),
+     tree_line(2, [<<"+-- ">>,
+                   ias_relationship_ui:object_ref(maps:get(target_kind, Relationship, undefined),
+                                                  maps:get(target_id, Relationship, undefined)),
+                   relationship_inline_action(Relationship)])].
+
+relation_label(Relationship) ->
+    RelationType = maps:get(relation_type, Relationship, undefined),
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            ias_html:text(RelationType);
+        false ->
+            ias_html:join([ias_html:text(RelationType),
+                           ias_relationship_ui:status_text(Relationship)])
+    end.
+
+relationship_inline_action(Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            [ias_html:text(" "), ias_relationship_ui:action(Relationship)];
+        false ->
+            []
+    end.
+
+tree_line(Level, Body) ->
+    #panel{class = <<"ias-tree-line">>,
+           style = tree_line_style(Level),
+           body = Body}.
+
+tree_line_style(Level) ->
+    ias_html:join([<<"margin-left:">>, Level * 18, <<"px;">>]).
 
 relationship_edge(Relationship) ->
     relationship_row(Relationship).
