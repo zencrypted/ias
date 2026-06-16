@@ -253,6 +253,97 @@ record once IAS moves from graph inspection to policy enforcement. Until then,
 Effective Trust Status and Device Operational Readiness provide the inputs for
 this final decision layer.
 
+### Guided Lifecycle Workflows
+
+```text
+Graph State
+      ↓
+Graph Analysis
+      ↓
+Suggested Actions
+      ↓
+Guided Workflow Step
+      ↓
+Operational Readiness / Effective Trust / Authorization Decision
+```
+
+Status: planned
+
+Guided Lifecycle Workflows are the future operator-facing UI layer on top of
+the IAS object graph. The existing Relationship Explorer remains the expert
+mode for inspecting objects, relationships, lifecycle records, and graph
+diagnostics. Wizard-style workflows should not replace the graph model; they
+should consume graph analysis and suggested actions to guide users through the
+correct sequence of steps.
+
+The intended UI split is:
+
+- Graph Mode: inspect and debug the complete object graph;
+- Wizard Mode: perform guided lifecycle operations for common operator tasks.
+
+Initial guided workflows should include:
+
+#### Setup VPN Client
+
+```text
+Import OVPN
+      ↓
+Select / Create Device
+      ↓
+Issue or Select Certificate
+      ↓
+Assign Security Policy
+      ↓
+Assign VPN Service
+      ↓
+Verify Certificate
+      ↓
+Operational Readiness Check
+      ↓
+Ready / Incomplete
+```
+
+#### Replace Certificate
+
+```text
+Current Certificate
+      ↓
+Candidate Certificate
+      ↓
+Verify Candidate
+      ↓
+Replace Certificate
+      ↓
+Operational Readiness Check
+```
+
+#### Revoke Certificate
+
+```text
+Select Certificate
+      ↓
+Show Affected Devices
+      ↓
+Confirm Revocation
+      ↓
+Create Revocation Record
+      ↓
+Impact / Readiness Analysis
+```
+
+Wizard steps should be derived from existing runtime analysis rather than from
+a separate hard-coded business process. The main inputs are:
+
+- Graph Analysis;
+- Suggested Actions;
+- Device Operational Readiness;
+- Effective Trust Status;
+- Effective Authorization Status;
+- future Authorization Decision records.
+
+This keeps guided workflows as a UX layer over the same source-of-truth graph
+used by Relationship Explorer.
+
 ### Certificate Replacement
 
 ```text
