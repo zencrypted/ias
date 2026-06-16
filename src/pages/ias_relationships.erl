@@ -93,10 +93,12 @@ relationship_source(Relationship) ->
      maps:get(source_id, Relationship, undefined)}.
 
 relationship_source_block({SourceKind, SourceId}, Relationships) ->
-    #panel{class = <<"ias-tree-source">>, body = [
-        #panel{class = <<"ias-tree-source-title">>, body = [
-            #span{class = <<"ias-tree-toggle">>, body = ias_html:text("+")},
-            ias_relationship_ui:object_ref(SourceKind, SourceId)
+    #details{class = <<"ias-tree-source">>, open = true, body = [
+        #summary{class = <<"ias-tree-source-title">>, body = [
+            ias_relationship_ui:object_ref(SourceKind, SourceId),
+            ias_html:text(" "),
+            #span{class = <<"ias-tree-count">>,
+                  body = ias_html:join(["(", length(Relationships), ")"])}
         ]},
         #panel{class = <<"ias-tree-children">>,
                body = relationship_relation_groups(Relationships)}
@@ -127,11 +129,14 @@ group_relationships_by_relation([Relationship | Rest], [{RelationType, Items} | 
 
 relationship_relation_block(RelationType, Relationships) ->
     Representative = hd(Relationships),
-    #panel{class = <<"ias-tree-relation">>, body = [
-        #panel{class = <<"ias-tree-relation-title">>, body = [
-            #span{class = <<"ias-tree-toggle">>, body = ias_html:text("+")},
+    #details{class = <<"ias-tree-relation">>, open = true, body = [
+        #summary{class = <<"ias-tree-relation-title">>, body = [
             ias_html:text(RelationType),
-            relation_badge(Representative)
+            ias_html:text(" "),
+            relation_badge(Representative),
+            ias_html:text(" "),
+            #span{class = <<"ias-tree-count">>,
+                  body = ias_html:join(["(", length(Relationships), ")"])}
         ]},
         #panel{class = <<"ias-tree-targets">>,
                body = [relationship_target_line(Relationship)
@@ -140,7 +145,6 @@ relationship_relation_block(RelationType, Relationships) ->
 
 relationship_target_line(Relationship) ->
     #panel{class = <<"ias-tree-target">>, body = [
-        #span{class = <<"ias-tree-toggle">>, body = ias_html:text("-")},
         ias_relationship_ui:object_ref(maps:get(target_kind, Relationship, undefined),
                                        maps:get(target_id, Relationship, undefined)),
         relationship_inline_action(Relationship)
