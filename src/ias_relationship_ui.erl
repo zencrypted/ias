@@ -32,10 +32,16 @@ object_entry(Kind, Id, Relationship) ->
     end.
 
 unlink_link(RelationshipId) ->
-    #link{class = [button],
+    #link{id = unlink_id(RelationshipId),
+          class = [button, sgreen],
           style = <<"display:inline-block;">>,
           body = ias_html:text("Unlink"),
           postback = {unlink_relationship, RelationshipId}}.
+
+unlink_id(RelationshipId) when is_binary(RelationshipId) ->
+    ias_html:join([<<"unlink_">>, RelationshipId]);
+unlink_id(RelationshipId) ->
+    ias_html:join([<<"unlink_">>, ias_html:text(RelationshipId)]).
 
 object_ref(_Kind, undefined) ->
     <<"not found">>;
