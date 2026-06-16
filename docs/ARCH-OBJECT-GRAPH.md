@@ -428,3 +428,85 @@ Every relationship shown in:
 must be explainable through this graph.
 
 This document serves as the architectural source of truth for IAS relationship modeling.
+
+### VPN Certificate Provisioning
+
+```text
+Certificate Lifecycle
+      ↓
+Effective Trust
+      ↓
+Authorization Decision
+      ↓
+VPN Peer Provisioning
+      ↓
+VPN Runtime Configuration
+```
+
+Status: planned
+
+VPN certificate provisioning is the bridge between the IAS administration
+console and the VPN runtime service. IAS remains the issuer, inventory,
+policy, trust, and authorization layer. The VPN service consumes only the
+runtime decision and the peer configuration needed to run the tunnel.
+
+The VPN service should not understand the full IAS object graph. It should ask
+IAS whether a peer is allowed and request the effective runtime configuration
+for that peer.
+
+Expected IAS outputs for VPN runtime:
+
+- peer id
+- remote peer id
+- certificate reference or certificate metadata
+- CA certificate reference
+- key reference or key path when available locally
+- VPN service endpoint and transport configuration
+- authorization decision
+- denial reason when access is blocked
+
+Private key ownership rule:
+
+```text
+Device / Peer
+      ↓
+Generate private key locally
+      ↓
+Generate CSR
+      ↓
+IAS / CA signs CSR
+      ↓
+IAS stores certificate metadata
+      ↓
+VPN runtime receives authorized peer config
+```
+
+IAS should not become the production private-key store. In the preferred model,
+private keys are generated and kept on the device or peer side. IAS/CA signs a
+CSR and stores certificate metadata, lifecycle state, trust state, and policy
+state. Development-mode demos may use local files under `priv/certs`, but that
+is not the production provisioning model.
+
+The VPN runtime boundary is therefore:
+
+```text
+IAS owns:
+- enrollment
+- issuance metadata
+- verification
+- replacement
+- revocation
+- effective trust
+- authorization decision
+- peer provisioning plan
+
+VPN owns:
+- tunnel startup
+- packet transport
+- runtime peer process
+- runtime counters
+- dataplane enforcement using the provisioned identity
+```
+
+This keeps the dataplane small and prevents the VPN service from duplicating
+IAS policy logic.
