@@ -77,7 +77,8 @@ import_panel() ->
                   placeholder = <<"Paste exported IAS demo state Erlang term snapshot here">>,
                   style = <<"width:100%;min-height:220px;font-family:monospace;">>},
         #panel{style = <<"margin-top:12px;">>, body = [
-            #link{class = [button, sgreen],
+            #link{id = state_import_button,
+                  class = [button, sgreen],
                   body = ias_html:text("Import Demo State"),
                   source = [state_import_snapshot],
                   postback = import_demo_state}
@@ -162,6 +163,8 @@ import_file_js() ->
         "reader.onload=function(e) {",
         "var target=document.getElementById('state_import_snapshot');",
         "if (target) { target.value=e.target.result || ''; }",
+        "var importButton=document.getElementById('state_import_button');",
+        "if (importButton) { setTimeout(function(){ importButton.click(); }, 0); }",
         "};",
         "reader.onerror=function() { alert('Could not read selected demo state file.'); };",
         "reader.readAsText(file);",
