@@ -63,32 +63,101 @@ relationship_table([], EmptyLabel) ->
     ]};
 relationship_table(Relationships, _EmptyLabel) ->
     #panel{class = <<"ias-relationship-tree">>,
-           body = [relationship_edge(Relationship) || Relationship <- Relationships]}.
+           body = grouped_relationship_sections(Relationships)}.
 
-relationship_edge(Relationship) ->
-    Edge = ias_relationship_graph:tree_edge(Relationship),
-    #panel{class = <<"ias-tree-line">>, body = [
-        #pre{style = <<"font-family:monospace;white-space:pre;margin:0;">>,
-             body = relationship_edge_text(Relationship, Edge)},
-        relationship_edge_action(Relationship)
+grouped_relationship_sections(Relationships) ->
+    Sorted = lists:sort(fun relationship_before/2, Relationships),
+    Groups = [
+        {<<"Editable Relationships">>, editable,
+         [Relationship || Relationship <- Sorted,
+                          relationship_group(Relationship) =:= editable]},
+        {<<"Lifecycle Relationships">>, lifecycle,
+         [Relationship || Relationship <- Sorted,
+                          relationship_group(Relationship) =:= lifecycle]},
+        {<<"Audit Relationships">>, audit,
+         [Relationship || Relationship <- Sorted,
+                          relationship_group(Relationship) =:= audit]},
+        {<<"Protected Relationships">>, protected,
+         [Relationship || Relationship <- Sorted,
+                          relationship_group(Relationship) =:= protected]}
+    ],
+    [relationship_group_section(Title, Group, Items)
+     || {Title, Group, Items} <- Groups, Items =/= []].
+
+relationship_group_section(Title, _Group, Relationships) ->
+    #panel{class = <<"ias-relationship-group">>, body = [
+        #h3{body = ias_html:join([Title, <<" (">>, length(Relationships), <<")">>])},
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [relationship_group_header() |
+                                      [relationship_row(Relationship)
+                                       || Relationship <- Relationships]]}}
     ]}.
 
-relationship_edge_action(Relationship) ->
+relationship_group_header() ->
+    #tr{cells = [
+        #th{body = ias_html:text("Source")},
+        #th{body = ias_html:text("Relationship")},
+        #th{body = ias_html:text("Target")},
+        #th{body = ias_html:text("Status")},
+        #th{body = ias_html:text("Action")}
+    ]}.
+
+relationship_row(Relationship) ->
+    #tr{cells = [
+        #td{body = ias_relationship_ui:object_entry(source, Relationship)},
+        #td{body = ias_html:text(maps:get(relation_type, Relationship, undefined))},
+        #td{body = ias_relationship_ui:object_entry(target, Relationship)},
+        #td{body = relationship_status(Relationship)},
+        #td{body = relationship_action(Relationship)}
+    ]}.
+
+relationship_status(Relationship) ->
     case ias_relationship_link:unlinkable(Relationship) of
-        true ->
-            #panel{style = <<"margin:4px 0 12px 0;">>,
-                   body = [ias_relationship_ui:action(Relationship)]};
-        false ->
-            []
+        true -> ias_html:text("editable");
+        false -> ias_relationship_ui:status_badge(Relationship)
     end.
 
-relationship_edge_text(Relationship, Edge) ->
-    ias_html:join([
-        maps:get(source, Edge, <<"-">>), <<"\n">>,
-        <<"  +-- ">>, maps:get(relation_type, Edge, undefined),
-        ias_relationship_ui:status_text(Relationship), <<"\n">>,
-        <<"      +-- ">>, maps:get(target, Edge, <<"-">>)
-    ]).
+relationship_action(Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true -> ias_relationship_ui:action(Relationship);
+        false -> ias_html:text("-")
+    end.
+
+relationship_before(A, B) ->
+    relationship_sort_key(A) =< relationship_sort_key(B).
+
+relationship_sort_key(Relationship) ->
+    {relationship_group_order(relationship_group(Relationship)),
+     stable_text(maps:get(source_kind, Relationship, undefined)),
+     stable_text(maps:get(source_id, Relationship, undefined)),
+     stable_text(maps:get(relation_type, Relationship, undefined)),
+     stable_text(maps:get(target_kind, Relationship, undefined)),
+     stable_text(maps:get(target_id, Relationship, undefined)),
+     stable_text(maps:get(created_at, Relationship, <<>>)),
+     stable_text(maps:get(id, Relationship, <<>>))}.
+
+relationship_group(Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            editable;
+        false ->
+            protected_group(maps:get(relation_type, Relationship, undefined))
+    end.
+
+protected_group(issues) -> lifecycle;
+protected_group(issued_certificate) -> lifecycle;
+protected_group(verified_by) -> audit;
+protected_group(_) -> protected.
+
+relationship_group_order(editable) -> 1;
+relationship_group_order(lifecycle) -> 2;
+relationship_group_order(audit) -> 3;
+relationship_group_order(protected) -> 4.
+
+stable_text(Value) when is_binary(Value) -> Value;
+stable_text(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
+stable_text(Value) when is_integer(Value) -> integer_to_binary(Value);
+stable_text(Value) -> ias_html:text(Value).
 
 broken_relationship_table([]) ->
     relationship_table([], <<"not linked yet">>);
