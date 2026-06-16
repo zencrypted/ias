@@ -36,7 +36,7 @@ device_status(_Object) ->
 
 certificate_role(#{kind := certificate} = Certificate) ->
     #{origin => origin(Certificate),
-      role => role(Certificate),
+      role => active_role(Certificate),
       used_by_device => certificate_device(Certificate)};
 certificate_role(_Object) ->
     #{origin => unknown,
@@ -68,7 +68,6 @@ current_linked_certificates(Device, Certificates) ->
                     maps:get(source_kind, Relationship, undefined) =:= device,
                     maps:get(source_id, Relationship, undefined) =:= DeviceId],
     [Certificate || Certificate <- Certificates,
-                    origin(Certificate) =:= imported,
                     lists:member(maps:get(id, Certificate, undefined), LinkedIds)].
 
 same_import_current_certificate(Device, Certificates) ->
@@ -120,11 +119,19 @@ device_type_score(Device, Certificate) ->
                prefix_score(DeviceTypes, Subject, 60)]).
 
 certificate_device(Certificate) ->
-    case role(Certificate) of
+    case active_role(Certificate) of
         current -> current_certificate_device(Certificate);
         candidate -> candidate_certificate_device(Certificate);
         _ -> not_found
     end.
+
+active_role(#{kind := certificate} = Certificate) ->
+    case current_certificate_device(Certificate) of
+        not_found -> role(Certificate);
+        _Device -> current
+    end;
+active_role(Certificate) ->
+    role(Certificate).
 
 current_certificate_device(Certificate) ->
     CertificateId = maps:get(id, Certificate, undefined),

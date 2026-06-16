@@ -107,6 +107,24 @@ create_for_objects(issues, #{kind := certificate} = Certificate,
 create_for_objects(issues, #{kind := certificate} = SourceCertificate,
                    #{kind := certificate} = TargetCertificate) ->
     create_relationship(issues, SourceCertificate, TargetCertificate);
+create_for_objects(replaced_certificate_by, #{kind := device} = Device,
+                   #{kind := certificate_replacement} = Replacement) ->
+    create_relationship(replaced_certificate_by, Device, Replacement);
+create_for_objects(replaced_certificate_by, #{kind := certificate_replacement} = Replacement,
+                   #{kind := device} = Device) ->
+    create_relationship(replaced_certificate_by, Device, Replacement);
+create_for_objects(old_certificate, #{kind := certificate_replacement} = Replacement,
+                   #{kind := certificate} = Certificate) ->
+    create_relationship(old_certificate, Replacement, Certificate);
+create_for_objects(old_certificate, #{kind := certificate} = Certificate,
+                   #{kind := certificate_replacement} = Replacement) ->
+    create_relationship(old_certificate, Replacement, Certificate);
+create_for_objects(new_certificate, #{kind := certificate_replacement} = Replacement,
+                   #{kind := certificate} = Certificate) ->
+    create_relationship(new_certificate, Replacement, Certificate);
+create_for_objects(new_certificate, #{kind := certificate} = Certificate,
+                   #{kind := certificate_replacement} = Replacement) ->
+    create_relationship(new_certificate, Replacement, Certificate);
 create_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 
@@ -198,6 +216,24 @@ canonical_for_objects(issues, #{kind := certificate} = Certificate,
 canonical_for_objects(issues, #{kind := certificate} = SourceCertificate,
                       #{kind := certificate} = TargetCertificate) ->
     {ok, issues, SourceCertificate, TargetCertificate};
+canonical_for_objects(replaced_certificate_by, #{kind := device} = Device,
+                      #{kind := certificate_replacement} = Replacement) ->
+    {ok, replaced_certificate_by, Device, Replacement};
+canonical_for_objects(replaced_certificate_by, #{kind := certificate_replacement} = Replacement,
+                      #{kind := device} = Device) ->
+    {ok, replaced_certificate_by, Device, Replacement};
+canonical_for_objects(old_certificate, #{kind := certificate_replacement} = Replacement,
+                      #{kind := certificate} = Certificate) ->
+    {ok, old_certificate, Replacement, Certificate};
+canonical_for_objects(old_certificate, #{kind := certificate} = Certificate,
+                      #{kind := certificate_replacement} = Replacement) ->
+    {ok, old_certificate, Replacement, Certificate};
+canonical_for_objects(new_certificate, #{kind := certificate_replacement} = Replacement,
+                      #{kind := certificate} = Certificate) ->
+    {ok, new_certificate, Replacement, Certificate};
+canonical_for_objects(new_certificate, #{kind := certificate} = Certificate,
+                      #{kind := certificate_replacement} = Replacement) ->
+    {ok, new_certificate, Replacement, Certificate};
 canonical_for_objects(_RelationType, _Source, _Target) ->
     {error, unsupported}.
 

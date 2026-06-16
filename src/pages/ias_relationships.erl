@@ -7,6 +7,9 @@ event(init) ->
 event({unlink_relationship, RelationshipId}) ->
     _ = ias_relationship_link:unlink(RelationshipId),
     render();
+event({replace_certificate, DeviceId}) ->
+    _ = ias_certificate_replacement:replace(DeviceId),
+    render();
 event(_) ->
     ok.
 

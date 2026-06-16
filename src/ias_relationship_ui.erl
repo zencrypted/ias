@@ -61,6 +61,12 @@ protection_label(#{relation_type := issued_certificate}) ->
     <<"lifecycle">>;
 protection_label(#{relation_type := verified_by}) ->
     <<"audit">>;
+protection_label(#{relation_type := replaced_certificate_by}) ->
+    <<"audit">>;
+protection_label(#{relation_type := old_certificate}) ->
+    <<"audit">>;
+protection_label(#{relation_type := new_certificate}) ->
+    <<"audit">>;
 protection_label(_Relationship) ->
     <<"protected">>.
 
@@ -128,5 +134,7 @@ object_label(verification) ->
     <<"Verification">>;
 object_label(cmp_enrollment_result) ->
     <<"Certificate Enrollment">>;
+object_label(certificate_replacement) ->
+    <<"Certificate Replacement">>;
 object_label(Kind) ->
     ias_html:text(Kind).

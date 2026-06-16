@@ -10,6 +10,9 @@ relationship_type_is_known_test() ->
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_service)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(uses_vpn_service)),
     ?assertEqual(true, ias_relationship_graph:known_relationship_type(issues)),
+    ?assertEqual(true, ias_relationship_graph:known_relationship_type(replaced_certificate_by)),
+    ?assertEqual(true, ias_relationship_graph:known_relationship_type(old_certificate)),
+    ?assertEqual(true, ias_relationship_graph:known_relationship_type(new_certificate)),
     ?assertEqual(false, ias_relationship_graph:known_relationship_type(unknown_relation)).
 
 vpn_service_relationship_is_known_test() ->

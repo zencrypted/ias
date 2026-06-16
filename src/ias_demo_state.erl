@@ -119,6 +119,7 @@ valid_relationship(_) ->
 
 is_supported_kind(device) -> true;
 is_supported_kind(certificate) -> true;
+is_supported_kind(certificate_replacement) -> true;
 is_supported_kind(vpn_service) -> true;
 is_supported_kind(verification) -> true;
 is_supported_kind(security_policy) -> true;

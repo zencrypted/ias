@@ -1,5 +1,5 @@
 -module(ias_demo).
--export([event/1, relationship_rows/2]).
+-export([event/1, relationship_rows/2, certificate_lifecycle_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -12,6 +12,10 @@ event({link_relationship, RelationType, SourceId, TargetId}) ->
     nitro:insert_bottom(stand, content());
 event({unlink_relationship, RelationshipId}) ->
     _ = ias_relationship_link:unlink(RelationshipId),
+    nitro:clear(stand),
+    nitro:insert_bottom(stand, content());
+event({replace_certificate, DeviceId}) ->
+    _ = ias_certificate_replacement:replace(DeviceId),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
 event(_) ->
@@ -74,6 +78,8 @@ title(#{kind := verification}) ->
     <<"Verification Metadata">>;
 title(#{kind := cmp_enrollment_result}) ->
     <<"Certificate Enrollment Metadata">>;
+title(#{kind := certificate_replacement}) ->
+    <<"Certificate Replacement Metadata">>;
 title(_) ->
     <<"Demo Metadata">>.
 
@@ -165,6 +171,13 @@ rows(#{kind := cmp_enrollment_result} = Object) ->
         {"Profile", maps:get(profile, Object, undefined)},
         {"CMP Server", maps:get(cmp_server, Object, undefined)},
         {"Issued Certificate", certificate_ref(issued_certificate_id(Object))}
+    ] ++ created_row(Object);
+rows(#{kind := certificate_replacement} = Object) ->
+    common_rows(Object) ++ [
+        {"Device", object_ref(device, maps:get(device_id, Object, undefined))},
+        {"Old Certificate", object_ref(certificate, maps:get(old_certificate_id, Object, undefined))},
+        {"New Certificate", object_ref(certificate, maps:get(new_certificate_id, Object, undefined))},
+        {"Status", maps:get(status, Object, undefined)}
     ] ++ created_row(Object);
 rows(Object) ->
     common_rows(Object) ++ created_row(Object).
@@ -285,6 +298,11 @@ relationship_preview(Object) ->
         _ ->
             case maps:get(kind, Object, undefined) of
                 cmp_enrollment_result ->
+                    #panel{class = <<"ias-status-card">>, body = [
+                        #h3{body = ias_html:text("Relationship Preview")},
+                        relationships_table(Object)
+                    ]};
+                certificate_replacement ->
                     #panel{class = <<"ias-status-card">>, body = [
                         #h3{body = ias_html:text("Relationship Preview")},
                         relationships_table(Object)
@@ -418,9 +436,9 @@ certificate_lifecycle_preview(#{kind := device} = Object) ->
         key_value_table([
             {"Current", transition_certificate(imported, maps:get(current, Transition, not_found))},
             {"Future", transition_certificate(issued, maps:get(future, Transition, not_found))},
-            {"Action", maps:get(action, Transition, <<"not available">>)}
+            {"Action", replacement_action(Object)}
         ])
-    ]};
+    ] ++ replacement_history_table(Object)};
 certificate_lifecycle_preview(#{kind := certificate} = Object) ->
     Role = ias_certificate_role:certificate_role(Object),
     #panel{class = <<"ias-status-card">>, body = [
@@ -649,6 +667,12 @@ relationship_rows(#{kind := cmp_enrollment_result}, Relationships) ->
     key_value_table([
         {"Issued Certificate", linked_targets(issues, Relationships)}
     ]);
+relationship_rows(#{kind := certificate_replacement}, Relationships) ->
+    key_value_table([
+        {"Device", linked_sources(replaced_certificate_by, Relationships)},
+        {"Old Certificate", linked_targets(old_certificate, Relationships)},
+        {"New Certificate", linked_targets(new_certificate, Relationships)}
+    ]);
 relationship_rows(_Object, _Relationships) ->
     [].
 
@@ -736,6 +760,8 @@ object_label(verification) ->
     <<"Verification">>;
 object_label(cmp_enrollment_result) ->
     <<"Certificate Enrollment">>;
+object_label(certificate_replacement) ->
+    <<"Certificate Replacement">>;
 object_label(Kind) ->
     ias_html:text(Kind).
 
@@ -802,6 +828,37 @@ transition_origin(issued) ->
     <<"Issued Certificate">>;
 transition_origin(Origin) ->
     ias_html:text(Origin).
+
+replacement_action(Device) ->
+    DeviceId = maps:get(id, Device, undefined),
+    case ias_certificate_replacement:action_state(Device) of
+        replace ->
+            #link{class = [button, sgreen],
+                  style = <<"display:inline-block;">>,
+                  body = ias_html:text("Replace Certificate"),
+                  postback = {replace_certificate, DeviceId}};
+        {blocked, Reason} ->
+            ias_html:join([<<"Replacement blocked: ">>, Reason]);
+        not_available ->
+            <<"not available">>
+    end.
+
+replacement_history_table(Device) ->
+    DeviceId = maps:get(id, Device, undefined),
+    History = ias_certificate_replacement:history_for_device(DeviceId),
+    case History of
+        [] ->
+            [];
+        _ ->
+            [
+                #h3{body = ias_html:text("Replacement History")},
+                key_value_table([
+                    {"Replacements", links_or_not_found(
+                        [object_ref(certificate_replacement, maps:get(id, Replacement, undefined))
+                         || Replacement <- History])}
+                ])
+            ]
+    end.
 
 lifecycle_text(replacement_available) ->
     <<"replacement available">>;

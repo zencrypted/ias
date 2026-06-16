@@ -132,7 +132,9 @@ replacement_detail(Warning) ->
             #li{body = [ias_html:text("Current Certificate: "),
                         object_link(certificate, maps:get(current_certificate_id, Warning, not_found))]},
             #li{body = [ias_html:text("Candidate Certificate: "),
-                        object_link(certificate, maps:get(candidate_certificate_id, Warning, not_found))]}
+                        object_link(certificate, maps:get(candidate_certificate_id, Warning, not_found))]},
+            #li{body = [ias_html:text("Action: "),
+                        replacement_action(Warning)]}
         ]}
     ]}.
 
@@ -168,8 +170,32 @@ object_label(security_profile) ->
     <<"Security Profile">>;
 object_label(cmp_enrollment_result) ->
     <<"Certificate Enrollment">>;
+object_label(certificate_replacement) ->
+    <<"Certificate Replacement">>;
 object_label(Kind) ->
     ias_html:text(Kind).
+
+replacement_action(Warning) ->
+    DeviceId = maps:get(device_id, Warning, undefined),
+    case ias_demo_store:get(DeviceId) of
+        {ok, #{kind := device} = Device} ->
+            replacement_action_for_device(Device);
+        _ ->
+            ias_html:text("missing object")
+    end.
+
+replacement_action_for_device(Device) ->
+    case ias_certificate_replacement:action_state(Device) of
+        replace ->
+            #link{class = [button, sgreen],
+                  style = <<"display:inline-block;">>,
+                  body = ias_html:text("Replace Certificate"),
+                  postback = {replace_certificate, maps:get(id, Device, undefined)}};
+        {blocked, Reason} ->
+            ias_html:join([<<"Replacement blocked: ">>, Reason]);
+        not_available ->
+            ias_html:text("not available")
+    end.
 
 key_value_table(Rows) ->
     #panel{class = <<"ias-table-container">>, body = [

@@ -13,6 +13,9 @@ known_relationship_type(uses_security_policy) -> true;
 known_relationship_type(uses_service) -> true;
 known_relationship_type(uses_vpn_service) -> true;
 known_relationship_type(issues) -> true;
+known_relationship_type(replaced_certificate_by) -> true;
+known_relationship_type(old_certificate) -> true;
+known_relationship_type(new_certificate) -> true;
 known_relationship_type(_RelationType) -> false.
 
 categorized_relationships() ->
