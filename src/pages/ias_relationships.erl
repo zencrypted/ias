@@ -63,38 +63,12 @@ relationship_table([], EmptyLabel) ->
     ]};
 relationship_table(Relationships, _EmptyLabel) ->
     #panel{class = <<"ias-relationship-tree">>,
-           body = grouped_relationship_sections(Relationships)}.
+           body = canonical_relationship_tree(Relationships)}.
 
-grouped_relationship_sections(Relationships) ->
-    Sorted = lists:sort(fun relationship_before/2, Relationships),
-    Groups = [
-        {<<"Editable Relationships">>, editable,
-         [Relationship || Relationship <- Sorted,
-                          relationship_group(Relationship) =:= editable]},
-        {<<"Lifecycle Relationships">>, lifecycle,
-         [Relationship || Relationship <- Sorted,
-                          relationship_group(Relationship) =:= lifecycle]},
-        {<<"Audit Relationships">>, audit,
-         [Relationship || Relationship <- Sorted,
-                          relationship_group(Relationship) =:= audit]},
-        {<<"Protected Relationships">>, protected,
-         [Relationship || Relationship <- Sorted,
-                          relationship_group(Relationship) =:= protected]}
-    ],
-    [relationship_group_section(Title, Group, Items)
-     || {Title, Group, Items} <- Groups, Items =/= []].
-
-relationship_group_section(Title, _Group, Relationships) ->
-    #panel{class = <<"ias-relationship-group">>, body = [
-        #h3{body = ias_html:join([Title, <<" (">>, length(Relationships), <<")">>])},
-        #panel{class = <<"ias-relationship-tree">>,
-               body = relationship_tree(Relationships)}
-    ]}.
-
-relationship_tree(Relationships) ->
+canonical_relationship_tree(Relationships) ->
     SourceGroups = group_relationships_by_source(Relationships),
-    lists:append([relationship_source_block(Source, Items)
-                  || {Source, Items} <- SourceGroups]).
+    [relationship_source_block(Source, Items)
+     || {Source, Items} <- SourceGroups].
 
 group_relationships_by_source(Relationships) ->
     Sorted = lists:sort(fun relationship_before/2, Relationships),
@@ -119,24 +93,66 @@ relationship_source(Relationship) ->
      maps:get(source_id, Relationship, undefined)}.
 
 relationship_source_block({SourceKind, SourceId}, Relationships) ->
-    [tree_line(0, [ias_relationship_ui:object_ref(SourceKind, SourceId)]) |
-     lists:append([relationship_lines(Relationship) || Relationship <- Relationships])].
+    #panel{class = <<"ias-tree-source">>, body = [
+        #panel{class = <<"ias-tree-source-title">>, body = [
+            #span{class = <<"ias-tree-toggle">>, body = ias_html:text("+")},
+            ias_relationship_ui:object_ref(SourceKind, SourceId)
+        ]},
+        #panel{class = <<"ias-tree-children">>,
+               body = relationship_relation_groups(Relationships)}
+    ]}.
 
-relationship_lines(Relationship) ->
-    [tree_line(1, [<<"+-- ">>, relation_label(Relationship)]),
-     tree_line(2, [<<"+-- ">>,
-                   ias_relationship_ui:object_ref(maps:get(target_kind, Relationship, undefined),
-                                                  maps:get(target_id, Relationship, undefined)),
-                   relationship_inline_action(Relationship)])].
+relationship_relation_groups(Relationships) ->
+    RelationGroups = group_relationships_by_relation(Relationships),
+    [relationship_relation_block(RelationType, Items)
+     || {RelationType, Items} <- RelationGroups].
 
-relation_label(Relationship) ->
+group_relationships_by_relation(Relationships) ->
+    Sorted = lists:sort(fun relationship_before/2, Relationships),
+    group_relationships_by_relation(Sorted, []).
+
+group_relationships_by_relation([], Acc) ->
+    lists:reverse(Acc);
+group_relationships_by_relation([Relationship | Rest], []) ->
     RelationType = maps:get(relation_type, Relationship, undefined),
+    group_relationships_by_relation(Rest, [{RelationType, [Relationship]}]);
+group_relationships_by_relation([Relationship | Rest], [{RelationType, Items} | AccRest] = Acc) ->
+    CurrentRelationType = maps:get(relation_type, Relationship, undefined),
+    case CurrentRelationType =:= RelationType of
+        true ->
+            group_relationships_by_relation(Rest, [{RelationType, Items ++ [Relationship]} | AccRest]);
+        false ->
+            group_relationships_by_relation(Rest, [{CurrentRelationType, [Relationship]} | Acc])
+    end.
+
+relationship_relation_block(RelationType, Relationships) ->
+    Representative = hd(Relationships),
+    #panel{class = <<"ias-tree-relation">>, body = [
+        #panel{class = <<"ias-tree-relation-title">>, body = [
+            #span{class = <<"ias-tree-toggle">>, body = ias_html:text("+")},
+            ias_html:text(RelationType),
+            relation_badge(Representative)
+        ]},
+        #panel{class = <<"ias-tree-targets">>,
+               body = [relationship_target_line(Relationship)
+                       || Relationship <- Relationships]}
+    ]}.
+
+relationship_target_line(Relationship) ->
+    #panel{class = <<"ias-tree-target">>, body = [
+        #span{class = <<"ias-tree-toggle">>, body = ias_html:text("-")},
+        ias_relationship_ui:object_ref(maps:get(target_kind, Relationship, undefined),
+                                       maps:get(target_id, Relationship, undefined)),
+        relationship_inline_action(Relationship)
+    ]}.
+
+relation_badge(Relationship) ->
     case ias_relationship_link:unlinkable(Relationship) of
         true ->
-            ias_html:text(RelationType);
+            #span{class = <<"ias-tree-badge ias-tree-badge-editable">>,
+                  body = ias_html:text("editable")};
         false ->
-            ias_html:join([ias_html:text(RelationType),
-                           ias_relationship_ui:status_text(Relationship)])
+            ias_relationship_ui:status_badge(Relationship)
     end.
 
 relationship_inline_action(Relationship) ->
@@ -146,14 +162,6 @@ relationship_inline_action(Relationship) ->
         false ->
             []
     end.
-
-tree_line(Level, Body) ->
-    #panel{class = <<"ias-tree-line">>,
-           style = tree_line_style(Level),
-           body = Body}.
-
-tree_line_style(Level) ->
-    ias_html:join([<<"margin-left:">>, Level * 18, <<"px;">>]).
 
 relationship_edge(Relationship) ->
     relationship_row(Relationship).
@@ -183,32 +191,13 @@ relationship_before(A, B) ->
     relationship_sort_key(A) =< relationship_sort_key(B).
 
 relationship_sort_key(Relationship) ->
-    {relationship_group_order(relationship_group(Relationship)),
-     stable_text(maps:get(source_kind, Relationship, undefined)),
+    {stable_text(maps:get(source_kind, Relationship, undefined)),
      stable_text(maps:get(source_id, Relationship, undefined)),
      stable_text(maps:get(relation_type, Relationship, undefined)),
      stable_text(maps:get(target_kind, Relationship, undefined)),
      stable_text(maps:get(target_id, Relationship, undefined)),
      stable_text(maps:get(created_at, Relationship, <<>>)),
      stable_text(maps:get(id, Relationship, <<>>))}.
-
-relationship_group(Relationship) ->
-    case ias_relationship_link:unlinkable(Relationship) of
-        true ->
-            editable;
-        false ->
-            protected_group(maps:get(relation_type, Relationship, undefined))
-    end.
-
-protected_group(issues) -> lifecycle;
-protected_group(issued_certificate) -> lifecycle;
-protected_group(verified_by) -> audit;
-protected_group(_) -> protected.
-
-relationship_group_order(editable) -> 1;
-relationship_group_order(lifecycle) -> 2;
-relationship_group_order(audit) -> 3;
-relationship_group_order(protected) -> 4.
 
 stable_text(Value) when is_binary(Value) -> Value;
 stable_text(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
