@@ -22,12 +22,12 @@ certificate object.
 IAS and CA stay separate:
 
 ```text
-IAS (OTP 25)
--> External CA (OTP 28)
+IAS
+-> External CA
 ```
 
 IAS does not embed the CA, start the CA, or depend on the CA OTP release. The CA
-runs as a separate OTP 28 service. IAS remains on OTP 25 and acts only as a CMP
+runs as a separate service. IAS acts only as a CMP
 client.
 
 The development enrollment client uses local OpenSSL 3 to perform the CMP
@@ -49,6 +49,39 @@ request. The CA endpoint is currently `127.0.0.1:8829`, and the CMP command is
 The imported certificate demo object stores metadata only: subject, issuer,
 validity dates, requested CN, enrollment CN, profile, CMP server, and flags
 showing that no key or certificate body is stored.
+
+## Production Key Ownership Model
+
+The current enrollment flow is a development-mode helper. It lets IAS create a
+temporary key and CSR only so the CMP path can be tested locally.
+
+The production VPN and device enrollment model is different:
+
+```text
+Device / VPN Peer
+-> Generate private key locally
+-> Keep private key on the device or runtime host
+-> Generate CSR from the local public key
+-> Send CSR to IAS
+-> IAS coordinates CMP enrollment with CA
+-> CA signs CSR and returns certificate
+-> IAS stores certificate metadata, lifecycle state and policy state
+-> Device / VPN Peer receives certificate and CA trust material
+```
+
+In production IAS must not become a private-key store. IAS owns enrollment,
+metadata, lifecycle, policy, trust and authorization state. The device or VPN
+runtime host owns the private key.
+
+This keeps the service boundary clear:
+
+- CA signs certificate requests.
+- IAS coordinates enrollment and authorization.
+- Device or VPN peer owns the private key.
+- VPN runtime consumes the issued identity and effective authorization decision.
+
+Development fixtures such as local files under `priv/certs` are acceptable for
+local demos, but they do not define the target production key-management model.
 
 ## Security Notes
 
