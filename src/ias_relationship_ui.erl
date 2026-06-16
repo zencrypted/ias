@@ -38,10 +38,14 @@ unlink_link(RelationshipId) ->
           body = ias_html:text("Unlink"),
           postback = {unlink_relationship, RelationshipId}}.
 
-unlink_id(RelationshipId) when is_binary(RelationshipId) ->
-    ias_html:join([<<"unlink_">>, RelationshipId]);
 unlink_id(RelationshipId) ->
-    ias_html:join([<<"unlink_">>, ias_html:text(RelationshipId)]).
+    Unique = erlang:unique_integer([positive, monotonic]),
+    ias_html:join([<<"unlink_">>, safe_id(RelationshipId), <<"_">>, integer_to_binary(Unique)]).
+
+safe_id(RelationshipId) when is_binary(RelationshipId) ->
+    RelationshipId;
+safe_id(RelationshipId) ->
+    ias_html:text(RelationshipId).
 
 object_ref(_Kind, undefined) ->
     <<"not found">>;

@@ -433,6 +433,23 @@ relationship_explorer_hides_unlink_for_lifecycle_relationship_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"explorer_lifecycle_verification">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Unlink">>)).
 
+duplicate_unlink_buttons_have_unique_dom_ids_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"duplicate_unlink_device">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"duplicate_unlink_certificate">>}),
+    {ok, Relationship} = ias_relationship_link:create(uses_certificate,
+                                                      maps:get(id, Device),
+                                                      maps:get(id, Certificate)),
+
+    Html = iolist_to_binary(nitro:render([
+        ias_relationship_ui:action(Relationship),
+        ias_relationship_ui:action(Relationship)
+    ])),
+    Ids = unlink_dom_ids(Html),
+
+    ?assertEqual(2, length(Ids)),
+    ?assertEqual(2, length(lists:usort(Ids))).
+
 score_zero_candidates_are_excluded_from_suggested_test() ->
     Candidates = [
         #{id => <<"suggested">>, relationship_score => 20},
@@ -530,6 +547,14 @@ unrelated_objects_are_ranked_lower_test() ->
     ?assert(maps:get(relationship_score, First) > maps:get(relationship_score, Second)),
     ?assertEqual(maps:get(id, Unrelated), maps:get(id, Second)),
     ?assertEqual(0, maps:get(relationship_score, Second)).
+
+
+unlink_dom_ids(Html) ->
+    Pattern = <<"id=\"(unlink_[^\"]+)\"">>,
+    case re:run(Html, Pattern, [global, {capture, [1], binary}]) of
+        {match, Matches} -> [Match || [Match] <- Matches];
+        nomatch -> []
+    end.
 
 ovpn_objects() ->
     ias_demo_store:clear(),
