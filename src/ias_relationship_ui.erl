@@ -1,5 +1,5 @@
 -module(ias_relationship_ui).
--export([object_entry/2, object_entry/3, action/1]).
+-export([object_entry/2, object_entry/3, action/1, status_text/1, status_badge/1]).
 -include_lib("nitro/include/nitro.hrl").
 
 object_entry(source, Relationship) ->
@@ -16,7 +16,7 @@ action(Relationship) ->
         true ->
             unlink_link(maps:get(id, Relationship, undefined));
         false ->
-            ias_html:text("Linked")
+            status_badge(Relationship)
     end.
 
 object_entry(Kind, Id, Relationship) ->
@@ -28,8 +28,41 @@ object_entry(Kind, Id, Relationship) ->
                 unlink_link(maps:get(id, Relationship, undefined))
             ]};
         false ->
-            object_ref(Kind, Id)
+            #panel{body = [
+                object_ref(Kind, Id),
+                ias_html:text(" "),
+                status_badge(Relationship)
+            ]}
     end.
+
+status_text(Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            <<>>;
+        false ->
+            ias_html:join([<<" [">>, protection_label(Relationship), <<"]">>])
+    end.
+
+status_badge(Relationship) ->
+    #span{style = <<"color:#6b7280;font-size:12px;margin-left:6px;">>,
+           body = status_badge_text(Relationship)}.
+
+status_badge_text(Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            ias_html:text("Editable");
+        false ->
+            ias_html:join([<<"Protected: ">>, protection_label(Relationship)])
+    end.
+
+protection_label(#{relation_type := issues}) ->
+    <<"lifecycle">>;
+protection_label(#{relation_type := issued_certificate}) ->
+    <<"lifecycle">>;
+protection_label(#{relation_type := verified_by}) ->
+    <<"audit">>;
+protection_label(_Relationship) ->
+    <<"protected">>.
 
 unlink_link(RelationshipId) ->
     #link{id = unlink_id(RelationshipId),

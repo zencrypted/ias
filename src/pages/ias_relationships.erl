@@ -69,7 +69,7 @@ relationship_edge(Relationship) ->
     Edge = ias_relationship_graph:tree_edge(Relationship),
     #panel{class = <<"ias-tree-line">>, body = [
         #pre{style = <<"font-family:monospace;white-space:pre;margin:0;">>,
-             body = relationship_edge_text(Edge)},
+             body = relationship_edge_text(Relationship, Edge)},
         relationship_edge_action(Relationship)
     ]}.
 
@@ -82,10 +82,11 @@ relationship_edge_action(Relationship) ->
             []
     end.
 
-relationship_edge_text(Edge) ->
+relationship_edge_text(Relationship, Edge) ->
     ias_html:join([
         maps:get(source, Edge, <<"-">>), <<"\n">>,
-        <<"  +-- ">>, maps:get(relation_type, Edge, undefined), <<"\n">>,
+        <<"  +-- ">>, maps:get(relation_type, Edge, undefined),
+        ias_relationship_ui:status_text(Relationship), <<"\n">>,
         <<"      +-- ">>, maps:get(target, Edge, <<"-">>)
     ]).
 
