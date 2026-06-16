@@ -53,22 +53,69 @@ replacement_preview(Device) ->
 
 current_certificate(Device) ->
     Certificates = ias_demo_store:certificates(),
-    case current_linked_certificates(Device, Certificates) of
-        [Certificate | _] ->
-            Certificate;
-        [] ->
-            same_import_current_certificate(Device, Certificates)
+    case latest_replacement_certificate(Device, Certificates) of
+        not_found ->
+            active_linked_certificate(Device, Certificates);
+        Certificate ->
+            Certificate
     end.
 
-current_linked_certificates(Device, Certificates) ->
+latest_replacement_certificate(Device, Certificates) ->
     DeviceId = maps:get(id, Device, undefined),
-    LinkedIds = [maps:get(target_id, Relationship, undefined)
-                 || Relationship <- ias_demo_store:relationships(),
-                    maps:get(relation_type, Relationship, undefined) =:= uses_certificate,
-                    maps:get(source_kind, Relationship, undefined) =:= device,
-                    maps:get(source_id, Relationship, undefined) =:= DeviceId],
-    [Certificate || Certificate <- Certificates,
-                    lists:member(maps:get(id, Certificate, undefined), LinkedIds)].
+    Replacements = [Replacement
+                    || Relationship <- ias_demo_store:relationships(),
+                       maps:get(relation_type, Relationship, undefined) =:= replaced_certificate_by,
+                       maps:get(source_kind, Relationship, undefined) =:= device,
+                       maps:get(source_id, Relationship, undefined) =:= DeviceId,
+                       maps:get(target_kind, Relationship, undefined) =:= certificate_replacement,
+                       {ok, Replacement} <- [ias_demo_store:get(maps:get(target_id, Relationship, undefined))],
+                       maps:get(kind, Replacement, undefined) =:= certificate_replacement,
+                       maps:get(status, Replacement, undefined) =:= completed],
+    case latest_record(Replacements) of
+        not_found ->
+            not_found;
+        Replacement ->
+            certificate_by_id(maps:get(new_certificate_id, Replacement, undefined), Certificates)
+    end.
+
+active_linked_certificate(Device, Certificates) ->
+    case latest_uses_certificate_relationship(Device) of
+        not_found ->
+            same_import_current_certificate(Device, Certificates);
+        Relationship ->
+            certificate_by_id(maps:get(target_id, Relationship, undefined), Certificates)
+    end.
+
+latest_uses_certificate_relationship(Device) ->
+    DeviceId = maps:get(id, Device, undefined),
+    Relationships = [Relationship
+                     || Relationship <- ias_demo_store:relationships(),
+                        maps:get(relation_type, Relationship, undefined) =:= uses_certificate,
+                        maps:get(source_kind, Relationship, undefined) =:= device,
+                        maps:get(source_id, Relationship, undefined) =:= DeviceId,
+                        maps:get(target_kind, Relationship, undefined) =:= certificate],
+    latest_record(Relationships).
+
+latest_record([]) ->
+    not_found;
+latest_record(Records) ->
+    hd(lists:sort(fun newest_record/2, Records)).
+
+newest_record(A, B) ->
+    record_sort_key(A) >= record_sort_key(B).
+
+record_sort_key(Record) ->
+    {ias_html:text(maps:get(created_at, Record, <<>>)),
+     ias_html:text(maps:get(id, Record, <<>>))}.
+
+certificate_by_id(undefined, _Certificates) ->
+    not_found;
+certificate_by_id(CertificateId, Certificates) ->
+    case [Certificate || Certificate <- Certificates,
+                         maps:get(id, Certificate, undefined) =:= CertificateId] of
+        [Certificate | _] -> Certificate;
+        [] -> not_found
+    end.
 
 same_import_current_certificate(Device, Certificates) ->
     ImportId = maps:get(import_id, Device, undefined),

@@ -61,6 +61,71 @@ replacement_sets_candidate_as_current_certificate_test() ->
                  maps:get(id, maps:get(current_certificate, Status))),
     ?assertNot(lists:member(maps:get(id, Current), Active)).
 
+replacement_new_certificate_is_current_test() ->
+    ias_demo_store:clear(),
+    #{device := Device, candidate := Candidate} = setup_replacement_graph(),
+    verify_candidate(Candidate),
+
+    {ok, Replacement} = ias_certificate_replacement:replace(maps:get(id, Device)),
+    Status = ias_certificate_role:device_status(Device),
+
+    ?assertEqual(maps:get(id, Candidate), maps:get(new_certificate_id, Replacement)),
+    ?assertEqual(maps:get(id, Candidate),
+                 maps:get(id, maps:get(current_certificate, Status))).
+
+multiple_device_certificate_links_do_not_override_replacement_current_test() ->
+    ias_demo_store:clear(),
+    #{device := Device, current := Current, candidate := Candidate} = setup_replacement_graph(),
+    verify_candidate(Candidate),
+
+    {ok, _Replacement} = ias_certificate_replacement:replace(maps:get(id, Device)),
+    {ok, _StaleManualLink} = ias_relationship_link:create(uses_certificate,
+                                                          maps:get(id, Device),
+                                                          maps:get(id, Current)),
+    Status = ias_certificate_role:device_status(Device),
+
+    ?assertEqual(lists:sort([maps:get(id, Current), maps:get(id, Candidate)]),
+                 lists:sort(active_certificate_links(maps:get(id, Device)))),
+    ?assertEqual(maps:get(id, Candidate),
+                 maps:get(id, maps:get(current_certificate, Status))).
+
+replacement_clears_replacement_available_state_test() ->
+    ias_demo_store:clear(),
+    #{device := Device, candidate := Candidate} = setup_replacement_graph(),
+    verify_candidate(Candidate),
+
+    {ok, _Replacement} = ias_certificate_replacement:replace(maps:get(id, Device)),
+    Status = ias_certificate_role:device_status(Device),
+
+    ?assertEqual(not_found, maps:get(candidate_certificate, Status)),
+    ?assertEqual(current_only, maps:get(state, Status)).
+
+readiness_uses_replacement_current_certificate_test() ->
+    ias_demo_store:clear(),
+    #{device := Device, candidate := Candidate} = setup_replacement_graph(),
+    Service = ias_demo_store:add_service(#{id => <<"replace_service">>,
+                                           source => ovpn_demo_import,
+                                           import_id => <<"replace_import">>,
+                                           service => openvpn,
+                                           remote => <<"example.com:1194">>}),
+    {ok, _ServiceLink} = ias_relationship_link:create(uses_service,
+                                                      maps:get(id, Device),
+                                                      maps:get(id, Service)),
+    {ok, _DevicePolicy} = ias_relationship_link:create(uses_security_policy,
+                                                       maps:get(id, Device),
+                                                       <<"high_security">>),
+    {ok, _CandidatePolicy} = ias_relationship_link:create(uses_security_policy,
+                                                          maps:get(id, Candidate),
+                                                          <<"high_security">>),
+    verify_candidate(Candidate),
+
+    {ok, _Replacement} = ias_certificate_replacement:replace(maps:get(id, Device)),
+    Readiness = readiness_for(Device),
+
+    ?assertEqual(maps:get(id, Candidate), maps:get(current_certificate_id, Readiness)),
+    ?assertEqual(verified, maps:get(certificate_verification, Readiness)),
+    ?assertEqual(ready, maps:get(status, Readiness)).
+
 replacement_preserves_old_certificate_history_test() ->
     ias_demo_store:clear(),
     #{device := Device, current := Current, candidate := Candidate} = setup_replacement_graph(),
@@ -181,6 +246,12 @@ active_certificate_links(DeviceId) ->
         maps:get(source_kind, Relationship, undefined) =:= device,
         maps:get(source_id, Relationship, undefined) =:= DeviceId,
         maps:get(target_kind, Relationship, undefined) =:= certificate].
+
+readiness_for(Device) ->
+    DeviceId = maps:get(id, Device),
+    [Readiness] = [Readiness || Readiness <- maps:get(all, ias_graph_analysis:devices_operational_readiness()),
+                                maps:get(device_id, Readiness) =:= DeviceId],
+    Readiness.
 
 edge(RelationType, SourceKind, SourceId, TargetKind, TargetId) ->
     fun(Relationship) ->
