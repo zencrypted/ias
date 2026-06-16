@@ -1,8 +1,9 @@
 -module(ias_graph_analysis).
--export([report/0]).
+-export([report/0, devices_operational_readiness/0]).
 
 report() ->
     #{policy_mismatches => policy_mismatches(),
+      device_operational_readiness => devices_operational_readiness(),
       unique_verified_certificates => ias_certificate_verification:unique_verified_certificates(),
       total_verification_records => ias_certificate_verification:total_verification_records(),
       failed_verifications => ias_certificate_verification:failed_verifications(),
@@ -57,6 +58,41 @@ devices_with_replacement_available() ->
         Status <- [ias_certificate_role:device_status(Device)],
         maps:get(state, Status, undefined) =:= replacement_available].
 
+devices_operational_readiness() ->
+    Results = [device_readiness(Device) || Device <- ias_demo_store:devices()],
+    #{ready => [Result || Result <- Results,
+                          maps:get(status, Result, incomplete) =:= ready],
+      incomplete => [Result || Result <- Results,
+                               maps:get(status, Result, incomplete) =:= incomplete],
+      all => Results}.
+
+device_readiness(Device) ->
+    DeviceId = maps:get(id, Device, undefined),
+    VpnServiceId = linked_vpn_service_id(Device),
+    DevicePolicyId = security_policy_id(Device),
+    CurrentCertificate = maps:get(current_certificate,
+                                  ias_certificate_role:device_status(Device),
+                                  not_found),
+    CurrentCertificateId = certificate_id(CurrentCertificate),
+    CertificatePolicyId = certificate_security_policy_id(CurrentCertificate),
+    VerificationStatus = certificate_verification_status(CurrentCertificate),
+    PolicyConsistency = policy_consistency(DeviceId, CurrentCertificateId),
+    Missing = missing_requirements(VpnServiceId, DevicePolicyId, CurrentCertificate,
+                                   CertificatePolicyId, VerificationStatus,
+                                   PolicyConsistency),
+    Status = readiness_status(Missing),
+    #{device_id => DeviceId,
+      kind => device,
+      status => Status,
+      vpn_service_id => VpnServiceId,
+      security_policy_id => DevicePolicyId,
+      current_certificate_id => CurrentCertificateId,
+      certificate_security_policy_id => CertificatePolicyId,
+      certificate_verification => VerificationStatus,
+      policy_match => maps:get(match, PolicyConsistency, false),
+      missing => Missing,
+      suggested_actions => suggested_actions(Missing)}.
+
 device_certificate_links() ->
     [{maps:get(source_id, Relationship, undefined),
       maps:get(target_id, Relationship, undefined)}
@@ -104,6 +140,95 @@ active_security_policy(Object) ->
         [_PolicyId | _] -> linked;
         [] -> not_found
     end.
+
+security_policy_id(Object) ->
+    ObjectId = maps:get(id, Object, undefined),
+    ObjectKind = maps:get(kind, Object, undefined),
+    case [maps:get(target_id, Relationship, undefined)
+          || Relationship <- ias_demo_store:relationships(),
+             maps:get(relation_type, Relationship, undefined) =:= uses_security_policy,
+             maps:get(source_kind, Relationship, undefined) =:= ObjectKind,
+             maps:get(source_id, Relationship, undefined) =:= ObjectId,
+             maps:get(target_kind, Relationship, undefined) =:= security_policy,
+             resolves(maps:get(target_id, Relationship, undefined), security_policy)] of
+        [PolicyId | _] -> PolicyId;
+        [] -> not_found
+    end.
+
+certificate_security_policy_id(not_found) ->
+    not_found;
+certificate_security_policy_id(#{kind := certificate} = Certificate) ->
+    security_policy_id(Certificate);
+certificate_security_policy_id(_Certificate) ->
+    not_found.
+
+linked_vpn_service_id(Device) ->
+    DeviceId = maps:get(id, Device, undefined),
+    case [maps:get(target_id, Relationship, undefined)
+          || Relationship <- ias_demo_store:relationships(),
+             maps:get(source_kind, Relationship, undefined) =:= device,
+             maps:get(source_id, Relationship, undefined) =:= DeviceId,
+             maps:get(target_kind, Relationship, undefined) =:= vpn_service,
+             service_relation(maps:get(relation_type, Relationship, undefined)),
+             resolves(maps:get(target_id, Relationship, undefined), vpn_service)] of
+        [ServiceId | _] -> ServiceId;
+        [] -> not_found
+    end.
+
+certificate_verification_status(#{kind := certificate} = Certificate) ->
+    case ias_certificate_replacement:successful_verification(Certificate) of
+        true -> verified;
+        false -> not_verified
+    end;
+certificate_verification_status(_Certificate) ->
+    not_verified.
+
+policy_consistency(_DeviceId, not_found) ->
+    #{match => false,
+      reason => <<"no current certificate">>};
+policy_consistency(DeviceId, CertificateId) ->
+    ias_policy_consistency:evaluate_policy_consistency(DeviceId, CertificateId).
+
+missing_requirements(VpnServiceId, DevicePolicyId, CurrentCertificate,
+                     CertificatePolicyId, VerificationStatus, PolicyConsistency) ->
+    Missing = [],
+    Missing1 = missing_if(VpnServiceId =:= not_found, <<"VPN Service">>, Missing),
+    Missing2 = missing_if(DevicePolicyId =:= not_found, <<"Security Policy">>, Missing1),
+    Missing3 = missing_if(CurrentCertificate =:= not_found,
+                          <<"Current Certificate">>, Missing2),
+    Missing4 = missing_if(CertificatePolicyId =:= not_found andalso
+                          CurrentCertificate =/= not_found,
+                          <<"Certificate Security Policy">>, Missing3),
+    Missing5 = missing_if(VerificationStatus =/= verified,
+                          <<"Verified Certificate">>, Missing4),
+    Missing6 = missing_if(maps:get(match, PolicyConsistency, false) =:= false andalso
+                          CurrentCertificate =/= not_found andalso
+                          DevicePolicyId =/= not_found andalso
+                          CertificatePolicyId =/= not_found,
+                          <<"Policy Match">>, Missing5),
+    lists:reverse(Missing6).
+
+missing_if(true, Label, Missing) ->
+    [Label | Missing];
+missing_if(false, _Label, Missing) ->
+    Missing.
+
+readiness_status([]) ->
+    ready;
+readiness_status(_Missing) ->
+    incomplete.
+
+suggested_actions(Missing) ->
+    [Action || {Requirement, Action} <- suggested_action_specs(),
+               lists:member(Requirement, Missing)].
+
+suggested_action_specs() ->
+    [{<<"VPN Service">>, <<"Link VPN Service">>},
+     {<<"Security Policy">>, <<"Link Security Policy">>},
+     {<<"Current Certificate">>, <<"Link Certificate">>},
+     {<<"Certificate Security Policy">>, <<"Link Certificate Security Policy">>},
+     {<<"Verified Certificate">>, <<"Verify Current Certificate">>},
+     {<<"Policy Match">>, <<"Resolve Security Policy mismatch">>}].
 
 has_vpn_service(Device) ->
     DeviceId = maps:get(id, Device, undefined),

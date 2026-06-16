@@ -1,5 +1,6 @@
 -module(ias_demo).
--export([event/1, relationship_rows/2, certificate_lifecycle_preview/1]).
+-export([event/1, relationship_rows/2, certificate_lifecycle_preview/1,
+         operational_readiness_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -47,6 +48,7 @@ detail(Object) ->
         #h3{body = title(Object)},
         key_value_table(rows(Object)),
         certificate_lifecycle_preview(Object),
+        operational_readiness_preview(Object),
         security_profile_preview(Object),
         relationship_preview(Object),
         policy_consistency_preview(Object)
@@ -452,6 +454,62 @@ certificate_lifecycle_preview(#{kind := certificate} = Object) ->
     ]};
 certificate_lifecycle_preview(_Object) ->
     [].
+
+operational_readiness_preview(#{kind := device} = Object) ->
+    Readiness = device_readiness(Object),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("OPERATIONAL READINESS")},
+        key_value_table([
+            {"VPN Service", object_or_not_linked(vpn_service,
+                                                 maps:get(vpn_service_id, Readiness, not_found))},
+            {"Security Policy", object_or_not_linked(security_policy,
+                                                     maps:get(security_policy_id, Readiness, not_found))},
+            {"Current Certificate", object_or_not_linked(certificate,
+                                                         maps:get(current_certificate_id, Readiness, not_found))},
+            {"Certificate Verification", readiness_text(
+                maps:get(certificate_verification, Readiness, not_verified))},
+            {"Overall Status", readiness_status_text(maps:get(status, Readiness, incomplete))}
+        ]),
+        suggested_actions_panel(maps:get(suggested_actions, Readiness, []))
+    ]};
+operational_readiness_preview(_Object) ->
+    [].
+
+device_readiness(Device) ->
+    DeviceId = maps:get(id, Device, undefined),
+    case [Readiness || Readiness <- maps:get(all, ias_graph_analysis:devices_operational_readiness(), []),
+                       maps:get(device_id, Readiness, undefined) =:= DeviceId] of
+        [Readiness | _] -> Readiness;
+        [] -> #{status => incomplete,
+                vpn_service_id => not_found,
+                security_policy_id => not_found,
+                current_certificate_id => not_found,
+                certificate_verification => not_verified,
+                suggested_actions => []}
+    end.
+
+object_or_not_linked(_Kind, not_found) ->
+    <<"not linked yet">>;
+object_or_not_linked(Kind, Id) ->
+    object_ref(Kind, Id).
+
+readiness_text(Value) ->
+    ias_html:text(Value).
+
+readiness_status_text(ready) ->
+    <<"READY">>;
+readiness_status_text(incomplete) ->
+    <<"INCOMPLETE">>;
+readiness_status_text(Value) ->
+    ias_html:text(Value).
+
+suggested_actions_panel([]) ->
+    #panel{body = []};
+suggested_actions_panel(Actions) ->
+    #panel{body = [
+        #h3{body = ias_html:text("Suggested Actions")},
+        #ul{body = [#li{body = ias_html:text(Action)} || Action <- Actions]}
+    ]}.
 
 security_profile_preview(#{kind := device} = Object) ->
     security_profile_card("APPLIED SECURITY PROFILE", Object);

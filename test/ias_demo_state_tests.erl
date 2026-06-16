@@ -151,7 +151,15 @@ setup_demo_graph() ->
       service => Service}.
 
 warning_counts(Report) ->
-    maps:from_list([{Key, length(Value)} || {Key, Value} <- maps:to_list(Report)]).
+    maps:from_list([{Key, warning_count(Value)} || {Key, Value} <- maps:to_list(Report)]).
+
+warning_count(Value) when is_list(Value) ->
+    length(Value);
+warning_count(#{ready := Ready, incomplete := Incomplete}) ->
+    #{ready => length(Ready),
+      incomplete => length(Incomplete)};
+warning_count(Value) ->
+    Value.
 
 verification_certificate(Certificate) ->
     Certificate#{certificate_id => maps:get(id, Certificate, undefined),

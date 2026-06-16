@@ -3,7 +3,69 @@
 -include_lib("nitro/include/nitro.hrl").
 
 warning_blocks(Analysis) ->
-    [warning_block(Spec) || Spec <- warning_specs(Analysis)].
+    [readiness_block(maps:get(device_operational_readiness, Analysis,
+                              #{ready => [], incomplete => []}))
+     | [warning_block(Spec) || Spec <- warning_specs(Analysis)]].
+
+readiness_block(Readiness) ->
+    Ready = maps:get(ready, Readiness, []),
+    Incomplete = maps:get(incomplete, Readiness, []),
+    #panel{class = <<"ias-analysis-warning">>, body = [
+        #h3{body = ias_html:text("DEVICE OPERATIONAL READINESS")},
+        #panel{class = <<"ias-analysis-details">>, body = [
+            #p{style = <<"font-weight:600;">>,
+               body = ias_html:join([<<"Ready Devices (">>, length(Ready), <<")">>])},
+            readiness_list(Ready, ready),
+            #p{style = <<"font-weight:600;">>,
+               body = ias_html:join([<<"Incomplete Devices (">>, length(Incomplete), <<")">>])},
+            readiness_list(Incomplete, incomplete)
+        ]}
+    ]}.
+
+readiness_list([], _Status) ->
+    #p{body = ias_html:text("none")};
+readiness_list(Devices, Status) ->
+    #ul{body = [readiness_detail(Device, Status) || Device <- Devices]}.
+
+readiness_detail(Readiness, Status) ->
+    #li{body = [
+        object_link(device, maps:get(device_id, Readiness, undefined)),
+        #ul{body = readiness_rows(Readiness, Status)}
+    ]}.
+
+readiness_rows(Readiness, ready) ->
+    [#li{body = ias_html:text("Status: READY")},
+     #li{body = [ias_html:text("VPN Service: "),
+                 object_or_value(vpn_service, maps:get(vpn_service_id, Readiness, not_found))]},
+     #li{body = [ias_html:text("Security Policy: "),
+                 object_or_value(security_policy, maps:get(security_policy_id, Readiness, not_found))]},
+     #li{body = [ias_html:text("Current Certificate: "),
+                 object_or_value(certificate, maps:get(current_certificate_id, Readiness, not_found))]},
+     #li{body = ias_html:text("Certificate Verification: verified")}];
+readiness_rows(Readiness, incomplete) ->
+    [#li{body = ias_html:text("Status: INCOMPLETE")},
+     #li{body = [ias_html:text("VPN Service: "),
+                 object_or_value(vpn_service, maps:get(vpn_service_id, Readiness, not_found))]},
+     #li{body = [ias_html:text("Security Policy: "),
+                 object_or_value(security_policy, maps:get(security_policy_id, Readiness, not_found))]},
+     #li{body = [ias_html:text("Current Certificate: "),
+                 object_or_value(certificate, maps:get(current_certificate_id, Readiness, not_found))]},
+     #li{body = ias_html:join([<<"Certificate Verification: ">>,
+                               maps:get(certificate_verification, Readiness, not_verified)])},
+     #li{body = [ias_html:text("Missing:"),
+                 bullet_list(maps:get(missing, Readiness, []), <<"none">>)]},
+     #li{body = [ias_html:text("Suggested Actions:"),
+                 bullet_list(maps:get(suggested_actions, Readiness, []), <<"none">>)]}].
+
+object_or_value(_Kind, not_found) ->
+    ias_html:text("not linked yet");
+object_or_value(Kind, Id) ->
+    object_link(Kind, Id).
+
+bullet_list([], Empty) ->
+    #ul{body = [#li{body = ias_html:text(Empty)}]};
+bullet_list(Items, _Empty) ->
+    #ul{body = [#li{body = ias_html:text(Item)} || Item <- Items]}.
 
 warning_specs(Analysis) ->
     [
