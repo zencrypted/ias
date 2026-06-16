@@ -166,11 +166,92 @@ Certificate Verification
 Authorization Decision Metadata
 ```
 
+### Effective Trust Flow
+
+```text
+Certificate
+      ↓
+Effective Trust Status
+      ↓
+Trusted / Degraded / Blocked / Unknown
+```
+
+```text
+Device
+      ↓
+Effective Authorization Status
+      ↓
+Ready / Degraded / Blocked / Incomplete
+```
+
 ---
 
 ## Target Architecture
 
 The following relationships are expected to appear as the PKI lifecycle evolves.
+
+### Authorization Decision Engine
+
+```text
+Security Profile
+      ↓
+Certificate Claims
+      ↓
+Certificate
+      ↓
+Verification
+      ↓
+Effective Trust
+      ↓
+Authorization Decision
+```
+
+Status: planned
+
+The authorization decision engine is the final IAS trust layer. It answers
+whether a subject is allowed to perform an action on a resource after identity,
+certificate, verification, revocation, replacement, operational readiness, and
+policy state have already been resolved.
+
+Subjects:
+
+- User
+- Device
+- Certificate
+
+Actions:
+
+- access_vpn
+- use_ias
+- issue_certificate
+- revoke_certificate
+- enroll_certificate
+
+Resources:
+
+- VPN Service
+- IAS
+- Certificate Authority
+- Certificate
+
+Expected decision values:
+
+- allow
+- deny
+
+Reason examples:
+
+- certificate revoked
+- effective trust blocked
+- device not ready
+- policy mismatch
+- missing required claim
+- insufficient role
+
+The authorization decision should be modeled as an explicit runtime decision
+record once IAS moves from graph inspection to policy enforcement. Until then,
+Effective Trust Status and Device Operational Readiness provide the inputs for
+this final decision layer.
 
 ### Certificate Replacement
 
@@ -182,7 +263,7 @@ Certificate
 Certificate
 ```
 
-Status: planned
+Status: implemented through `certificate_replacement` runtime objects.
 
 ---
 
