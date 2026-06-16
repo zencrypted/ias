@@ -49,6 +49,19 @@ revoked_current_certificate_blocks_device_status_test() ->
     ?assertEqual(blocked, maps:get(status, Status)),
     ?assert(lists:member(<<"current certificate revoked">>, reason_texts(Status))).
 
+
+revoked_current_certificate_reason_is_not_duplicated_test() ->
+    ias_demo_store:clear(),
+    #{device := Device, certificate := Certificate} = setup_ready_device(),
+
+    {ok, _Revocation} = ias_certificate_revocation:revoke(maps:get(id, Certificate)),
+    Status = ias_trust_status:effective_device_status(maps:get(id, Device)),
+    Reasons = reason_texts(Status),
+
+    ?assertEqual(blocked, maps:get(status, Status)),
+    ?assertEqual(1, count_reason(<<"current certificate revoked">>, Reasons)),
+    ?assertEqual(0, count_reason(<<"certificate revoked">>, Reasons)).
+
 incomplete_device_status_reports_missing_vpn_service_test() ->
     ias_demo_store:clear(),
     Device = ias_demo_store:add_device(#{id => <<"trust_incomplete_device">>,
@@ -160,6 +173,9 @@ administrator_profile() ->
 
 reason_texts(Status) ->
     [maps:get(text, Reason, undefined) || Reason <- maps:get(reasons, Status, [])].
+
+count_reason(Text, Reasons) ->
+    length([Reason || Reason <- Reasons, Reason =:= Text]).
 
 test_id(Suffix) ->
     ias_html:join([<<"trust_status_">>, Suffix]).

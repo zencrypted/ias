@@ -129,7 +129,7 @@ device_reasons(Readiness, CertificateStatus) ->
                       || Item <- maps:get(missing, Readiness, [])],
     CertificateReasons = device_certificate_reasons(CertificateStatus),
     PolicyReasons = policy_consistency_reasons(Readiness),
-    MissingReasons ++ CertificateReasons ++ PolicyReasons.
+    unique_reasons(MissingReasons ++ CertificateReasons ++ PolicyReasons).
 
 device_missing_reason(<<"VPN Service">>) ->
     reason(incomplete, <<"no vpn service">>);
@@ -149,11 +149,22 @@ device_missing_reason(Item) ->
     reason(incomplete, ias_html:text(Item)).
 
 device_certificate_reasons(#{trust := blocked, reasons := Reasons}) ->
-    [reason(blocked, maps:get(text, Reason, <<"certificate blocked">>))
+    [reason(blocked, device_certificate_reason_text(maps:get(text, Reason, <<"certificate blocked">>)))
      || Reason <- Reasons,
         maps:get(class, Reason, undefined) =:= blocked];
 device_certificate_reasons(_CertificateStatus) ->
     [].
+
+device_certificate_reason_text(<<"certificate revoked">>) ->
+    <<"current certificate revoked">>;
+device_certificate_reason_text(<<"certificate expired">>) ->
+    <<"current certificate expired">>;
+device_certificate_reason_text(<<"certificate not yet valid">>) ->
+    <<"current certificate not yet valid">>;
+device_certificate_reason_text(<<"certificate verification failed">>) ->
+    <<"current certificate verification failed">>;
+device_certificate_reason_text(Text) ->
+    Text.
 
 policy_consistency_reasons(#{policy_match := false,
                              security_policy_id := DevicePolicy,
@@ -327,6 +338,16 @@ has_reason_class(Class, Reasons) ->
 reason(Class, Text) ->
     #{class => Class,
       text => ias_html:text(Text)}.
+
+unique_reasons(Reasons) ->
+    lists:reverse(element(2, lists:foldl(fun unique_reason/2, {#{}, []}, Reasons))).
+
+unique_reason(Reason, {Seen, Acc}) ->
+    Text = maps:get(text, Reason, undefined),
+    case maps:is_key(Text, Seen) of
+        true -> {Seen, Acc};
+        false -> {Seen#{Text => true}, [Reason | Acc]}
+    end.
 
 resolves(Id, Kind) ->
     case ias_demo_store:get(Id) of
