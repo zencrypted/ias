@@ -107,12 +107,12 @@ li {
 
 .ias-relationship-tree {
   margin-top: 16px;
-  padding: 14px;
+  padding: 12px 14px 12px 24px;
   border: 1px solid var(--border-color, rgba(15, 23, 42, 0.08));
   background: var(--bg-primary, #f8fafc);
   color: var(--text-primary, #0f172a);
   overflow-x: auto;
-  white-space: pre;
+  white-space: normal;
 }
 
 .ias-relationship-tree {
@@ -866,7 +866,7 @@ body.form-grid-page .app {
 
 .ias-tree-source {
   display: block;
-  margin: 8px 0 12px 0;
+  margin: 3px 0 5px 0;
 }
 
 .ias-tree-source > summary,
@@ -883,7 +883,7 @@ body.form-grid-page .app {
 .ias-tree-relation-title {
   display: list-item;
   cursor: pointer;
-  min-height: 1.8em;
+  line-height: 1.25;
   white-space: nowrap;
   list-style-position: outside;
 }
@@ -895,8 +895,8 @@ body.form-grid-page .app {
 .ias-tree-target {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 1.8em;
+  gap: 4px;
+  line-height: 1.25;
   white-space: nowrap;
 }
 
@@ -907,14 +907,14 @@ body.form-grid-page .app {
 
 .ias-tree-children {
   display: block;
-  margin-left: 32px !important;
-  padding-left: 16px !important;
+  margin-left: 18px !important;
+  padding-left: 10px !important;
   border-left: 1px solid var(--border-color, rgba(15, 23, 42, 0.18));
 }
 
 .ias-tree-relation {
   display: block;
-  margin: 6px 0 8px 0;
+  margin: 3px 0 4px 0;
 }
 
 .ias-tree-relation-title {
@@ -923,13 +923,22 @@ body.form-grid-page .app {
 
 .ias-tree-targets {
   display: block;
-  margin-left: 32px !important;
-  padding-left: 16px !important;
+  margin-left: 18px !important;
+  padding-left: 10px !important;
   border-left: 1px solid var(--border-color, rgba(15, 23, 42, 0.18));
 }
 
 .ias-tree-target {
-  margin: 4px 0;
+  margin: 2px 0 3px 0;
+}
+
+.ias-relationship-tree .button.sgreen {
+  min-width: 0;
+  padding: 4px 8px;
+  margin-left: 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.2;
 }
 
 .ias-tree-toggle {
