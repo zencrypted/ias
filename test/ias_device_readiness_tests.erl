@@ -67,6 +67,37 @@ incomplete_device_detail_suggests_actions_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Link Security Policy">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Verify Current Certificate">>)).
 
+readiness_actions_link_to_relevant_pages_test() ->
+    ias_demo_store:clear(),
+    #{device := Device, certificate := Certificate} = setup_certificate_policy_missing_device(),
+
+    DeviceHtml = iolist_to_binary(nitro:render(ias_demo:operational_readiness_preview(Device))),
+    GraphHtml = iolist_to_binary(nitro:render(
+        ias_graph_analysis_details:warning_blocks(ias_graph_analysis:report()))),
+
+    ?assertMatch({_, _}, binary:match(DeviceHtml, <<"Link Certificate Security Policy">>)),
+    ?assertMatch({_, _}, binary:match(DeviceHtml, <<"Open Current Certificate">>)),
+    ?assertMatch({_, _}, binary:match(DeviceHtml,
+                                      ias_html:join([<<"/app/demo.htm?id=">>,
+                                                     maps:get(id, Certificate)]))),
+    ?assertMatch({_, _}, binary:match(GraphHtml, <<"Open Current Certificate">>)),
+    ?assertMatch({_, _}, binary:match(GraphHtml,
+                                      ias_html:join([<<"/app/demo.htm?id=">>,
+                                                     maps:get(id, Certificate)]))).
+
+readiness_device_actions_link_to_device_page_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"readiness_nav_device">>,
+                                         source => ovpn_demo_import}),
+
+    Html = iolist_to_binary(nitro:render(ias_demo:operational_readiness_preview(Device))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Link VPN Service">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Open Device">>)),
+    ?assertMatch({_, _}, binary:match(Html,
+                                      ias_html:join([<<"/app/demo.htm?id=">>,
+                                                     maps:get(id, Device)]))).
+
 setup_ready_device() ->
     Device = ias_demo_store:add_device(#{id => <<"readiness_ready_device">>,
                                          source => ovpn_demo_import,
@@ -94,6 +125,46 @@ setup_ready_device() ->
     {ok, _CertificatePolicy} = ias_relationship_link:create(uses_security_policy,
                                                             maps:get(id, Certificate),
                                                             <<"high_security">>),
+    {ok, _Verification} = ias_certificate_verification:verify(
+        Certificate#{certificate_id => maps:get(id, Certificate),
+                     subject_cn => maps:get(id, Certificate),
+                     issuer_cn => <<"Zencrypted Dev CA">>,
+                     profile => administrator_profile(),
+                     profile_id => administrator,
+                     claims => #{role => admin,
+                                 services => [vpn, ias],
+                                 attributes => [admin, issue_certificates, revoke_certificates],
+                                 trust_level => elevated},
+                     trusted => true,
+                     key_match => true}),
+    #{device => Device,
+      certificate => Certificate,
+      service => Service}.
+
+setup_certificate_policy_missing_device() ->
+    Device = ias_demo_store:add_device(#{id => <<"readiness_cert_policy_device">>,
+                                         source => ovpn_demo_import,
+                                         import_id => <<"readiness_cert_policy">>,
+                                         type => <<"vpn-client">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"readiness_cert_policy_certificate">>,
+                                                   source => ovpn_demo_import,
+                                                   import_id => <<"readiness_cert_policy">>,
+                                                   private_key_stored => false,
+                                                   certificate_body_stored => false}),
+    Service = ias_demo_store:add_service(#{id => <<"readiness_cert_policy_service">>,
+                                           source => ovpn_demo_import,
+                                           import_id => <<"readiness_cert_policy">>,
+                                           service => openvpn,
+                                           remote => <<"example.com:1194">>}),
+    {ok, _CertificateLink} = ias_relationship_link:create(uses_certificate,
+                                                          maps:get(id, Device),
+                                                          maps:get(id, Certificate)),
+    {ok, _ServiceLink} = ias_relationship_link:create(uses_service,
+                                                      maps:get(id, Device),
+                                                      maps:get(id, Service)),
+    {ok, _DevicePolicy} = ias_relationship_link:create(uses_security_policy,
+                                                       maps:get(id, Device),
+                                                       <<"high_security">>),
     {ok, _Verification} = ias_certificate_verification:verify(
         Certificate#{certificate_id => maps:get(id, Certificate),
                      subject_cn => maps:get(id, Certificate),

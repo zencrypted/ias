@@ -470,7 +470,7 @@ operational_readiness_preview(#{kind := device} = Object) ->
                 maps:get(certificate_verification, Readiness, not_verified))},
             {"Overall Status", readiness_status_text(maps:get(status, Readiness, incomplete))}
         ]),
-        suggested_actions_panel(maps:get(suggested_actions, Readiness, []))
+        suggested_actions_panel(Readiness)
     ]};
 operational_readiness_preview(_Object) ->
     [].
@@ -503,13 +503,43 @@ readiness_status_text(incomplete) ->
 readiness_status_text(Value) ->
     ias_html:text(Value).
 
-suggested_actions_panel([]) ->
+suggested_actions_panel(#{suggested_actions := []}) ->
     #panel{body = []};
-suggested_actions_panel(Actions) ->
+suggested_actions_panel(Readiness) ->
+    Actions = maps:get(suggested_actions, Readiness, []),
     #panel{body = [
         #h3{body = ias_html:text("Suggested Actions")},
-        #ul{body = [#li{body = ias_html:text(Action)} || Action <- Actions]}
+        #ul{body = [#li{body = readiness_action_body(Action, Readiness)}
+                    || Action <- Actions]}
     ]}.
+
+readiness_action_body(Action, Readiness) ->
+    Target = readiness_action_target(Action, Readiness),
+    [ias_html:text(Action), ias_html:text(" "), readiness_action_link(Target)].
+
+readiness_action_target(<<"Link Certificate Security Policy">>, Readiness) ->
+    {certificate, maps:get(current_certificate_id, Readiness, not_found),
+     <<"Open Current Certificate">>};
+readiness_action_target(<<"Verify Current Certificate">>, Readiness) ->
+    {certificate, maps:get(current_certificate_id, Readiness, not_found),
+     <<"Open Current Certificate">>};
+readiness_action_target(_Action, Readiness) ->
+    {device, maps:get(device_id, Readiness, not_found), <<"Open Device">>}.
+
+readiness_action_link({_Kind, not_found, Label}) ->
+    #span{style = <<"color:#6b7280;font-size:12px;">>, body = ias_html:text(Label)};
+readiness_action_link({Kind, Id, Label}) ->
+    #link{class = [button, sgreen],
+          style = <<"display:inline-block;">>,
+          url = object_url(Kind, Id),
+          body = ias_html:text(Label)}.
+
+object_url(device, Id) ->
+    ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]);
+object_url(certificate, Id) ->
+    ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]);
+object_url(_Kind, Id) ->
+    ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]).
 
 security_profile_preview(#{kind := device} = Object) ->
     security_profile_card("APPLIED SECURITY PROFILE", Object);

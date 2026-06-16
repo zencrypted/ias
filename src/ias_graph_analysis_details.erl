@@ -55,7 +55,7 @@ readiness_rows(Readiness, incomplete) ->
      #li{body = [ias_html:text("Missing:"),
                  bullet_list(maps:get(missing, Readiness, []), <<"none">>)]},
      #li{body = [ias_html:text("Suggested Actions:"),
-                 bullet_list(maps:get(suggested_actions, Readiness, []), <<"none">>)]}].
+                 readiness_action_list(Readiness)]}].
 
 object_or_value(_Kind, not_found) ->
     ias_html:text("not linked yet");
@@ -66,6 +66,34 @@ bullet_list([], Empty) ->
     #ul{body = [#li{body = ias_html:text(Empty)}]};
 bullet_list(Items, _Empty) ->
     #ul{body = [#li{body = ias_html:text(Item)} || Item <- Items]}.
+
+readiness_action_list(#{suggested_actions := []}) ->
+    #ul{body = [#li{body = ias_html:text("none")}]};
+readiness_action_list(Readiness) ->
+    Actions = maps:get(suggested_actions, Readiness, []),
+    #ul{body = [#li{body = readiness_action_body(Action, Readiness)}
+                || Action <- Actions]}.
+
+readiness_action_body(Action, Readiness) ->
+    Target = readiness_action_target(Action, Readiness),
+    [ias_html:text(Action), ias_html:text(" "), readiness_action_link(Target)].
+
+readiness_action_target(<<"Link Certificate Security Policy">>, Readiness) ->
+    {certificate, maps:get(current_certificate_id, Readiness, not_found),
+     <<"Open Current Certificate">>};
+readiness_action_target(<<"Verify Current Certificate">>, Readiness) ->
+    {certificate, maps:get(current_certificate_id, Readiness, not_found),
+     <<"Open Current Certificate">>};
+readiness_action_target(_Action, Readiness) ->
+    {device, maps:get(device_id, Readiness, not_found), <<"Open Device">>}.
+
+readiness_action_link({_Kind, not_found, Label}) ->
+    #span{style = <<"color:#6b7280;font-size:12px;">>, body = ias_html:text(Label)};
+readiness_action_link({Kind, Id, Label}) ->
+    #link{class = [button, sgreen],
+          style = <<"display:inline-block;">>,
+          url = object_url(Kind, Id),
+          body = ias_html:text(Label)}.
 
 warning_specs(Analysis) ->
     [
