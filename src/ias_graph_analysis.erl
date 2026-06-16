@@ -3,6 +3,8 @@
 
 report() ->
     #{policy_mismatches => policy_mismatches(),
+      effective_certificate_statuses => effective_certificate_statuses(),
+      effective_device_statuses => effective_device_statuses(),
       device_operational_readiness => devices_operational_readiness(),
       unique_verified_certificates => ias_certificate_verification:unique_verified_certificates(),
       total_verification_records => ias_certificate_verification:total_verification_records(),
@@ -20,6 +22,14 @@ report() ->
           enrollment_certificates_without_issued_certificate(),
       certificates_linked_to_multiple_devices => certificates_linked_to_multiple_devices(),
       devices_with_replacement_available => devices_with_replacement_available()}.
+
+effective_certificate_statuses() ->
+    [ias_trust_status:effective_certificate_status(maps:get(id, Certificate, undefined))
+     || Certificate <- ias_demo_store:certificates()].
+
+effective_device_statuses() ->
+    [ias_trust_status:effective_device_status(maps:get(id, Device, undefined))
+     || Device <- ias_demo_store:devices()].
 
 policy_mismatches() ->
     [mismatch_warning(DeviceId, CertificateId, Consistency)

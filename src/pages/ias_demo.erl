@@ -1,6 +1,6 @@
 -module(ias_demo).
 -export([event/1, relationship_rows/2, certificate_lifecycle_preview/1,
-         operational_readiness_preview/1]).
+         operational_readiness_preview/1, effective_status_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -53,6 +53,7 @@ detail(Object) ->
         key_value_table(rows(Object)),
         certificate_lifecycle_preview(Object),
         operational_readiness_preview(Object),
+        effective_status_preview(Object),
         security_profile_preview(Object),
         relationship_preview(Object),
         policy_consistency_preview(Object)
@@ -496,6 +497,33 @@ operational_readiness_preview(#{kind := device} = Object) ->
     ]};
 operational_readiness_preview(_Object) ->
     [].
+
+effective_status_preview(#{kind := certificate} = Object) ->
+    Status = ias_trust_status:effective_certificate_status(maps:get(id, Object, undefined)),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("EFFECTIVE TRUST STATUS")},
+        key_value_table([
+            {"Trust", maps:get(trust, Status, unknown)},
+            {"Reasons", status_reasons(maps:get(reasons, Status, []))}
+        ])
+    ]};
+effective_status_preview(#{kind := device} = Object) ->
+    Status = ias_trust_status:effective_device_status(maps:get(id, Object, undefined)),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("EFFECTIVE AUTHORIZATION STATUS")},
+        key_value_table([
+            {"Status", maps:get(status, Status, incomplete)},
+            {"Reasons", status_reasons(maps:get(reasons, Status, []))}
+        ])
+    ]};
+effective_status_preview(_Object) ->
+    [].
+
+status_reasons([]) ->
+    <<"none">>;
+status_reasons(Reasons) ->
+    #ul{body = [#li{body = ias_html:text(maps:get(text, Reason, undefined))}
+                || Reason <- Reasons]}.
 
 device_readiness(Device) ->
     DeviceId = maps:get(id, Device, undefined),
