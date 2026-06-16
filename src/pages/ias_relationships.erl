@@ -11,10 +11,11 @@ event(_) ->
     ok.
 
 render() ->
-    Content = content(),
-    Html = iolist_to_binary(nitro:render(Content)),
-    SafeHtml = nitro:js_escape(Html),
-    nitro:wire(["qi('stand').innerHTML='", SafeHtml, "';"]).
+    %% Use Nitro DOM operations instead of raw innerHTML injection.
+    %% Raw innerHTML makes rendered #link postbacks appear in the DOM,
+    %% but their client-side actions are not reliably wired.
+    nitro:clear(stand),
+    nitro:insert_bottom(stand, content()).
 
 content() ->
     Summary = ias_relationship_graph:summary(),
