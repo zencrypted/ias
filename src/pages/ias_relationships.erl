@@ -102,6 +102,9 @@ relationship_group_header() ->
         #th{body = ias_html:text("Action")}
     ]}.
 
+relationship_edge(Relationship) ->
+    relationship_row(Relationship).
+
 relationship_row(Relationship) ->
     #tr{cells = [
         #td{body = ias_relationship_ui:object_entry(source, Relationship)},
