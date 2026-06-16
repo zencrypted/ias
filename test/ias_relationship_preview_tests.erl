@@ -363,6 +363,32 @@ relationship_section_shows_unlink_for_security_policy_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Security Policy #standard">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Unlink">>)).
 
+relationship_section_shows_unlink_for_vpn_service_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"section_service_device">>}),
+    Service = ias_demo_store:add_service(#{id => <<"section_service_vpn">>}),
+    {ok, _Relationship} = ias_relationship_link:create(uses_service,
+                                                       maps:get(id, Device),
+                                                       maps:get(id, Service)),
+
+    Html = rendered_relationship_rows(Service),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Device #section_service_device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Unlink">>)).
+
+relationship_section_shows_unlink_on_security_policy_page_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"section_policy_page_device">>}),
+    {ok, _Relationship} = ias_relationship_link:create(uses_security_policy,
+                                                       maps:get(id, Device),
+                                                       <<"high_security">>),
+    {ok, Policy} = ias_demo_store:get(<<"high_security">>),
+
+    Html = rendered_relationship_rows(Policy),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Device #section_policy_page_device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Unlink">>)).
+
 relationship_section_hides_unlink_for_lifecycle_relationship_test() ->
     ias_demo_store:clear(),
     Certificate = ias_demo_store:add_certificate(#{id => <<"section_lifecycle_certificate">>}),
@@ -375,6 +401,36 @@ relationship_section_hides_unlink_for_lifecycle_relationship_test() ->
     Html = rendered_relationship_rows(Certificate),
 
     ?assertMatch({_, _}, binary:match(Html, <<"Verification #section_lifecycle_verification">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Unlink">>)).
+
+relationship_explorer_shows_unlink_for_editable_relationship_test() ->
+    ias_demo_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"explorer_unlink_device">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"explorer_unlink_certificate">>}),
+    {ok, Relationship} = ias_relationship_link:create(uses_certificate,
+                                                      maps:get(id, Device),
+                                                      maps:get(id, Certificate)),
+
+    Html = iolist_to_binary(nitro:render(ias_relationships:relationship_edge(Relationship))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"explorer_unlink_device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"uses_certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"explorer_unlink_certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Unlink">>)).
+
+relationship_explorer_hides_unlink_for_lifecycle_relationship_test() ->
+    ias_demo_store:clear(),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"explorer_lifecycle_certificate">>}),
+    Verification = ias_demo_store:put_runtime_object(#{id => <<"explorer_lifecycle_verification">>,
+                                                       kind => verification}),
+    {ok, Relationship} = ias_relationship_link:create(verified_by,
+                                                      maps:get(id, Certificate),
+                                                      maps:get(id, Verification)),
+
+    Html = iolist_to_binary(nitro:render(ias_relationships:relationship_edge(Relationship))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"verified_by">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"explorer_lifecycle_verification">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Unlink">>)).
 
 score_zero_candidates_are_excluded_from_suggested_test() ->

@@ -1,14 +1,20 @@
 -module(ias_relationships).
--export([event/1]).
+-export([event/1, relationship_edge/1]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
+    render();
+event({unlink_relationship, RelationshipId}) ->
+    _ = ias_relationship_link:unlink(RelationshipId),
+    render();
+event(_) ->
+    ok.
+
+render() ->
     Content = content(),
     Html = iolist_to_binary(nitro:render(Content)),
     SafeHtml = nitro:js_escape(Html),
-    nitro:wire(["qi('stand').innerHTML='", SafeHtml, "';"]);
-event(_) ->
-    ok.
+    nitro:wire(["qi('stand').innerHTML='", SafeHtml, "';"]).
 
 content() ->
     Summary = ias_relationship_graph:summary(),
@@ -60,9 +66,20 @@ relationship_table(Relationships, _EmptyLabel) ->
 
 relationship_edge(Relationship) ->
     Edge = ias_relationship_graph:tree_edge(Relationship),
-    #pre{class = <<"ias-tree-line">>,
-         style = <<"font-family:monospace;white-space:pre;">>,
-         body = relationship_edge_text(Edge)}.
+    #panel{class = <<"ias-tree-line">>, body = [
+        #pre{style = <<"font-family:monospace;white-space:pre;margin:0;">>,
+             body = relationship_edge_text(Edge)},
+        relationship_edge_action(Relationship)
+    ]}.
+
+relationship_edge_action(Relationship) ->
+    case ias_relationship_link:unlinkable(Relationship) of
+        true ->
+            #panel{style = <<"margin:4px 0 12px 0;">>,
+                   body = [ias_relationship_ui:action(Relationship)]};
+        false ->
+            []
+    end.
 
 relationship_edge_text(Edge) ->
     ias_html:join([

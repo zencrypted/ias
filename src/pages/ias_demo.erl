@@ -596,7 +596,7 @@ linked_action(Relationship) ->
         true ->
             #panel{body = [
                 ias_html:text("Linked "),
-                unlink_link(maps:get(id, Relationship, undefined))
+                ias_relationship_ui:action(Relationship)
             ]};
         false ->
             ias_html:text("Linked")
@@ -605,16 +605,10 @@ linked_action(Relationship) ->
 relationship_detail_action(Relationship) ->
     case ias_relationship_link:unlinkable(Relationship) of
         true ->
-            unlink_link(maps:get(id, Relationship, undefined));
+            ias_relationship_ui:action(Relationship);
         false ->
             ias_html:text("Protected lifecycle relationship")
     end.
-
-unlink_link(RelationshipId) ->
-    #link{class = [button],
-          style = <<"display:inline-block;">>,
-          body = ias_html:text("Unlink"),
-          postback = {unlink_relationship, RelationshipId}}.
 
 relationships_table(Object) ->
     Relationships = ias_relationship_link:relationships_for(Object),
@@ -680,16 +674,7 @@ relationship_entry(source, Relationship) ->
                        Relationship).
 
 relationship_entry(Kind, Id, Relationship) ->
-    case ias_relationship_link:unlinkable(Relationship) of
-        true ->
-            #panel{body = [
-                object_ref(Kind, Id),
-                ias_html:text(" "),
-                unlink_link(maps:get(id, Relationship, undefined))
-            ]};
-        false ->
-            object_ref(Kind, Id)
-    end.
+    ias_relationship_ui:object_entry(Kind, Id, Relationship).
 
 links_or_not_found([]) ->
     <<"not linked yet">>;
