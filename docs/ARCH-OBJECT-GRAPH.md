@@ -344,6 +344,64 @@ a separate hard-coded business process. The main inputs are:
 This keeps guided workflows as a UX layer over the same source-of-truth graph
 used by Relationship Explorer.
 
+### Scoped Graph Views and Role-Based Filtering
+
+```text
+Complete Object Graph
+      ↓
+Scope Selection
+      ↓
+Filtered Relationship Graph
+      ↓
+Role-Specific Actions
+```
+
+Status: planned
+
+The current Relationship Explorer is intentionally a global expert/debug view.
+It is useful while the IAS object model is being designed, but it should not be
+the only operational view once real users, devices, certificates, services,
+verification records, replacements, revocations, and authorization decisions
+accumulate in the runtime graph.
+
+IAS should introduce scoped graph views that show only the relevant subgraph for
+the current task or actor. Operators should not have to inspect every user, every
+certificate, and every lifecycle record to manage a single device or VPN service.
+
+Initial graph scopes should include:
+
+- all graph;
+- by user;
+- by device;
+- by certificate;
+- by VPN service;
+- by security profile;
+- by security policy;
+- by effective status: ready, incomplete, degraded, blocked;
+- by certificate lifecycle state: verified, replaced, revoked, expired.
+
+The same scope model should also be reused by guided workflows. A wizard step
+should operate on a focused subgraph instead of forcing the operator to navigate
+the full Relationship Explorer tree.
+
+Role-based filtering should later restrict both visibility and actions. The
+expected roles are:
+
+- Security Officer: full graph and policy lifecycle access;
+- PKI Administrator: certificate issuance, replacement, revocation, and CA
+  lifecycle access;
+- VPN Administrator: VPN services, devices, and VPN-related certificates;
+- Auditor: read-only graph, lifecycle records, and effective decisions;
+- End User: only own devices, own certificates, and own access status.
+
+This separation keeps IAS Admin Console usable for security operators while
+allowing a future User Portal to expose a much smaller personal view.
+
+Scoped graph views must not create a second source of truth. They are filters and
+projections over the same relationship graph used by Graph Mode, Wizard Mode,
+Operational Readiness, Effective Trust, and future Authorization Decision
+records.
+
 ### Certificate Replacement
 
 ```text
