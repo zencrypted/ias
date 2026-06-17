@@ -99,12 +99,19 @@ join_reasons([Reason | Rest], Acc) ->
     join_reasons(Rest, [ias_html:text(Reason), <<"; ">> | Acc]).
 
 ovpn_provisioning_reasons(Certificate, Policy, Status) ->
-    TrustReasons = [ias_html:text(maps:get(text, Reason, undefined))
-                    || Reason <- maps:get(reasons, Status, [])],
-    unique_reasons(
-      provisioning_trust_reasons(Certificate, TrustReasons) ++
-      policy_required_reasons(Certificate, Policy) ++
-      device_binding_required_reasons(Certificate, Policy)).
+    case policy_required_reasons(Certificate, Policy) of
+        [] ->
+            case device_binding_required_reasons(Certificate, Policy) of
+                [] ->
+                    TrustReasons = [ias_html:text(maps:get(text, Reason, undefined))
+                                    || Reason <- maps:get(reasons, Status, [])],
+                    unique_reasons(provisioning_trust_reasons(Certificate, TrustReasons));
+                DeviceReasons ->
+                    unique_reasons(DeviceReasons)
+            end;
+        PolicyReasons ->
+            unique_reasons(PolicyReasons)
+    end.
 
 provisioning_trust_reasons(Certificate, Reasons) ->
     [Reason || Reason <- Reasons,
@@ -128,7 +135,7 @@ device_binding_required_reasons(Certificate, Policy) ->
         enabled ->
             case has_device_binding(Certificate) of
                 true -> [];
-                false -> [<<"device binding required">>]
+                false -> [<<"no device binding">>]
             end;
         _ ->
             []
