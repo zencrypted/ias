@@ -230,6 +230,18 @@ This is intentionally not an ABAC engine, policy language, or rule editor. It is
 the first read-only role layer on top of the existing status-based decision
 preview.
 
+Stage 19A adds Authorization Enforcement Preview. IAS maps authorization
+decisions to the operations that would be allowed or denied:
+
+- Device `access_vpn` maps to VPN Connection.
+- Certificate `use_ias` maps to IAS Access.
+- Certificate `issue_certificate` maps to Certificate Issuance.
+- Certificate `revoke_certificate` maps to Certificate Revocation.
+
+This remains preview-only. IAS does not execute VPN connections, issue
+certificates, revoke certificates, block UI actions, write runtime objects, or
+persist enforcement decisions.
+
 Subjects:
 
 - User

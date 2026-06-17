@@ -9,6 +9,12 @@ report() ->
       authorization_denied_certificates => authorization_denied_certificates(),
       authorization_administrators => authorization_profile_certificates(administrator),
       authorization_users => authorization_profile_certificates(default_user),
+      vpn_access_allowed => vpn_access_allowed(),
+      vpn_access_denied => vpn_access_denied(),
+      certificate_issuance_allowed => certificate_issuance_allowed(),
+      certificate_issuance_denied => certificate_issuance_denied(),
+      certificate_revocation_allowed => certificate_revocation_allowed(),
+      certificate_revocation_denied => certificate_revocation_denied(),
       effective_certificate_statuses => effective_certificate_statuses(),
       effective_device_statuses => effective_device_statuses(),
       device_operational_readiness => devices_operational_readiness(),
@@ -68,6 +74,52 @@ certificate_profile_id(Certificate) ->
         <<"default_user">> -> default_user;
         ProfileId -> ProfileId
     end.
+
+vpn_access_allowed() ->
+    enforcement_by_result(device_enforcements(), allow).
+
+vpn_access_denied() ->
+    enforcement_by_result(device_enforcements(), deny).
+
+certificate_issuance_allowed() ->
+    enforcement_by_operation_and_result(certificate_enforcements(),
+                                        <<"Certificate Issuance">>, allow).
+
+certificate_issuance_denied() ->
+    enforcement_by_operation_and_result(certificate_enforcements(),
+                                        <<"Certificate Issuance">>, deny).
+
+certificate_revocation_allowed() ->
+    enforcement_by_operation_and_result(certificate_enforcements(),
+                                        <<"Certificate Revocation">>, allow).
+
+certificate_revocation_denied() ->
+    enforcement_by_operation_and_result(certificate_enforcements(),
+                                        <<"Certificate Revocation">>, deny).
+
+device_enforcements() ->
+    [with_subject(Device, ias_authorization_enforcement:device_enforcement(
+                            maps:get(id, Device, undefined)))
+     || Device <- ias_demo_store:devices()].
+
+certificate_enforcements() ->
+    [with_subject(Certificate, Enforcement)
+     || Certificate <- ias_demo_store:certificates(),
+        Enforcement <- ias_authorization_enforcement:certificate_enforcement(
+                         maps:get(id, Certificate, undefined))].
+
+with_subject(Object, Enforcement) ->
+    Enforcement#{subject_kind => maps:get(kind, Object, undefined),
+                 subject_id => maps:get(id, Object, undefined)}.
+
+enforcement_by_result(Enforcements, Result) ->
+    [Enforcement || Enforcement <- Enforcements,
+                    maps:get(result, Enforcement, deny) =:= Result].
+
+enforcement_by_operation_and_result(Enforcements, Operation, Result) ->
+    [Enforcement || Enforcement <- Enforcements,
+                    maps:get(operation, Enforcement, undefined) =:= Operation,
+                    maps:get(result, Enforcement, deny) =:= Result].
 
 effective_certificate_statuses() ->
     [ias_trust_status:effective_certificate_status(maps:get(id, Certificate, undefined))

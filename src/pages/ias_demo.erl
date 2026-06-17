@@ -1,7 +1,8 @@
 -module(ias_demo).
 -export([event/1, relationship_rows/2, certificate_lifecycle_preview/1,
          operational_readiness_preview/1, effective_status_preview/1,
-         authorization_decision_preview/1, authorization_matrix_preview/1]).
+         authorization_decision_preview/1, authorization_matrix_preview/1,
+         authorization_enforcement_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -57,6 +58,7 @@ detail(Object) ->
         effective_status_preview(Object),
         authorization_decision_preview(Object),
         authorization_matrix_preview(Object),
+        authorization_enforcement_preview(Object),
         security_profile_preview(Object),
         relationship_preview(Object),
         policy_consistency_preview(Object)
@@ -590,6 +592,46 @@ decision_reasons(Reasons) ->
     #panel{body = [
         #ul{body = [#li{body = ias_html:text(Reason)}
                     || Reason <- Reasons]}
+    ]}.
+
+authorization_enforcement_preview(#{kind := device} = Object) ->
+    Enforcement = ias_authorization_enforcement:device_enforcement(
+                    maps:get(id, Object, undefined)),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("AUTHORIZATION ENFORCEMENT PREVIEW")},
+        key_value_table([
+            {"Operation", maps:get(operation, Enforcement, undefined)},
+            {"Result", maps:get(result, Enforcement, deny)},
+            {"Reason", maps:get(reason, Enforcement, undefined)}
+        ])
+    ]};
+authorization_enforcement_preview(#{kind := certificate} = Object) ->
+    Enforcements = ias_authorization_enforcement:certificate_enforcement(
+                     maps:get(id, Object, undefined)),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("AUTHORIZATION ENFORCEMENT PREVIEW")},
+        enforcement_table(Enforcements)
+    ]};
+authorization_enforcement_preview(_Object) ->
+    [].
+
+enforcement_table(Enforcements) ->
+    Header = #tr{cells = [
+        #th{body = ias_html:text("Operation")},
+        #th{body = ias_html:text("Result")},
+        #th{body = ias_html:text("Reason")}
+    ]},
+    Rows = [enforcement_row(Enforcement) || Enforcement <- Enforcements],
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [Header | Rows]}}
+    ]}.
+
+enforcement_row(Enforcement) ->
+    #tr{cells = [
+        #td{body = ias_html:text(maps:get(operation, Enforcement, undefined))},
+        #td{body = ias_html:text(maps:get(result, Enforcement, deny))},
+        #td{body = ias_html:text(maps:get(reason, Enforcement, undefined))}
     ]}.
 
 device_readiness(Device) ->
