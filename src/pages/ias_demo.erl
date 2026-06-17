@@ -655,8 +655,7 @@ ovpn_export_card(Preview) ->
         ]),
         #h3{body = ias_html:text("Profile Components")},
         ovpn_components_table(Preview),
-        #h3{body = ias_html:text("Configuration Skeleton")},
-        ovpn_profile_preview(Preview)
+        ovpn_configuration_section(Preview)
     ]}.
 
 ovpn_provisioning_status(#{authorization := allow}) ->
@@ -734,14 +733,20 @@ ovpn_two_factor_note(#{two_factor := optional}) ->
 ovpn_two_factor_note(_Preview) ->
     <<"2FA is disabled">>.
 
-ovpn_profile_preview(#{authorization := deny} = Preview) ->
+ovpn_configuration_section(#{authorization := allow} = Preview) ->
     #panel{body = [
-        #p{style = <<"color:#b45309;font-weight:600;">>,
-           body = ias_html:text("OVPN profile would not be provisioned because authorization is denied.")},
+        #h3{body = ias_html:text("Configuration Skeleton")},
         ovpn_profile_block(maps:get(preview, Preview, <<>>))
     ]};
-ovpn_profile_preview(Preview) ->
-    ovpn_profile_block(maps:get(preview, Preview, <<>>)).
+ovpn_configuration_section(Preview) ->
+    #panel{body = [
+        #h3{body = ias_html:text("Profile Generation Blocked")},
+        #p{style = <<"color:#b45309;font-weight:600;">>,
+           body = ias_html:text("OVPN profile would not be provisioned because authorization is denied.")},
+        key_value_table([
+            {"Blocking Reason", ovpn_authorization_reason(Preview)}
+        ])
+    ]}.
 
 ovpn_profile_block(Profile) ->
     #panel{style = <<"white-space:pre-wrap;font-family:monospace;font-size:12px;",

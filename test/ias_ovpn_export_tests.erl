@@ -85,7 +85,9 @@ denied_ovpn_export_preview_renders_warning_test() ->
     Html = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Device))),
 
     ?assertMatch({_, _}, binary:match(Html,
-        <<"OVPN profile would not be provisioned because authorization is denied.">>)).
+        <<"OVPN profile would not be provisioned because authorization is denied.">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Profile Generation Blocked">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"remote vpn.example.com 1194">>)).
 
 graph_analysis_report_includes_ovpn_export_summary_test() ->
     ias_demo_store:clear(),
