@@ -15,6 +15,8 @@ report() ->
       certificate_issuance_denied => certificate_issuance_denied(),
       certificate_revocation_allowed => certificate_revocation_allowed(),
       certificate_revocation_denied => certificate_revocation_denied(),
+      ovpn_export_allowed => ovpn_export_allowed(),
+      ovpn_export_denied => ovpn_export_denied(),
       effective_certificate_statuses => effective_certificate_statuses(),
       effective_device_statuses => effective_device_statuses(),
       device_operational_readiness => devices_operational_readiness(),
@@ -120,6 +122,29 @@ enforcement_by_operation_and_result(Enforcements, Operation, Result) ->
     [Enforcement || Enforcement <- Enforcements,
                     maps:get(operation, Enforcement, undefined) =:= Operation,
                     maps:get(result, Enforcement, deny) =:= Result].
+
+ovpn_export_allowed() ->
+    [Preview || Preview <- ovpn_export_previews(),
+                maps:get(authorization, Preview, deny) =:= allow].
+
+ovpn_export_denied() ->
+    [Preview || Preview <- ovpn_export_previews(),
+                maps:get(authorization, Preview, deny) =:= deny].
+
+ovpn_export_previews() ->
+    DevicePreviews = [with_export_subject(Device,
+                                          ias_ovpn_export:device_preview(
+                                            maps:get(id, Device, undefined)))
+                      || Device <- ias_demo_store:devices()],
+    CertificatePreviews = [with_export_subject(Certificate,
+                                               ias_ovpn_export:certificate_preview(
+                                                 maps:get(id, Certificate, undefined)))
+                           || Certificate <- ias_demo_store:certificates()],
+    DevicePreviews ++ CertificatePreviews.
+
+with_export_subject(Object, Preview) ->
+    Preview#{subject_kind => maps:get(kind, Object, undefined),
+             subject_id => maps:get(id, Object, undefined)}.
 
 effective_certificate_statuses() ->
     [ias_trust_status:effective_certificate_status(maps:get(id, Certificate, undefined))

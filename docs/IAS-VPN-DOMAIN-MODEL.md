@@ -92,6 +92,21 @@ User
 -> User
 ```
 
+Stage 20A implements OVPN Export as a read-only preview. The preview shows the
+profile skeleton IAS would provision from the resolved certificate, VPN service,
+security profile, and authorization state. It does not write `.ovpn` files,
+download profiles, embed certificate bodies, embed private keys, or mutate
+runtime state.
+
+OVPN Import and OVPN Export have different roles:
+
+- OVPN Import is a migration, onboarding, and legacy profile analysis workflow.
+- OVPN Export is the primary provisioning artifact for IAS-managed VPN access.
+
+Device-owned keys remain outside the exported profile. IAS may display the
+`<key>` section shape for operator review, but the private key body is not
+exported by IAS.
+
 In the standard VPN profile, the user receives an OVPN profile and chooses the
 client device where it will be installed. Device binding is not mandatory in
 that profile.

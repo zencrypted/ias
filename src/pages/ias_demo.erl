@@ -2,7 +2,7 @@
 -export([event/1, relationship_rows/2, certificate_lifecycle_preview/1,
          operational_readiness_preview/1, effective_status_preview/1,
          authorization_decision_preview/1, authorization_matrix_preview/1,
-         authorization_enforcement_preview/1]).
+         authorization_enforcement_preview/1, ovpn_export_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -59,6 +59,7 @@ detail(Object) ->
         authorization_decision_preview(Object),
         authorization_matrix_preview(Object),
         authorization_enforcement_preview(Object),
+        ovpn_export_preview(Object),
         security_profile_preview(Object),
         relationship_preview(Object),
         policy_consistency_preview(Object)
@@ -633,6 +634,40 @@ enforcement_row(Enforcement) ->
         #td{body = ias_html:text(maps:get(result, Enforcement, deny))},
         #td{body = ias_html:text(maps:get(reason, Enforcement, undefined))}
     ]}.
+
+ovpn_export_preview(#{kind := device} = Object) ->
+    Preview = ias_ovpn_export:device_preview(maps:get(id, Object, undefined)),
+    ovpn_export_card(Preview);
+ovpn_export_preview(#{kind := certificate} = Object) ->
+    Preview = ias_ovpn_export:certificate_preview(maps:get(id, Object, undefined)),
+    ovpn_export_card(Preview);
+ovpn_export_preview(_Object) ->
+    [].
+
+ovpn_export_card(Preview) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("OVPN EXPORT PREVIEW")},
+        key_value_table([
+            {"Authorization", maps:get(authorization, Preview, deny)},
+            {"Device Lock", maps:get(device_lock, Preview, disabled)},
+            {"2FA", maps:get(two_factor, Preview, optional)},
+            {"Generated Profile", ovpn_profile_preview(Preview)}
+        ])
+    ]}.
+
+ovpn_profile_preview(#{authorization := deny} = Preview) ->
+    #panel{body = [
+        #p{style = <<"color:#b45309;font-weight:600;">>,
+           body = ias_html:text("OVPN profile would not be provisioned because authorization is denied.")},
+        ovpn_profile_block(maps:get(preview, Preview, <<>>))
+    ]};
+ovpn_profile_preview(Preview) ->
+    ovpn_profile_block(maps:get(preview, Preview, <<>>)).
+
+ovpn_profile_block(Profile) ->
+    #panel{style = <<"white-space:pre-wrap;font-family:monospace;font-size:12px;",
+                     "background:#0f172a;color:#e5e7eb;padding:12px;border-radius:6px;">>,
+           body = ias_html:text(Profile)}.
 
 device_readiness(Device) ->
     DeviceId = maps:get(id, Device, undefined),
