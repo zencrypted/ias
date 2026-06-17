@@ -39,7 +39,8 @@ ovpn_provisioning_decision(#{kind := certificate} = Certificate) ->
     Status = ias_trust_status:effective_certificate_status(maps:get(id, Certificate, undefined)),
     Reasons = ovpn_provisioning_reasons(Certificate, Policy, Status),
     case Reasons of
-        [] -> allowed_enforcement(<<"OVPN Provisioning">>, <<"ovpn provisioning allowed">>);
+        [] -> allowed_enforcement(<<"OVPN Provisioning">>,
+                                  ovpn_provisioning_allowed_reason(Certificate, Policy));
         _ -> denied_enforcement(Reasons)
     end;
 ovpn_provisioning_decision(_Certificate) ->
@@ -123,6 +124,19 @@ provisioning_reason_applies(Certificate, <<"no security policy">>) ->
     not certificate_has_security_policy(Certificate);
 provisioning_reason_applies(_Certificate, _Reason) ->
     true.
+
+ovpn_provisioning_allowed_reason(Certificate, Policy) ->
+    case policy_device_lock(Policy) of
+        enabled ->
+            case has_device_binding(Certificate) of
+                true ->
+                    <<"device-bound profile allows OVPN provisioning">>;
+                false ->
+                    <<"device binding is required before OVPN provisioning">>
+            end;
+        _ ->
+            <<"standard profile allows OVPN provisioning without device binding">>
+    end.
 
 policy_required_reasons(Certificate, _Policy) ->
     case certificate_has_security_policy(Certificate) of

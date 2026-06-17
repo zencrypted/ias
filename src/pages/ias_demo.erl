@@ -120,7 +120,7 @@ rows(#{kind := certificate} = Object) ->
         {"Not After", maps:get(not_after, Object, undefined)},
         {"Requested CN", maps:get(requested_cn, Object, undefined)},
         {"Enrollment CN", maps:get(enrollment_cn, Object, undefined)},
-        {"Profile", maps:get(profile, Object, undefined)},
+        {"Key Profile", maps:get(profile, Object, undefined)},
         {"CMP Server", maps:get(cmp_server, Object, undefined)},
         {"CA Present", maps:get(ca_present, Object, false)},
         {"Client Certificate Present", maps:get(client_certificate_present, Object, false)},
@@ -183,7 +183,7 @@ rows(#{kind := cmp_enrollment_result} = Object) ->
         {"Not After", maps:get(not_after, Object, undefined)},
         {"Requested CN", maps:get(requested_cn, Object, undefined)},
         {"Enrollment CN", maps:get(enrollment_cn, Object, undefined)},
-        {"Profile", maps:get(profile, Object, undefined)},
+        {"Key Profile", maps:get(profile, Object, undefined)},
         {"CMP Server", maps:get(cmp_server, Object, undefined)},
         {"Issued Certificate", certificate_ref(issued_certificate_id(Object))}
     ] ++ created_row(Object);
@@ -648,7 +648,7 @@ ovpn_export_card(Preview) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("OVPN EXPORT PREVIEW")},
         key_value_table([
-            {"Authorization", maps:get(authorization, Preview, deny)},
+            {"OVPN Provisioning", maps:get(authorization, Preview, deny)},
             {"Provisioning Status", ovpn_provisioning_status(Preview)},
             {"Reason", ovpn_authorization_reason(Preview)},
             {"Remote Endpoint", ovpn_remote_endpoint(Preview)}
@@ -659,12 +659,12 @@ ovpn_export_card(Preview) ->
     ]}.
 
 ovpn_provisioning_status(#{authorization := allow}) ->
-    <<"ready for preview">>;
+    <<"ready for export preview">>;
 ovpn_provisioning_status(_Preview) ->
     <<"blocked">>.
 
-ovpn_authorization_reason(#{authorization := allow}) ->
-    <<"authorization allows OVPN provisioning">>;
+ovpn_authorization_reason(#{authorization := allow} = Preview) ->
+    maps:get(authorization_reason, Preview, <<"OVPN provisioning is allowed">>);
 ovpn_authorization_reason(Preview) ->
     maps:get(authorization_reason, Preview, <<"authorization denied">>).
 
@@ -688,7 +688,7 @@ ovpn_components_table(Preview) ->
 
 ovpn_components(Preview) ->
     [
-        {"Authorization", maps:get(authorization, Preview, deny),
+        {"OVPN Provisioning", maps:get(authorization, Preview, deny),
          ovpn_authorization_reason(Preview)},
         {"VPN Endpoint", ovpn_endpoint_status(Preview),
          ovpn_remote_endpoint(Preview)},
@@ -742,7 +742,7 @@ ovpn_configuration_section(Preview) ->
     #panel{body = [
         #h3{body = ias_html:text("Profile Generation Blocked")},
         #p{style = <<"color:#b45309;font-weight:600;">>,
-           body = ias_html:text("OVPN profile would not be provisioned because authorization is denied.")},
+           body = ias_html:text("OVPN profile would not be provisioned because OVPN provisioning is denied.")},
         key_value_table([
             {"Blocking Reason", ovpn_authorization_reason(Preview)}
         ])
