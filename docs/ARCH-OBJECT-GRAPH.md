@@ -494,6 +494,37 @@ Expected IAS outputs for VPN runtime:
 - authorization decision
 - denial reason when access is blocked
 
+### OVPN Provisioning Artifact
+
+OVPN is not only an import format. In the VPN provisioning model, OVPN is also
+the user-facing export artifact produced after IAS has resolved the security
+profile, certificate lifecycle, trust status, and authorization decision.
+
+```text
+User
+      ↓
+Security Profile
+      ↓
+Certificate
+      ↓
+Authorization Decision
+      ↓
+OVPN Export
+      ↓
+User
+```
+
+For the standard VPN profile, IAS may issue an OVPN profile to a user and let
+the user choose the device where it will be installed. For elevated security
+profiles, IAS may require device lock: the certificate is bound to a specific
+device before the OVPN profile is issued. Optional 2FA belongs to the same
+profile-controlled VPN access layer.
+
+This separates two workflows:
+
+- OVPN Import: legacy profile analysis, migration, onboarding, or demo.
+- OVPN Export: primary VPN provisioning workflow for IAS-managed users.
+
 Private key ownership rule:
 
 ```text

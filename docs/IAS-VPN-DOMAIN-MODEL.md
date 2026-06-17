@@ -56,16 +56,67 @@ Device -> VPN Service
 
 User/Profile -> Device
 
-## Future Import Flow
+## OVPN Roles
 
+OVPN profiles have two distinct roles in the IAS/VPN model.
+
+### Import Path
+
+Existing OpenVPN profiles may be imported for analysis, migration, onboarding,
+or demo purposes.
+
+```text
 OVPN
 -> Extracted Config
 -> IAS Device Preview
 -> IAS Certificate Preview
 -> VPN Service Preview
 -> Import Plan Preview
+```
 
-Future controlled import may create Device, Certificate and VPN Service objects from the approved import plan.
+Future controlled import may create Device, Certificate and VPN Service
+objects from the approved import plan.
+
+### Export Path
+
+The expected primary provisioning workflow is the reverse direction: IAS
+issues or coordinates the certificate lifecycle, evaluates authorization, and
+then produces an OVPN profile as the user-facing VPN provisioning artifact.
+
+```text
+User
+-> Security Profile
+-> Certificate
+-> Authorization Decision
+-> OVPN Export
+-> User
+```
+
+In the standard VPN profile, the user receives an OVPN profile and chooses the
+client device where it will be installed. Device binding is not mandatory in
+that profile.
+
+```text
+User
+-> Certificate
+-> OVPN Profile
+-> User-selected Device
+```
+
+For elevated security profiles, IAS may issue or approve a certificate only
+for a specific device. In that case the OVPN profile is still the delivery
+artifact, but the certificate is constrained by device binding.
+
+```text
+User
+-> Certificate
+-> Device Binding
+-> OVPN Profile
+-> Bound Device
+```
+
+Two-factor authentication is also part of the VPN domain model. It may be
+optional in early deployments and required by elevated profiles later.
 
 ## Planned VPN Certificate Provisioning Model
 
