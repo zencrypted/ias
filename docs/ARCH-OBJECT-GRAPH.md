@@ -520,6 +520,13 @@ profiles, IAS may require device lock: the certificate is bound to a specific
 device before the OVPN profile is issued. Optional 2FA belongs to the same
 profile-controlled VPN access layer.
 
+OVPN provisioning authorization is separate from VPN connection enforcement.
+Connection enforcement answers whether an already configured device may connect
+to VPN. OVPN provisioning answers whether IAS may issue an OVPN profile for a
+certificate or user. Standard profiles may allow OVPN provisioning without a
+current device binding; high-security profiles may require device binding before
+provisioning.
+
 This separates two workflows:
 
 - OVPN Import: legacy profile analysis, migration, onboarding, or demo.

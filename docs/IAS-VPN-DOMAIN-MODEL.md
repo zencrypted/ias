@@ -98,6 +98,22 @@ security profile, and authorization state. It does not write `.ovpn` files,
 download profiles, embed certificate bodies, embed private keys, or mutate
 runtime state.
 
+Stage 20B separates OVPN provisioning authorization from VPN connection
+enforcement. These are related but different decisions:
+
+```text
+Can this device connect to VPN?
+```
+
+is not the same as:
+
+```text
+Can IAS provision an OVPN profile for this certificate or user?
+```
+
+The export path therefore evaluates an OVPN provisioning decision instead of
+reusing the device VPN connection enforcement result directly.
+
 OVPN Import and OVPN Export have different roles:
 
 - OVPN Import is a migration, onboarding, and legacy profile analysis workflow.
@@ -110,6 +126,11 @@ exported by IAS.
 In the standard VPN profile, the user receives an OVPN profile and chooses the
 client device where it will be installed. Device binding is not mandatory in
 that profile.
+
+In the high-security VPN profile, device binding is mandatory. IAS may deny OVPN
+provisioning until the certificate is bound to an approved device. This allows
+standard VPN users to receive a portable OVPN profile while elevated security
+profiles keep certificate use locked to a specific device.
 
 ```text
 User

@@ -1,6 +1,7 @@
 -module(ias_ovpn_export).
 -export([certificate_preview/1,
-         device_preview/1]).
+         device_preview/1,
+         ovpn_provisioning_decision/1]).
 
 device_preview(DeviceId) ->
     case ias_demo_store:get(DeviceId) of
@@ -17,21 +18,32 @@ device_preview(DeviceId) ->
 certificate_preview(CertificateId) ->
     case ias_demo_store:get(CertificateId) of
         {ok, #{kind := certificate} = Certificate} ->
-            case linked_device(Certificate) of
-                not_found ->
-                    Policy = ias_certificate_detail:security_policy(Certificate),
-                    build_preview(not_found, Certificate, not_found, Policy,
-                                  denied_enforcement(<<"no device binding">>));
-                Device ->
-                    Service = linked_service(Device),
-                    Policy = ias_certificate_detail:security_policy(Certificate),
-                    Enforcement = ias_authorization_enforcement:device_enforcement(
-                                    maps:get(id, Device, undefined)),
-                    build_preview(Device, Certificate, Service, Policy, Enforcement)
-            end;
+            Device = linked_device(Certificate),
+            Service = linked_service(Device),
+            Policy = ias_certificate_detail:security_policy(Certificate),
+            Enforcement = ovpn_provisioning_decision(Certificate),
+            build_preview(Device, Certificate, Service, Policy, Enforcement);
         _ ->
             denied_preview(<<"certificate not found">>)
     end.
+
+ovpn_provisioning_decision(CertificateId) when is_binary(CertificateId); is_atom(CertificateId) ->
+    case ias_demo_store:get(CertificateId) of
+        {ok, #{kind := certificate} = Certificate} ->
+            ovpn_provisioning_decision(Certificate);
+        _ ->
+            denied_enforcement(<<"certificate not found">>)
+    end;
+ovpn_provisioning_decision(#{kind := certificate} = Certificate) ->
+    Policy = ias_certificate_detail:security_policy(Certificate),
+    Status = ias_trust_status:effective_certificate_status(maps:get(id, Certificate, undefined)),
+    Reasons = ovpn_provisioning_reasons(Certificate, Policy, Status),
+    case Reasons of
+        [] -> allowed_enforcement(<<"OVPN Provisioning">>, <<"ovpn provisioning allowed">>);
+        _ -> denied_enforcement(Reasons)
+    end;
+ovpn_provisioning_decision(_Certificate) ->
+    denied_enforcement(<<"certificate not found">>).
 
 build_preview(Device, Certificate, Service, Policy, Enforcement) ->
     {RemoteHost, RemotePort} = remote_endpoint(Service),
@@ -55,9 +67,112 @@ denied_preview(Reason) ->
     build_preview(not_found, not_found, not_found, ias_security_profile:default_policy(),
                   denied_enforcement(Reason)).
 
+allowed_enforcement(Operation, Reason) ->
+    #{operation => Operation,
+      action => ovpn_provision,
+      result => allow,
+      reason => ias_html:text(Reason),
+      reasons => [ias_html:text(Reason)]}.
+
+denied_enforcement(Reasons) when is_list(Reasons) ->
+    TextReasons = [ias_html:text(Reason) || Reason <- Reasons],
+    #{operation => <<"OVPN Provisioning">>,
+      action => ovpn_provision,
+      result => deny,
+      reason => reason_text(TextReasons),
+      reasons => TextReasons};
 denied_enforcement(Reason) ->
-    #{result => deny,
-      reason => ias_html:text(Reason)}.
+    denied_enforcement([Reason]).
+
+reason_text([]) ->
+    <<"authorization denied">>;
+reason_text([Reason]) ->
+    ias_html:text(Reason);
+reason_text(Reasons) ->
+    ias_html:join(join_reasons(Reasons, [])).
+
+join_reasons([], Acc) ->
+    lists:reverse(Acc);
+join_reasons([Reason | Rest], []) ->
+    join_reasons(Rest, [ias_html:text(Reason)]);
+join_reasons([Reason | Rest], Acc) ->
+    join_reasons(Rest, [ias_html:text(Reason), <<"; ">> | Acc]).
+
+ovpn_provisioning_reasons(Certificate, Policy, Status) ->
+    TrustReasons = [ias_html:text(maps:get(text, Reason, undefined))
+                    || Reason <- maps:get(reasons, Status, [])],
+    unique_reasons(
+      provisioning_trust_reasons(Certificate, TrustReasons) ++
+      policy_required_reasons(Certificate, Policy) ++
+      device_binding_required_reasons(Certificate, Policy)).
+
+provisioning_trust_reasons(Certificate, Reasons) ->
+    [Reason || Reason <- Reasons,
+               provisioning_reason_applies(Certificate, Reason)].
+
+provisioning_reason_applies(_Certificate, <<"no device binding">>) ->
+    false;
+provisioning_reason_applies(Certificate, <<"no security policy">>) ->
+    not certificate_has_security_policy(Certificate);
+provisioning_reason_applies(_Certificate, _Reason) ->
+    true.
+
+policy_required_reasons(Certificate, _Policy) ->
+    case certificate_has_security_policy(Certificate) of
+        true -> [];
+        false -> [<<"no security policy">>]
+    end.
+
+device_binding_required_reasons(Certificate, Policy) ->
+    case policy_device_lock(Policy) of
+        enabled ->
+            case has_device_binding(Certificate) of
+                true -> [];
+                false -> [<<"device binding required">>]
+            end;
+        _ ->
+            []
+    end.
+
+certificate_has_security_policy(Certificate) ->
+    case source_profile_exists(Certificate) of
+        true -> true;
+        false -> linked_security_policy(Certificate) =/= not_found
+    end.
+
+source_profile_exists(Certificate) ->
+    ProfileId = maps:get(profile_id, Certificate, maps:get(profile, Certificate, undefined)),
+    case ias_security_profile:profile(ProfileId) of
+        {ok, _Profile} -> true;
+        not_found -> false
+    end.
+
+linked_security_policy(Certificate) ->
+    CertificateId = maps:get(id, Certificate, undefined),
+    case [maps:get(target_id, Relationship, undefined)
+          || Relationship <- ias_demo_store:relationships(),
+             maps:get(relation_type, Relationship, undefined) =:= uses_security_policy,
+             maps:get(source_kind, Relationship, undefined) =:= certificate,
+             maps:get(source_id, Relationship, undefined) =:= CertificateId,
+             maps:get(target_kind, Relationship, undefined) =:= security_policy] of
+        [PolicyId | _] -> PolicyId;
+        [] -> not_found
+    end.
+
+has_device_binding(Certificate) ->
+    linked_device(Certificate) =/= not_found.
+
+unique_reasons(Reasons) ->
+    unique_reasons(Reasons, [], []).
+
+unique_reasons([], _Seen, Acc) ->
+    lists:reverse(Acc);
+unique_reasons([Reason | Rest], Seen, Acc) ->
+    Text = ias_html:text(Reason),
+    case lists:member(Text, Seen) of
+        true -> unique_reasons(Rest, Seen, Acc);
+        false -> unique_reasons(Rest, [Text | Seen], [Text | Acc])
+    end.
 
 current_certificate(Device) ->
     maps:get(current_certificate, ias_certificate_role:device_status(Device), not_found).
