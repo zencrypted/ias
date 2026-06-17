@@ -649,11 +649,90 @@ ovpn_export_card(Preview) ->
         #h3{body = ias_html:text("OVPN EXPORT PREVIEW")},
         key_value_table([
             {"Authorization", maps:get(authorization, Preview, deny)},
-            {"Device Lock", maps:get(device_lock, Preview, disabled)},
-            {"2FA", maps:get(two_factor, Preview, optional)},
-            {"Generated Profile", ovpn_profile_preview(Preview)}
-        ])
+            {"Provisioning Status", ovpn_provisioning_status(Preview)},
+            {"Reason", ovpn_authorization_reason(Preview)},
+            {"Remote Endpoint", ovpn_remote_endpoint(Preview)}
+        ]),
+        #h3{body = ias_html:text("Profile Components")},
+        ovpn_components_table(Preview),
+        #h3{body = ias_html:text("Configuration Skeleton")},
+        ovpn_profile_preview(Preview)
     ]}.
+
+ovpn_provisioning_status(#{authorization := allow}) ->
+    <<"ready for preview">>;
+ovpn_provisioning_status(_Preview) ->
+    <<"blocked">>.
+
+ovpn_authorization_reason(#{authorization := allow}) ->
+    <<"authorization allows OVPN provisioning">>;
+ovpn_authorization_reason(Preview) ->
+    maps:get(authorization_reason, Preview, <<"authorization denied">>).
+
+ovpn_remote_endpoint(Preview) ->
+    Host = maps:get(remote_host, Preview, <<"not found">>),
+    Port = maps:get(remote_port, Preview, <<"not found">>),
+    ias_html:join([ias_html:text(Host), <<":">>, ias_html:text(Port)]).
+
+ovpn_components_table(Preview) ->
+    Header = #tr{cells = [
+        #th{body = ias_html:text("Component")},
+        #th{body = ias_html:text("Status")},
+        #th{body = ias_html:text("Notes")}
+    ]},
+    Rows = [ovpn_component_row(Component, Status, Notes)
+            || {Component, Status, Notes} <- ovpn_components(Preview)],
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               body = #tbody{body = [Header | Rows]}}
+    ]}.
+
+ovpn_components(Preview) ->
+    [
+        {"Authorization", maps:get(authorization, Preview, deny),
+         ovpn_authorization_reason(Preview)},
+        {"VPN Endpoint", ovpn_endpoint_status(Preview),
+         ovpn_remote_endpoint(Preview)},
+        {"Certificate", maps:get(certificate_status, Preview, unknown),
+         ovpn_certificate_note(Preview)},
+        {"Private Key", <<"device-owned">>,
+         <<"not exported by IAS">>},
+        {"Device Lock", maps:get(device_lock, Preview, disabled),
+         ovpn_device_lock_note(Preview)},
+        {"2FA", maps:get(two_factor, Preview, optional),
+         ovpn_two_factor_note(Preview)}
+    ].
+
+ovpn_component_row(Component, Status, Notes) ->
+    #tr{cells = [
+        #td{body = ias_html:text(Component)},
+        #td{body = ias_html:text(Status)},
+        #td{body = ias_html:text(Notes)}
+    ]}.
+
+ovpn_endpoint_status(Preview) ->
+    case {maps:get(remote_host, Preview, <<"not found">>),
+          maps:get(remote_port, Preview, <<"not found">>)} of
+        {<<"not found">>, _} -> missing;
+        {_, <<"not found">>} -> missing;
+        _ -> available
+    end.
+
+ovpn_certificate_note(Preview) ->
+    ias_html:join([<<"certificate status: ">>,
+                   ias_html:text(maps:get(certificate_status, Preview, unknown))]).
+
+ovpn_device_lock_note(#{device_lock := enabled}) ->
+    <<"device binding is required by profile">>;
+ovpn_device_lock_note(_Preview) ->
+    <<"user may select device">>.
+
+ovpn_two_factor_note(#{two_factor := required}) ->
+    <<"VPN login requires 2FA">>;
+ovpn_two_factor_note(#{two_factor := optional}) ->
+    <<"2FA is optional">>;
+ovpn_two_factor_note(_Preview) ->
+    <<"2FA is disabled">>.
 
 ovpn_profile_preview(#{authorization := deny} = Preview) ->
     #panel{body = [
@@ -666,7 +745,8 @@ ovpn_profile_preview(Preview) ->
 
 ovpn_profile_block(Profile) ->
     #panel{style = <<"white-space:pre-wrap;font-family:monospace;font-size:12px;",
-                     "background:#0f172a;color:#e5e7eb;padding:12px;border-radius:6px;">>,
+                     "background:#0f172a;color:#e5e7eb;padding:12px;border-radius:6px;",
+                     "max-width:640px;overflow:auto;">>,
            body = ias_html:text(Profile)}.
 
 device_readiness(Device) ->
