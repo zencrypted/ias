@@ -30,8 +30,9 @@ event(import_cert_demo) ->
         not_found ->
             nitro:update(enroll_import_result, certificate_import_not_found())
     end;
-event({issue_enrollment_certificate, CertificateId}) ->
-    Result = issue_enrollment_certificate(CertificateId),
+event({issue_enrollment_certificate, CertificateId, UserSelectId}) ->
+    UserId = selected_issue_user(nitro:q(UserSelectId)),
+    Result = issue_enrollment_certificate(CertificateId, UserId),
     nitro:update(enroll_lifecycle_result_id(CertificateId),
                  enrollment_lifecycle_result(CertificateId, Result));
 event(_) ->
@@ -247,6 +248,8 @@ enrollment_lifecycle_body(Certificate) ->
                 #h3{body = ias_html:text("Certificate Lifecycle")},
                 key_value_table([
                     {"Status", <<"Issued">>},
+                    {"Issued To", maps:get(user_name, IssuedCertificate,
+                                           maps:get(user, IssuedCertificate, undefined))},
                     {"Issued Certificate", certificate_link(IssuedCertificate)}
                 ])
             ];
@@ -256,21 +259,67 @@ enrollment_lifecycle_body(Certificate) ->
                 key_value_table([
                     {"Status", <<"Pending">>}
                 ]),
-                #link{id = enroll_lifecycle_issue_button,
-                      class = [button, sgreen],
-                      body = ias_html:text("Issue Certificate"),
-                      postback = {issue_enrollment_certificate, CertificateId}}
+                issue_to_selector(CertificateId),
+                issue_lifecycle_controls(CertificateId)
             ]
     end.
 
-issue_enrollment_certificate(CertificateId) ->
+issue_enrollment_certificate(CertificateId, UserId) ->
     case ias_demo_store:get(CertificateId) of
         {ok, Certificate} ->
             SubjectCN = lifecycle_subject(Certificate),
-            ias_certificate_issue_demo:issue_from_certificate(CertificateId, alice,
+            ias_certificate_issue_demo:issue_from_certificate(CertificateId, UserId,
                                                               SubjectCN, ias_demo_data:profiles());
         not_found ->
             {error, source_certificate_not_found}
+    end.
+
+issue_to_selector(CertificateId) ->
+    SelectId = enroll_lifecycle_user_id(CertificateId),
+    #panel{style = <<"margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
+           body = [
+               #span{body = ias_html:text("Issue To: ")},
+               #select{id = SelectId,
+                       body = issue_user_options()}
+           ]}.
+
+issue_lifecycle_controls(CertificateId) ->
+    SelectId = enroll_lifecycle_user_id(CertificateId),
+    #panel{style = <<"margin-top:10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
+           body = [
+               #link{id = enroll_lifecycle_issue_button_id(CertificateId),
+                     class = [button, sgreen],
+                     body = ias_html:text("Issue Certificate"),
+                     source = [SelectId],
+                     postback = {issue_enrollment_certificate, CertificateId, SelectId}}
+           ]}.
+
+enroll_lifecycle_user_id(CertificateId) ->
+    ias_html:join([<<"enroll_issue_user_">>, CertificateId]).
+
+enroll_lifecycle_issue_button_id(CertificateId) ->
+    ias_html:join([<<"enroll_issue_button_">>, CertificateId]).
+
+issue_user_options() ->
+    [issue_user_option(User) || User <- ias_demo_data:users()].
+
+issue_user_option(User) ->
+    UserId = maps:get(id, User),
+    #option{value = ias_html:text(UserId),
+            selected = UserId =:= alice,
+            body = ias_html:text(maps:get(name, User, UserId))}.
+
+selected_issue_user(undefined) ->
+    alice;
+selected_issue_user(<<>>) ->
+    alice;
+selected_issue_user(Value) ->
+    Text = ias_html:text(Value),
+    case [UserId || User <- ias_demo_data:users(),
+                    UserId <- [maps:get(id, User, undefined)],
+                    ias_html:text(UserId) =:= Text] of
+        [UserId | _] -> UserId;
+        [] -> alice
     end.
 
 lifecycle_subject(Certificate) ->
