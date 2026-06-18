@@ -538,23 +538,62 @@ authorization_decision_preview(#{kind := device} = Object) ->
                                                           access_vpn),
     authorization_decision_card(access_vpn, Decision);
 authorization_decision_preview(#{kind := certificate} = Object) ->
-    Decision = ias_authorization_decision:certificate_decision(maps:get(id, Object, undefined),
-                                                               use_ias),
-    authorization_decision_card(use_ias, Decision);
+    case role_authorization_applicable(Object) of
+        true ->
+            Decision = ias_authorization_decision:certificate_decision(maps:get(id, Object, undefined),
+                                                                       use_ias),
+            authorization_decision_card(use_ias, Decision);
+        false ->
+            certificate_role_authorization_not_applicable("ACTION AUTHORIZATION PREVIEW")
+    end;
 authorization_decision_preview(_Object) ->
     [].
 
 authorization_matrix_preview(#{kind := certificate} = Object) ->
-    CertificateId = maps:get(id, Object, undefined),
-    Decisions = [ias_authorization_decision:certificate_decision(CertificateId, Action)
-                 || Action <- certificate_authorization_actions()],
-    #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("ROLE AUTHORIZATION MATRIX")},
-        #p{body = ias_html:text("Checks which administrative actions are allowed by the certificate role or security profile.")},
-        authorization_matrix_table(Decisions)
-    ]};
+    case role_authorization_applicable(Object) of
+        true ->
+            CertificateId = maps:get(id, Object, undefined),
+            Decisions = [ias_authorization_decision:certificate_decision(CertificateId, Action)
+                         || Action <- certificate_authorization_actions()],
+            #panel{class = <<"ias-status-card">>, body = [
+                #h3{body = ias_html:text("ROLE AUTHORIZATION MATRIX")},
+                #p{body = ias_html:text("Checks which administrative actions are allowed by the certificate role or security profile.")},
+                authorization_matrix_table(Decisions)
+            ]};
+        false ->
+            certificate_role_authorization_not_applicable("ROLE AUTHORIZATION MATRIX")
+    end;
 authorization_matrix_preview(_Object) ->
     [].
+
+
+role_authorization_applicable(#{kind := certificate} = Certificate) ->
+    case maps:get(profile_id, Certificate, undefined) of
+        administrator -> true;
+        <<"administrator">> -> true;
+        default_user -> true;
+        <<"default_user">> -> true;
+        _ ->
+            case maps:get(profile, Certificate, undefined) of
+                administrator -> true;
+                <<"administrator">> -> true;
+                default_user -> true;
+                <<"default_user">> -> true;
+                _ -> false
+            end
+    end;
+role_authorization_applicable(_) ->
+    false.
+
+certificate_role_authorization_not_applicable(Title) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text(Title)},
+        #p{body = ias_html:text("Not applicable for this certificate.")},
+        key_value_table([
+            {"Status", <<"not applicable">>},
+            {"Reason", <<"this certificate only has a crypto/key profile; issue it to a user or security profile to evaluate role authorization">>}
+        ])
+    ]}.
 
 certificate_authorization_actions() ->
     [use_ias, issue_certificate, revoke_certificate].
@@ -610,13 +649,18 @@ authorization_enforcement_preview(#{kind := device} = Object) ->
         ])
     ]};
 authorization_enforcement_preview(#{kind := certificate} = Object) ->
-    Enforcements = ias_authorization_enforcement:certificate_enforcement(
-                     maps:get(id, Object, undefined)),
-    #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("OPERATION ENFORCEMENT PREVIEW")},
-        #p{body = ias_html:text("Maps authorization decisions to operation-level allow or deny outcomes.")},
-        enforcement_table(Enforcements)
-    ]};
+    case role_authorization_applicable(Object) of
+        true ->
+            Enforcements = ias_authorization_enforcement:certificate_enforcement(
+                             maps:get(id, Object, undefined)),
+            #panel{class = <<"ias-status-card">>, body = [
+                #h3{body = ias_html:text("OPERATION ENFORCEMENT PREVIEW")},
+                #p{body = ias_html:text("Maps authorization decisions to operation-level allow or deny outcomes.")},
+                enforcement_table(Enforcements)
+            ]};
+        false ->
+            certificate_role_authorization_not_applicable("OPERATION ENFORCEMENT PREVIEW")
+    end;
 authorization_enforcement_preview(_Object) ->
     [].
 
