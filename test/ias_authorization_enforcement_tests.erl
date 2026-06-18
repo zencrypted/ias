@@ -68,7 +68,7 @@ demo_pages_render_authorization_enforcement_preview_test() ->
         ias_demo:authorization_enforcement_preview(Certificate))),
 
     ?assertMatch({_, _}, binary:match(DeviceHtml,
-                                      <<"AUTHORIZATION ENFORCEMENT PREVIEW">>)),
+                                      <<"OPERATION ENFORCEMENT PREVIEW">>)),
     ?assertMatch({_, _}, binary:match(DeviceHtml, <<"VPN Connection">>)),
     ?assertMatch({_, _}, binary:match(CertificateHtml, <<"IAS Access">>)),
     ?assertMatch({_, _}, binary:match(CertificateHtml, <<"Certificate Issuance">>)),

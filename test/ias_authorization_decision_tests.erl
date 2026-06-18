@@ -150,7 +150,7 @@ demo_pages_render_authorization_decision_preview_test() ->
 
     Html = iolist_to_binary(nitro:render(ias_demo:authorization_decision_preview(Device))),
 
-    ?assertMatch({_, _}, binary:match(Html, <<"AUTHORIZATION DECISION PREVIEW">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"ACTION AUTHORIZATION PREVIEW">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"access_vpn">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"deny">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"no vpn service">>)).
