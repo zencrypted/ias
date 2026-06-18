@@ -588,11 +588,26 @@ role_authorization_applicable(_) ->
 certificate_role_authorization_not_applicable(Title) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text(Title)},
-        #p{body = ias_html:text("Not applicable for this certificate.")},
+        #p{body = ias_html:text("Not applicable for this certificate yet.")},
         key_value_table([
             {"Status", <<"not applicable">>},
-            {"Reason", <<"this certificate only has a crypto/key profile; issue it to a user or security profile to evaluate role authorization">>}
-        ])
+            {"Reason", <<"this certificate only has a crypto/key profile and has not been issued to a user/security profile">>}
+        ]),
+        certificate_role_next_step()
+    ]}.
+
+certificate_role_next_step() ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("NEXT STEP")},
+        #p{body = ias_html:text("This CA/CMP enrollment certificate is cryptographically valid, but it has no IAM role context yet.")},
+        #ul{body = [
+            #li{body = ias_html:text("Issue this certificate to a user.")},
+            #li{body = ias_html:text("Select the user's security profile during issuance.")},
+            #li{body = ias_html:text("Open the issued certificate to evaluate role authorization and operation enforcement.")}
+        ]},
+        #link{url = <<"/app/issue.htm">>,
+              style = <<"display:inline-block;margin-top:8px;padding:7px 10px;border:1px solid #93c5fd;border-radius:5px;background:#ffffff;color:#1d4ed8;text-decoration:none;font-size:12px;font-weight:600;">>,
+              body = ias_html:text("Issue to User")}
     ]}.
 
 certificate_authorization_actions() ->
