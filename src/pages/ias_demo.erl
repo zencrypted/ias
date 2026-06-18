@@ -108,6 +108,8 @@ rows(#{kind := device} = Object) ->
 rows(#{kind := certificate} = Object) ->
     Metadata = ias_certificate_detail:metadata(Object),
     common_rows(Object) ++ [
+        {"Certificate Type", ias_certificate_detail:certificate_class(Object)},
+        {"Certificate Type Note", ias_certificate_detail:certificate_class_note(Object)},
         {"Issued User", user_ref(maps:get(issued_user_id, Metadata, undefined))},
         {"Source Security Profile", profile_ref(maps:get(source_security_profile, Metadata, undefined))},
         {"Issued From Enrollment", enrollment_ref(issued_from_enrollment_id(Object))},

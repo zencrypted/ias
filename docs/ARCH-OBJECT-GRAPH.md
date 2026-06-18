@@ -122,6 +122,57 @@ a concrete enrollment certificate object.
 
 ---
 
+## Certificate Classes
+
+IAS distinguishes three certificate classes in the runtime object graph. The
+class is derived from the certificate source and is displayed on certificate
+object pages so operators can tell which lifecycle rules apply.
+
+### Imported OVPN Certificate
+
+```text
+OVPN Profile
+      ↓
+OVPN Import
+      ↓
+Imported OVPN Certificate
+```
+
+An imported OVPN certificate is a migration, onboarding, or endpoint discovery
+artifact. It helps IAS understand an existing OpenVPN profile, but it is not the
+primary IAS-managed identity certificate.
+
+### Enrollment Certificate
+
+```text
+CA/CMP Enrollment
+      ↓
+Enrollment Certificate
+```
+
+An enrollment certificate is the artifact returned by the CA/CMP enrollment
+flow. It proves that CA signing succeeded, but it does not yet carry IAS user,
+role, service, or security-profile context. Role authorization and operation
+enforcement are not applicable until the certificate is issued to a user or
+security profile.
+
+### Issued Identity Certificate
+
+```text
+Enrollment Certificate
+      ↓
+Issue To User / Security Profile
+      ↓
+Issued Identity Certificate
+```
+
+An issued identity certificate is the IAM-facing certificate used by IAS for
+role authorization, operation enforcement, certificate replacement, revocation,
+OVPN provisioning, and service access decisions. It may be linked to a device,
+VPN service, security policy, verification records, and lifecycle records.
+
+---
+
 ## Runtime Flows
 
 ### OVPN Import Flow
