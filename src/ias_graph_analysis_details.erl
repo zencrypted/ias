@@ -215,7 +215,7 @@ failed_verification_detail(Warning) ->
                         object_link(certificate, maps:get(certificate_id, Warning, undefined))]},
             #li{body = ias_html:join([<<"Status: ">>,
                                       maps:get(verification_status, Warning, undefined)])},
-            #li{body = ias_html:join([<<"Authorization Decision: ">>,
+            #li{body = ias_html:join([<<"Service Authorization Result: ">>,
                                       maps:get(authorization_status, Warning, undefined)])}
         ]}
     ]}.

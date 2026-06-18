@@ -24,7 +24,7 @@ content() ->
     Certificates = verification_certificates(),
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Certificate Verification")},
-        #p{body = ias_html:text("Verify a certificate, resolve its authorization claims and evaluate service access.")},
+        #p{body = ias_html:text("Verify cryptographic certificate trust, resolve identity claims and evaluate service access separately.")},
         selector(Certificates),
         #panel{id = <<"bulk_verify_result">>},
         #panel{id = <<"verify_previews">>,
@@ -93,7 +93,8 @@ preview(Certificate) ->
                    {"Attributes", ias_html:join_csv(maps:get(attributes, Claims, []))},
                    {"Trust Level", maps:get(trust_level, Claims, undefined)}
                ]),
-               #h3{body = ias_html:text("Authorization Check")},
+               #h3{body = ias_html:text("Service Authorization Check")},
+               #p{body = ias_html:text("Checks whether the verified certificate is permitted to access each service.")},
                authorization_table(Certificate),
                #h3{body = ias_html:text("Consistency Check")},
                key_value_table([
@@ -121,7 +122,7 @@ verify_result({ok, Verification}) ->
                    {"Verification", object_link(verification, Id)},
                    {"Certificate", object_link(certificate, CertificateId)},
                    {"Status", maps:get(verification_status, Verification, undefined)},
-                   {"Authorization Decision", maps:get(authorization_status, Verification, undefined)}
+                   {"Service Authorization Result", maps:get(authorization_status, Verification, undefined)}
                ])
            ]};
 verify_result({error, Reason}) ->

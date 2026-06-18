@@ -157,7 +157,7 @@ rows(#{kind := verification} = Object) ->
         {"Certificate", object_ref(certificate, maps:get(certificate_id, Object, undefined))},
         {"Certificate Subject", maps:get(certificate_subject, Object, undefined)},
         {"Status", maps:get(verification_status, Object, undefined)},
-        {"Authorization Decision", maps:get(authorization_status, Object, undefined)},
+        {"Service Authorization Result", maps:get(authorization_status, Object, undefined)},
         {"Resolved Profile", maps:get(resolved_profile, Object, undefined)},
         {"Resolved Policy", policy_ref(maps:get(resolved_policy, Object, undefined))},
         {"Trusted", maps:get(trusted, Object, false)},
@@ -549,7 +549,8 @@ authorization_matrix_preview(#{kind := certificate} = Object) ->
     Decisions = [ias_authorization_decision:certificate_decision(CertificateId, Action)
                  || Action <- certificate_authorization_actions()],
     #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("AUTHORIZATION MATRIX")},
+        #h3{body = ias_html:text("ROLE AUTHORIZATION MATRIX")},
+        #p{body = ias_html:text("Checks which administrative actions are allowed by the certificate role or security profile.")},
         authorization_matrix_table(Decisions)
     ]};
 authorization_matrix_preview(_Object) ->
@@ -579,7 +580,8 @@ authorization_matrix_row(Decision) ->
 
 authorization_decision_card(Action, Decision) ->
     #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("AUTHORIZATION DECISION PREVIEW")},
+        #h3{body = ias_html:text("ACTION AUTHORIZATION PREVIEW")},
+        #p{body = ias_html:text("Checks whether this subject may perform the selected action.")},
         key_value_table([
             {"Action", Action},
             {"Decision", maps:get(decision, Decision, deny)},
@@ -599,7 +601,8 @@ authorization_enforcement_preview(#{kind := device} = Object) ->
     Enforcement = ias_authorization_enforcement:device_enforcement(
                     maps:get(id, Object, undefined)),
     #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("AUTHORIZATION ENFORCEMENT PREVIEW")},
+        #h3{body = ias_html:text("OPERATION ENFORCEMENT PREVIEW")},
+        #p{body = ias_html:text("Maps authorization decisions to operation-level allow or deny outcomes.")},
         key_value_table([
             {"Operation", maps:get(operation, Enforcement, undefined)},
             {"Result", maps:get(result, Enforcement, deny)},
@@ -610,7 +613,8 @@ authorization_enforcement_preview(#{kind := certificate} = Object) ->
     Enforcements = ias_authorization_enforcement:certificate_enforcement(
                      maps:get(id, Object, undefined)),
     #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("AUTHORIZATION ENFORCEMENT PREVIEW")},
+        #h3{body = ias_html:text("OPERATION ENFORCEMENT PREVIEW")},
+        #p{body = ias_html:text("Maps authorization decisions to operation-level allow or deny outcomes.")},
         enforcement_table(Enforcements)
     ]};
 authorization_enforcement_preview(_Object) ->
