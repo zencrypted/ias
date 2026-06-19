@@ -546,7 +546,7 @@ authorization_decision_preview(#{kind := certificate} = Object) ->
                                                                        use_ias),
             authorization_decision_card(use_ias, Decision);
         false ->
-            certificate_role_authorization_not_applicable("ACTION AUTHORIZATION PREVIEW")
+            certificate_role_authorization_not_applicable("ACTION AUTHORIZATION PREVIEW", Object)
     end;
 authorization_decision_preview(_Object) ->
     [].
@@ -563,7 +563,7 @@ authorization_matrix_preview(#{kind := certificate} = Object) ->
                 authorization_matrix_table(Decisions)
             ]};
         false ->
-            certificate_role_authorization_not_applicable("ROLE AUTHORIZATION MATRIX")
+            certificate_role_authorization_not_applicable("ROLE AUTHORIZATION MATRIX", Object)
     end;
 authorization_matrix_preview(_Object) ->
     [].
@@ -587,18 +587,54 @@ role_authorization_applicable(#{kind := certificate} = Certificate) ->
 role_authorization_applicable(_) ->
     false.
 
-certificate_role_authorization_not_applicable(Title) ->
+certificate_role_authorization_not_applicable(Title, Certificate) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text(Title)},
-        #p{body = ias_html:text("Not applicable for this certificate yet.")},
+        #p{body = ias_html:text(role_authorization_intro(Certificate))},
         key_value_table([
             {"Status", <<"not applicable">>},
-            {"Reason", <<"this certificate only has a crypto/key profile and has not been issued to a user/security profile">>}
+            {"Reason", role_authorization_reason(Certificate)}
         ]),
-        certificate_role_next_step()
+        certificate_role_next_step(Certificate)
     ]}.
 
-certificate_role_next_step() ->
+role_authorization_intro(Certificate) ->
+    case {ias_certificate_detail:certificate_class(Certificate), issued_certificate_id(Certificate)} of
+        {<<"Enrollment Certificate">>, not_found} ->
+            <<"This CA/CMP enrollment certificate is not an IAM identity certificate yet.">>;
+        {<<"Enrollment Certificate">>, _IssuedCertificateId} ->
+            <<"This CA/CMP enrollment certificate has already produced an issued identity certificate.">>;
+        {<<"Imported OVPN Certificate">>, _} ->
+            <<"Imported OVPN certificates are migration artifacts; role authorization is evaluated on issued identity certificates.">>;
+        _ ->
+            <<"Not applicable for this certificate yet.">>
+    end.
+
+role_authorization_reason(Certificate) ->
+    case {ias_certificate_detail:certificate_class(Certificate), issued_certificate_id(Certificate)} of
+        {<<"Enrollment Certificate">>, not_found} ->
+            <<"enrollment certificate has no IAM role context; issue it to a user/security profile first">>;
+        {<<"Enrollment Certificate">>, _IssuedCertificateId} ->
+            <<"role authorization applies to the issued identity certificate, not to the enrollment artifact">>;
+        {<<"Imported OVPN Certificate">>, _} ->
+            <<"imported OVPN artifact has no IAS user/security profile role context">>;
+        _ ->
+            <<"this certificate only has a crypto/key profile and has not been issued to a user/security profile">>
+    end.
+
+certificate_role_next_step(Certificate) ->
+    case {ias_certificate_detail:certificate_class(Certificate), issued_certificate_id(Certificate)} of
+        {<<"Enrollment Certificate">>, not_found} ->
+            enrollment_issue_next_step();
+        {<<"Enrollment Certificate">>, IssuedCertificateId} ->
+            already_issued_next_step(IssuedCertificateId);
+        {<<"Imported OVPN Certificate">>, _} ->
+            imported_certificate_next_step();
+        _ ->
+            []
+    end.
+
+enrollment_issue_next_step() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("NEXT STEP")},
         #p{body = ias_html:text("This CA/CMP enrollment certificate is cryptographically valid, but it has no IAM role context yet.")},
@@ -610,6 +646,22 @@ certificate_role_next_step() ->
         #link{url = <<"/app/issue.htm">>,
               style = <<"display:inline-block;margin-top:8px;padding:7px 10px;border:1px solid #93c5fd;border-radius:5px;background:#ffffff;color:#1d4ed8;text-decoration:none;font-size:12px;font-weight:600;">>,
               body = ias_html:text("Issue to User")}
+    ]}.
+
+already_issued_next_step(IssuedCertificateId) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("ALREADY ISSUED")},
+        #p{body = ias_html:text("This enrollment certificate has already been converted into an IAS issued identity certificate.")},
+        key_value_table([
+            {"Issued Certificate", certificate_ref(IssuedCertificateId)},
+            {"Next Step", <<"open the issued certificate to evaluate IAM role authorization">>}
+        ])
+    ]}.
+
+imported_certificate_next_step() ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("IMPORTED OVPN ARTIFACT")},
+        #p{body = ias_html:text("This certificate came from an imported OpenVPN profile. Use it for migration, onboarding, endpoint discovery, or OVPN provisioning preview; issue a CA/CMP certificate to a user for IAS role authorization.")}
     ]}.
 
 certificate_authorization_actions() ->
@@ -676,7 +728,7 @@ authorization_enforcement_preview(#{kind := certificate} = Object) ->
                 enforcement_table(Enforcements)
             ]};
         false ->
-            certificate_role_authorization_not_applicable("OPERATION ENFORCEMENT PREVIEW")
+            certificate_role_authorization_not_applicable("OPERATION ENFORCEMENT PREVIEW", Object)
     end;
 authorization_enforcement_preview(_Object) ->
     [].
