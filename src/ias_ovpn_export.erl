@@ -1,6 +1,7 @@
 -module(ias_ovpn_export).
 -export([certificate_preview/1,
          device_preview/1,
+         device_provisioning_preview/1,
          service_preview/1,
          ovpn_provisioning_decision/1,
          certificate_artifact/1,
@@ -15,7 +16,14 @@ certificate_artifact(CertificateId) ->
     artifact_from_preview(certificate_preview(CertificateId), CertificateId).
 
 device_artifact(DeviceId) ->
-    artifact_from_preview(device_preview(DeviceId), DeviceId).
+    Preview = device_preview(DeviceId),
+    Provisioning = device_provisioning_preview(DeviceId),
+    case maps:get(provisioning, Provisioning, deny) of
+        allow ->
+            {ok, artifact_filename(DeviceId), maps:get(preview, Preview, <<>>)};
+        _ ->
+            {error, maps:get(provisioning_reason, Provisioning, <<"OVPN provisioning denied">>)}
+    end.
 
 artifact_from_preview(Preview, SubjectId) ->
     case maps:get(authorization, Preview, deny) of
@@ -89,6 +97,103 @@ service_export_reasons(Service, CaCertificate) ->
         _ -> []
     end,
     unique_reasons(EndpointReasons ++ CaReasons).
+
+
+device_provisioning_preview(DeviceId) ->
+    case ias_demo_store:get(DeviceId) of
+        {ok, #{kind := device} = Device} ->
+            Certificate = current_certificate(Device),
+            Service = linked_service(Device),
+            Policy = ias_security_profile:applied_policy(Device),
+            Preview = device_preview(DeviceId),
+            Reasons = device_provisioning_reasons(Certificate, Service, Preview),
+            Provisioning = case Reasons of [] -> allow; _ -> deny end,
+            #{device_id => maps:get(id, Device, not_found),
+              vpn_service_id => object_id(Service),
+              current_certificate_id => object_id(Certificate),
+              security_policy_id => policy_id(Policy),
+              device_lock => policy_device_lock(Policy),
+              device_lock_status => device_lock_status(Certificate, Policy),
+              two_factor => policy_two_factor(Policy),
+              certificate_status => certificate_status(Certificate),
+              ca_certificate_status => maps:get(ca_certificate_status, Preview, missing),
+              vpn_endpoint_status => endpoint_status(Preview),
+              export_artifact => export_artifact_status(Preview, Reasons),
+              provisioning => Provisioning,
+              provisioning_status => provisioning_status(Provisioning),
+              provisioning_reason => device_provisioning_reason(Provisioning, Reasons)};
+        _ ->
+            #{device_id => DeviceId,
+              vpn_service_id => not_found,
+              current_certificate_id => not_found,
+              security_policy_id => not_found,
+              device_lock => disabled,
+              device_lock_status => not_applicable,
+              two_factor => optional,
+              certificate_status => unknown,
+              ca_certificate_status => missing,
+              vpn_endpoint_status => missing,
+              export_artifact => unavailable,
+              provisioning => deny,
+              provisioning_status => blocked,
+              provisioning_reason => <<"device not found">>}
+    end.
+
+device_provisioning_reasons(Certificate, Service, Preview) ->
+    AuthReasons = case maps:get(authorization, Preview, deny) of
+        allow -> [];
+        _ -> [maps:get(authorization_reason, Preview, <<"OVPN provisioning denied">>)]
+    end,
+    CertificateReasons = case Certificate of
+        not_found -> [<<"no current certificate">>];
+        _ -> []
+    end,
+    ServiceReasons = case Service of
+        not_found -> [<<"no vpn service">>];
+        _ -> []
+    end,
+    EndpointReasons = case endpoint_status(Preview) of
+        available -> [];
+        _ -> [<<"no vpn endpoint">>]
+    end,
+    CaReasons = case maps:get(ca_certificate_status, Preview, missing) of
+        missing -> [<<"no CA certificate">>];
+        _ -> []
+    end,
+    unique_reasons(AuthReasons ++ CertificateReasons ++ ServiceReasons ++ EndpointReasons ++ CaReasons).
+
+device_provisioning_reason(allow, _Reasons) ->
+    <<"device is ready for device-bound OVPN provisioning">>;
+device_provisioning_reason(deny, Reasons) ->
+    reason_text(Reasons).
+
+provisioning_status(allow) ->
+    ready;
+provisioning_status(_Provisioning) ->
+    blocked.
+
+endpoint_status(Preview) ->
+    case {maps:get(remote_host, Preview, <<"not found">>),
+          maps:get(remote_port, Preview, <<"not found">>)} of
+        {<<"not found">>, _} -> missing;
+        {_, <<"not found">>} -> missing;
+        _ -> available
+    end.
+
+export_artifact_status(_Preview, []) ->
+    available;
+export_artifact_status(_Preview, _Reasons) ->
+    unavailable.
+
+device_lock_status(not_found, #{device_lock := enabled}) ->
+    required;
+device_lock_status(_Certificate, #{device_lock := enabled}) ->
+    satisfied;
+device_lock_status(_Certificate, _Policy) ->
+    not_required.
+
+policy_id(Policy) ->
+    maps:get(id, Policy, maps:get(policy_id, Policy, not_found)).
 
 device_preview(DeviceId) ->
     case ias_demo_store:get(DeviceId) of

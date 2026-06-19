@@ -797,7 +797,9 @@ enforcement_row(Enforcement) ->
 ovpn_export_preview(#{kind := device} = Object) ->
     ObjectId = maps:get(id, Object, undefined),
     Preview = ias_ovpn_export:device_preview(ObjectId),
-    ovpn_export_card(Preview, device, ObjectId);
+    Provisioning = ias_ovpn_export:device_provisioning_preview(ObjectId),
+    [device_ovpn_provisioning_card(Provisioning),
+     ovpn_export_card(device_bound_export_preview(Preview, Provisioning), device, ObjectId)];
 ovpn_export_preview(#{kind := certificate} = Object) ->
     ObjectId = maps:get(id, Object, undefined),
     Preview = ias_ovpn_export:certificate_preview(ObjectId),
@@ -808,6 +810,36 @@ ovpn_export_preview(#{kind := vpn_service} = Object) ->
     ovpn_service_export_card(Preview);
 ovpn_export_preview(_Object) ->
     [].
+
+
+device_ovpn_provisioning_card(Preview) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("DEVICE OVPN PROVISIONING")},
+        #p{body = ias_html:text("Checks whether this device has a current certificate, VPN service, CA trust anchor and policy context for device-bound OVPN provisioning.")},
+        key_value_table([
+            {"Device", maps:get(device_id, Preview, not_found)},
+            {"VPN Service", maps:get(vpn_service_id, Preview, not_found)},
+            {"Current Certificate", maps:get(current_certificate_id, Preview, not_found)},
+            {"Security Policy", maps:get(security_policy_id, Preview, not_found)},
+            {"Provisioning", maps:get(provisioning, Preview, deny)},
+            {"Reason", maps:get(provisioning_reason, Preview, undefined)}
+        ]),
+        #h3{body = ias_html:text("Device Provisioning Readiness")},
+        key_value_table([
+            {"VPN Endpoint", maps:get(vpn_endpoint_status, Preview, missing)},
+            {"CA Certificate", maps:get(ca_certificate_status, Preview, missing)},
+            {"Current Certificate", maps:get(certificate_status, Preview, unknown)},
+            {"Device Lock", maps:get(device_lock_status, Preview, not_applicable)},
+            {"2FA", maps:get(two_factor, Preview, optional)},
+            {"Export Artifact", maps:get(export_artifact, Preview, unavailable)}
+        ])
+    ]}.
+
+
+device_bound_export_preview(Preview, Provisioning) ->
+    Preview#{authorization => maps:get(provisioning, Provisioning, deny),
+             authorization_reason => maps:get(provisioning_reason, Provisioning,
+                                              <<"device-bound OVPN provisioning unavailable">>)}.
 
 ovpn_export_card(Preview, SubjectKind, SubjectId) ->
     #panel{class = <<"ias-status-card">>, body = [

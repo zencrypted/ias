@@ -65,13 +65,41 @@ certificate_without_device_binding_denies_ovpn_export_preview_test() ->
     ?assertEqual(deny, maps:get(authorization, Preview)),
     ?assertEqual(<<"no device binding">>, maps:get(authorization_reason, Preview)).
 
+
+device_bound_ovpn_provisioning_preview_allows_ready_device_test() ->
+    ias_demo_store:clear(),
+    #{device := Device, service := Service} = setup_ready_device(administrator),
+    _CaCertificate = link_ca_certificate(Service, <<"ovpn_export_device_ca_certificate">>),
+
+    Preview = ias_ovpn_export:device_provisioning_preview(maps:get(id, Device)),
+
+    ?assertEqual(allow, maps:get(provisioning, Preview)),
+    ?assertEqual(ready, maps:get(provisioning_status, Preview)),
+    ?assertEqual(satisfied, maps:get(device_lock_status, Preview)),
+    ?assertEqual(available, maps:get(vpn_endpoint_status, Preview)),
+    ?assertEqual(available, maps:get(export_artifact, Preview)),
+    ?assertEqual(maps:get(id, Service), maps:get(vpn_service_id, Preview)).
+
+device_bound_ovpn_provisioning_preview_requires_ca_certificate_test() ->
+    ias_demo_store:clear(),
+    #{device := Device} = setup_ready_device(administrator),
+
+    Preview = ias_ovpn_export:device_provisioning_preview(maps:get(id, Device)),
+
+    ?assertEqual(deny, maps:get(provisioning, Preview)),
+    ?assertEqual(blocked, maps:get(provisioning_status, Preview)),
+    ?assertMatch({_, _}, binary:match(maps:get(provisioning_reason, Preview), <<"no CA certificate">>)),
+    ?assertEqual(unavailable, maps:get(export_artifact, Preview)).
+
 demo_pages_render_ovpn_export_preview_test() ->
     ias_demo_store:clear(),
-    #{device := Device, certificate := Certificate} = setup_ready_device(administrator),
+    #{device := Device, certificate := Certificate, service := Service} = setup_ready_device(administrator),
+    _CaCertificate = link_ca_certificate(Service, <<"ovpn_export_demo_page_ca_certificate">>),
 
     DeviceHtml = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Device))),
     CertificateHtml = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Certificate))),
 
+    ?assertMatch({_, _}, binary:match(DeviceHtml, <<"DEVICE OVPN PROVISIONING">>)),
     ?assertMatch({_, _}, binary:match(DeviceHtml, <<"OVPN EXPORT PREVIEW">>)),
     ?assertMatch({_, _}, binary:match(DeviceHtml, <<"remote vpn.example.com 1194">>)),
     ?assertMatch({_, _}, binary:match(CertificateHtml, <<"OVPN EXPORT PREVIEW">>)),
@@ -136,7 +164,8 @@ linked_vpn_service_ca_certificate_appears_in_ovpn_export_preview_test() ->
 
 allowed_device_generates_demo_ovpn_artifact_test() ->
     ias_demo_store:clear(),
-    #{device := Device} = setup_ready_device(administrator),
+    #{device := Device, service := Service} = setup_ready_device(administrator),
+    _CaCertificate = link_ca_certificate(Service, <<"ovpn_export_device_artifact_ca_certificate">>),
 
     {ok, Filename, Content} = ias_ovpn_export:device_artifact(maps:get(id, Device)),
 
@@ -234,6 +263,16 @@ policy_id(default_user) ->
 
 test_id(ProfileId, Suffix) ->
     ias_html:join([<<"ovpn_export_">>, ias_html:text(ProfileId), <<"_">>, Suffix]).
+
+
+link_ca_certificate(Service, CertificateId) ->
+    CaCertificate = ias_demo_store:add_certificate(#{id => CertificateId,
+                                                     source => ca_certificate,
+                                                     subject => <<"CN=CA">>}),
+    {ok, _CaLink} = ias_relationship_link:create(uses_ca_certificate,
+                                                 maps:get(id, Service),
+                                                 maps:get(id, CaCertificate)),
+    CaCertificate.
 
 export_for(Id, Kind, Authorization) ->
     fun(Preview) ->
