@@ -1,5 +1,5 @@
 -module(ias_vpn).
--export([event/1, content/1, create_vpn_service/4]).
+-export([event/1, content/1, create_vpn_service/4, create_vpn_service/6]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
@@ -9,7 +9,9 @@ event(create_vpn_service) ->
     Host = field_value(nitro:q(vpn_remote_host), <<>>),
     Port = field_value(nitro:q(vpn_remote_port), <<"1194">>),
     Protocol = protocol_value(nitro:q(vpn_protocol)),
-    Result = create_vpn_service(Name, Host, Port, Protocol),
+    PolicyId = optional_value(nitro:q(vpn_security_policy)),
+    CaCertificateId = optional_value(nitro:q(vpn_ca_certificate)),
+    Result = create_vpn_service(Name, Host, Port, Protocol, PolicyId, CaCertificateId),
     nitro:update(vpn_service_create_result, create_result(Result)),
     nitro:update(vpn_services_list, managed_services_panel());
 event(_) ->
@@ -40,12 +42,15 @@ create_service_panel() ->
         input_row("Remote Host", vpn_remote_host, <<"vpn.example.com">>),
         input_row("Remote Port", vpn_remote_port, <<"1194">>),
         protocol_row(),
+        security_policy_row(),
+        ca_certificate_row(),
         #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
                body = [
                    #link{id = vpn_create_service_button,
                          class = [button, sgreen],
                          body = ias_html:text("Create VPN Service"),
-                         source = [vpn_service_name, vpn_remote_host, vpn_remote_port, vpn_protocol],
+                         source = [vpn_service_name, vpn_remote_host, vpn_remote_port, vpn_protocol,
+                                   vpn_security_policy, vpn_ca_certificate],
                          postback = create_vpn_service},
                    #span{style = <<"font-size:12px;color:#64748b;">>,
                          body = ias_html:text("Demo runtime object only. No VPN server is started.")}
@@ -78,12 +83,45 @@ protocol_row() ->
                        ]}
            ]}.
 
-create_vpn_service(_Name, <<>>, _Port, _Protocol) ->
-    {error, <<"remote host is required">>};
+security_policy_row() ->
+    select_row("Security Policy", vpn_security_policy,
+               [#option{value = <<"">>, body = ias_html:text("not linked yet")}
+                | [#option{value = maps:get(id, Policy),
+                           body = ias_html:join([maps:get(name, Policy, maps:get(id, Policy)),
+                                                 <<" (#">>, maps:get(id, Policy), <<")">>])}
+                   || Policy <- ias_demo_store:security_policies()]]).
+
+ca_certificate_row() ->
+    select_row("CA Certificate", vpn_ca_certificate,
+               [#option{value = <<"">>, body = ias_html:text("not linked yet")}
+                | [#option{value = maps:get(id, Certificate),
+                           body = ias_html:join([certificate_class_label(Certificate), <<" #">>,
+                                                 maps:get(id, Certificate)])}
+                   || Certificate <- ias_demo_store:certificates()]]).
+
+select_row(Label, Id, Options) ->
+    #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0;">>,
+           body = [
+               #label{for = Id,
+                      style = <<"min-width:130px;font-weight:600;color:#334155;">>,
+                      body = ias_html:text(Label)},
+               #select{id = Id,
+                       style = <<"min-width:260px;max-width:420px;width:100%;">>,
+                       body = Options}
+           ]}.
+
+certificate_class_label(Certificate) ->
+    ias_certificate_detail:certificate_class(Certificate).
+
 create_vpn_service(Name, Host, Port, Protocol) ->
+    create_vpn_service(Name, Host, Port, Protocol, not_linked, not_linked).
+
+create_vpn_service(_Name, <<>>, _Port, _Protocol, _PolicyId, _CaCertificateId) ->
+    {error, <<"remote host is required">>};
+create_vpn_service(Name, Host, Port, Protocol, PolicyId, CaCertificateId) ->
     Id = vpn_service_id(),
     Remote = ias_html:join([Host, <<":">>, normalize_port(Port)]),
-    Service = ias_demo_store:add_service(#{
+    Service0 = ias_demo_store:add_service(#{
         id => Id,
         source => manual_vpn_service,
         import_id => Id,
@@ -93,11 +131,15 @@ create_vpn_service(Name, Host, Port, Protocol) ->
         remote_host => Host,
         remote_port => normalize_port(Port),
         protocol => Protocol,
+        ca_certificate_id => metadata_id(CaCertificateId),
+        security_policy_id => metadata_id(PolicyId),
         cipher => not_configured,
         compression => false,
         routes => 0
     }),
-    {ok, Service}.
+    ok = maybe_link(uses_security_policy, Id, PolicyId),
+    ok = maybe_link(uses_ca_certificate, Id, CaCertificateId),
+    {ok, Service0}.
 
 vpn_service_id() ->
     ias_html:join([<<"manual_vpn_service_">>, integer_to_binary(erlang:unique_integer([positive, monotonic]))]).
@@ -106,6 +148,26 @@ normalize_port(<<>>) ->
     <<"1194">>;
 normalize_port(Port) ->
     ias_html:text(Port).
+
+optional_value(undefined) ->
+    not_linked;
+optional_value(<<>>) ->
+    not_linked;
+optional_value(Value) ->
+    ias_html:text(Value).
+
+metadata_id(not_linked) ->
+    not_linked;
+metadata_id(Value) ->
+    ias_html:text(Value).
+
+maybe_link(_RelationType, _SourceId, not_linked) ->
+    ok;
+maybe_link(RelationType, SourceId, TargetId) ->
+    case ias_relationship_link:create(RelationType, SourceId, TargetId) of
+        {ok, _Relationship} -> ok;
+        {error, _Reason} -> ok
+    end.
 
 protocol_value(undefined) ->
     udp;
@@ -132,6 +194,8 @@ create_result({ok, Service}) ->
                    {"Service", maps:get(name, Service, <<"OpenVPN">>)},
                    {"Remote", maps:get(remote, Service, undefined)},
                    {"Protocol", maps:get(protocol, Service, undefined)},
+                   {"Security Policy", maps:get(security_policy_id, Service, not_linked)},
+                   {"CA Certificate", maps:get(ca_certificate_id, Service, not_linked)},
                    {"Runtime", <<"demo state only">>}
                ]),
                #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]),
@@ -157,7 +221,7 @@ managed_services([]) ->
 managed_services(Records) ->
     table([
         #table{class = <<"ias-table">>,
-               header = header(["ID", "Service", "Remote", "Protocol", "Source"]),
+               header = header(["ID", "Service", "Remote", "Protocol", "Security Policy", "CA Certificate", "Source"]),
                body = #tbody{body = [managed_service_row(Record) || Record <- Records]}}
     ]).
 
@@ -166,6 +230,8 @@ managed_service_row(Record) ->
          maps:get(name, Record, maps:get(service, Record, undefined)),
          maps:get(remote, Record, undefined),
          maps:get(protocol, Record, undefined),
+         linked_policy_label(Record),
+         linked_ca_label(Record),
          maps:get(source, Record, undefined)]).
 
 demo_link(undefined) ->
@@ -293,3 +359,26 @@ key_value_row(Label, Value) ->
 
 table(Body) ->
     #panel{class = <<"ias-table-container">>, body = Body}.
+
+
+linked_policy_label(Service) ->
+    linked_target_label(Service, uses_security_policy, security_policy).
+
+linked_ca_label(Service) ->
+    linked_target_label(Service, uses_ca_certificate, certificate).
+
+linked_target_label(Service, RelationType, TargetKind) ->
+    ServiceId = maps:get(id, Service, undefined),
+    case [maps:get(target_id, Relationship, undefined)
+          || Relationship <- ias_demo_store:relationships(),
+             maps:get(relation_type, Relationship, undefined) =:= RelationType,
+             maps:get(source_kind, Relationship, undefined) =:= vpn_service,
+             maps:get(source_id, Relationship, undefined) =:= ServiceId,
+             maps:get(target_kind, Relationship, undefined) =:= TargetKind] of
+        [TargetId | _] -> TargetId;
+        [] -> maps:get(linked_metadata_key(RelationType), Service, not_linked)
+    end.
+
+linked_metadata_key(uses_security_policy) -> security_policy_id;
+linked_metadata_key(uses_ca_certificate) -> ca_certificate_id;
+linked_metadata_key(_RelationType) -> undefined.

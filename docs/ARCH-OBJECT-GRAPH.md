@@ -93,6 +93,18 @@ Device
       └─ VPN Service
 ```
 
+### VPN Service -> CA Certificate
+
+```text
+VPN Service
+ └─ uses_ca_certificate
+      └─ Certificate
+```
+
+The CA certificate relationship records the trust anchor used by OVPN export
+provisioning. It is editable demo metadata and does not imply private key or
+certificate body export.
+
 ### Certificate Enrollment -> Enrollment Certificate
 
 ```text

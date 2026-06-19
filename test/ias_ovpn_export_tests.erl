@@ -116,6 +116,24 @@ denied_certificate_rejects_demo_ovpn_artifact_test() ->
 
     ?assertEqual(<<"no device binding">>, Reason).
 
+
+linked_vpn_service_ca_certificate_appears_in_ovpn_export_preview_test() ->
+    ias_demo_store:clear(),
+    #{device := Device, service := Service} = setup_ready_device(default_user),
+    CaCertificate = ias_demo_store:add_certificate(#{id => <<"ovpn_export_ca_certificate">>,
+                                                     source => ca_certificate,
+                                                     subject => <<"CN=CA">>}),
+    {ok, _CaLink} = ias_relationship_link:create(uses_ca_certificate,
+                                                 maps:get(id, Service),
+                                                 maps:get(id, CaCertificate)),
+
+    Preview = ias_ovpn_export:device_preview(maps:get(id, Device)),
+
+    ?assertEqual(maps:get(id, CaCertificate), maps:get(ca_certificate_id, Preview)),
+    ?assertEqual(maps:get(trust,
+                          ias_trust_status:effective_certificate_status(maps:get(id, CaCertificate))),
+                 maps:get(ca_certificate_status, Preview)).
+
 allowed_device_generates_demo_ovpn_artifact_test() ->
     ias_demo_store:clear(),
     #{device := Device} = setup_ready_device(administrator),

@@ -114,6 +114,23 @@ Can IAS provision an OVPN profile for this certificate or user?
 The export path therefore evaluates an OVPN provisioning decision instead of
 reusing the device VPN connection enforcement result directly.
 
+### Manual VPN Service Provisioning Metadata
+
+Stage 21A allows an administrator to create a managed VPN Service directly,
+without importing an existing `.ovpn` file. Stage 21B adds the first
+provisioning metadata links for that service:
+
+```text
+VPN Service
+-> Security Policy
+-> CA Certificate
+```
+
+The CA Certificate relationship represents the trust anchor that will later be
+used for the `<ca>` section of an exported OVPN profile. The relationship is
+metadata-only at this stage: IAS still does not export private keys or embed
+real certificate bodies into generated demo artifacts.
+
 OVPN Import and OVPN Export have different roles:
 
 - OVPN Import is a migration, onboarding, and legacy profile analysis workflow.

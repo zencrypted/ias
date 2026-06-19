@@ -64,6 +64,12 @@ create_for_objects(uses_service, #{kind := device} = Device,
 create_for_objects(uses_service, #{kind := vpn_service} = Service,
                    #{kind := device} = Device) ->
     create_relationship(uses_service, Device, Service);
+create_for_objects(uses_ca_certificate, #{kind := vpn_service} = Service,
+                   #{kind := certificate} = Certificate) ->
+    create_relationship(uses_ca_certificate, Service, Certificate);
+create_for_objects(uses_ca_certificate, #{kind := certificate} = Certificate,
+                   #{kind := vpn_service} = Service) ->
+    create_relationship(uses_ca_certificate, Service, Certificate);
 create_for_objects(verified_by, #{kind := certificate} = Certificate,
                    #{kind := verification} = Verification) ->
     create_relationship(verified_by, Certificate, Verification);
@@ -179,6 +185,12 @@ canonical_for_objects(uses_service, #{kind := device} = Device,
 canonical_for_objects(uses_service, #{kind := vpn_service} = Service,
                       #{kind := device} = Device) ->
     {ok, uses_service, Device, Service};
+canonical_for_objects(uses_ca_certificate, #{kind := vpn_service} = Service,
+                      #{kind := certificate} = Certificate) ->
+    {ok, uses_ca_certificate, Service, Certificate};
+canonical_for_objects(uses_ca_certificate, #{kind := certificate} = Certificate,
+                      #{kind := vpn_service} = Service) ->
+    {ok, uses_ca_certificate, Service, Certificate};
 canonical_for_objects(verified_by, #{kind := certificate} = Certificate,
                       #{kind := verification} = Verification) ->
     {ok, verified_by, Certificate, Verification};
@@ -311,6 +323,10 @@ candidates_for(#{kind := certificate} = Source, #{kind := device}) ->
     maps:get(suggested_devices, ias_relationship_preview:preview(Source), []);
 candidates_for(#{kind := vpn_service} = Source, #{kind := device}) ->
     maps:get(suggested_devices, ias_relationship_preview:preview(Source), []);
+candidates_for(#{kind := vpn_service} = Source, #{kind := certificate}) ->
+    maps:get(suggested_ca_certificates, ias_relationship_preview:preview(Source), []);
+candidates_for(#{kind := certificate} = Source, #{kind := vpn_service}) ->
+    maps:get(suggested_ca_services, ias_relationship_preview:preview(Source), []);
 candidates_for(#{kind := Kind} = Source, #{kind := security_policy})
   when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     maps:get(suggested_security_policies, ias_relationship_preview:preview(Source), []);
@@ -331,6 +347,8 @@ unlinkable_relationship(uses_certificate, #{source_kind := device, target_kind :
 unlinkable_relationship(uses_service, #{source_kind := device, target_kind := vpn_service}) ->
     true;
 unlinkable_relationship(uses_vpn_service, #{source_kind := device, target_kind := vpn_service}) ->
+    true;
+unlinkable_relationship(uses_ca_certificate, #{source_kind := vpn_service, target_kind := certificate}) ->
     true;
 unlinkable_relationship(uses_security_policy, #{target_kind := security_policy}) ->
     true;

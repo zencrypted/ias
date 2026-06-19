@@ -18,11 +18,31 @@ certificate_relationship_preview_test() ->
     ?assertEqual([maps:get(id, Device)], ids(maps:get(suggested_devices, Preview))).
 
 vpn_service_relationship_preview_test() ->
-    {Device, _Certificate, Service} = ovpn_objects(),
+    {Device, Certificate, Service} = ovpn_objects(),
     Preview = ias_relationship_preview:preview(Service),
 
     ?assertEqual(not_linked, maps:get(used_by_device, Preview)),
-    ?assertEqual([maps:get(id, Device)], ids(maps:get(suggested_devices, Preview))).
+    ?assertEqual([maps:get(id, Device)], ids(maps:get(suggested_devices, Preview))),
+    ?assert(lists:member(maps:get(id, Certificate), ids(maps:get(suggested_ca_certificates, Preview)))).
+
+link_ca_certificate_to_vpn_service_test() ->
+    ias_demo_store:clear(),
+    Service = ias_demo_store:add_service(#{id => <<"service_ca_link">>}),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"ca_certificate_link">>,
+                                                   source => ca_certificate,
+                                                   subject => <<"CN=CA">>}),
+
+    {ok, Relationship} = ias_relationship_link:create(uses_ca_certificate,
+                                                      maps:get(id, Service),
+                                                      maps:get(id, Certificate)),
+
+    ?assertEqual(relationship, maps:get(kind, Relationship)),
+    ?assertEqual(uses_ca_certificate, maps:get(relation_type, Relationship)),
+    ?assertEqual(vpn_service, maps:get(source_kind, Relationship)),
+    ?assertEqual(maps:get(id, Service), maps:get(source_id, Relationship)),
+    ?assertEqual(certificate, maps:get(target_kind, Relationship)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(target_id, Relationship)),
+    ?assertEqual(true, ias_relationship_link:unlinkable(Relationship)).
 
 relationship_preview_creates_no_relationship_records_test() ->
     {Device, Certificate, Service} = ovpn_objects(),

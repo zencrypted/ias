@@ -275,17 +275,22 @@ relationship_preview(Object) ->
                 #h3{body = ias_html:text("Relationship Preview")},
                 relationships_table(Object),
                 key_value_table([
-                    {"Used By Device", linked_sources(uses_certificate, Relationships)}
+                    {"Used By Device", linked_sources(uses_certificate, Relationships)},
+                    {"Used As CA By", linked_sources(uses_ca_certificate, Relationships)}
                 ]),
                 #h3{body = ias_html:text("Suggested Relationships")},
                 candidate_table([
                     {"Suggested Devices", ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
-                     uses_certificate, SourceId}
+                     uses_certificate, SourceId},
+                    {"Suggested VPN Services", ias_relationship_preview:suggested_candidates(maps:get(suggested_ca_services, Preview, [])),
+                     uses_ca_certificate, SourceId}
                 ], <<"no candidates">>),
                 #h3{body = ias_html:text("Available Objects")},
                 candidate_table([
                     {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
-                     uses_certificate, SourceId}
+                     uses_certificate, SourceId},
+                    {"Available VPN Services", ias_relationship_preview:available_candidates(maps:get(suggested_ca_services, Preview, [])),
+                     uses_ca_certificate, SourceId}
                 ], <<"no available objects">>),
                 #h3{body = ias_html:text("Suggested Security Policies")},
                 candidate_table([
@@ -300,17 +305,23 @@ relationship_preview(Object) ->
                 #h3{body = ias_html:text("Relationship Preview")},
                 relationships_table(Object),
                 key_value_table([
-                    {"Used By Device", linked_sources(uses_service, Relationships)}
+                    {"Used By Device", linked_sources(uses_service, Relationships)},
+                    {"CA Certificate", linked_targets(uses_ca_certificate, Relationships)},
+                    {"Security Policy", linked_targets(uses_security_policy, Relationships)}
                 ]),
                 #h3{body = ias_html:text("Suggested Relationships")},
                 candidate_table([
                     {"Suggested Devices", ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
-                     uses_service, SourceId}
+                     uses_service, SourceId},
+                    {"Suggested CA Certificates", ias_relationship_preview:suggested_candidates(maps:get(suggested_ca_certificates, Preview, [])),
+                     uses_ca_certificate, SourceId}
                 ], <<"no candidates">>),
                 #h3{body = ias_html:text("Available Objects")},
                 candidate_table([
                     {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
-                     uses_service, SourceId}
+                     uses_service, SourceId},
+                    {"Available CA Certificates", ias_relationship_preview:available_candidates(maps:get(suggested_ca_certificates, Preview, [])),
+                     uses_ca_certificate, SourceId}
                 ], <<"no available objects">>),
                 #h3{body = ias_html:text("Suggested Security Policies")},
                 candidate_table([
@@ -843,6 +854,8 @@ ovpn_components(Preview) ->
          ovpn_authorization_reason(Preview)},
         {"VPN Endpoint", ovpn_endpoint_status(Preview),
          ovpn_remote_endpoint(Preview)},
+        {"CA Certificate", maps:get(ca_certificate_status, Preview, missing),
+         ovpn_ca_certificate_note(Preview)},
         {"Certificate", maps:get(certificate_status, Preview, unknown),
          ovpn_certificate_note(Preview)},
         {"Private Key", <<"device-owned">>,
@@ -866,6 +879,14 @@ ovpn_endpoint_status(Preview) ->
         {<<"not found">>, _} -> missing;
         {_, <<"not found">>} -> missing;
         _ -> available
+    end.
+
+ovpn_ca_certificate_note(Preview) ->
+    case maps:get(ca_certificate_id, Preview, not_found) of
+        not_found ->
+            <<"not linked to VPN service yet">>;
+        CertificateId ->
+            ias_html:join([<<"trust anchor: Certificate #">>, ias_html:text(CertificateId)])
     end.
 
 ovpn_certificate_note(Preview) ->
@@ -1228,11 +1249,13 @@ relationship_rows(#{kind := certificate}, Relationships) ->
         {"Verification History", linked_targets(verified_by, Relationships)},
         {"Revocation Record", linked_targets(revoked_by, Relationships)},
         {"Used By Device", linked_sources(uses_certificate, Relationships)},
+        {"Used As CA By", linked_sources(uses_ca_certificate, Relationships)},
         {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
 relationship_rows(#{kind := vpn_service}, Relationships) ->
     key_value_table([
         {"Used By Device", linked_sources(uses_service, Relationships)},
+        {"CA Certificate", linked_targets(uses_ca_certificate, Relationships)},
         {"Security Policy", linked_targets(uses_security_policy, Relationships)}
     ]);
 relationship_rows(#{kind := security_policy}, Relationships) ->

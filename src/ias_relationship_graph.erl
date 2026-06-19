@@ -12,6 +12,7 @@ known_relationship_type(verified_by) -> true;
 known_relationship_type(uses_security_policy) -> true;
 known_relationship_type(uses_service) -> true;
 known_relationship_type(uses_vpn_service) -> true;
+known_relationship_type(uses_ca_certificate) -> true;
 known_relationship_type(issues) -> true;
 known_relationship_type(replaced_certificate_by) -> true;
 known_relationship_type(old_certificate) -> true;

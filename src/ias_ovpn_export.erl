@@ -86,12 +86,15 @@ build_preview(Device, Certificate, Service, Policy, Enforcement) ->
     {RemoteHost, RemotePort} = remote_endpoint(Service),
     Protocol = protocol(Service),
     CertificateStatus = certificate_status(Certificate),
+    CaCertificate = linked_ca_certificate(Service),
     Authorization = maps:get(result, Enforcement, deny),
     #{authorization => Authorization,
       authorization_reason => maps:get(reason, Enforcement, <<"authorization denied">>),
       device_id => object_id(Device),
       certificate_id => object_id(Certificate),
       vpn_service_id => object_id(Service),
+      ca_certificate_id => object_id(CaCertificate),
+      ca_certificate_status => ca_certificate_status(CaCertificate),
       device_lock => policy_device_lock(Policy),
       two_factor => policy_two_factor(Policy),
       remote_host => RemoteHost,
@@ -257,6 +260,44 @@ same_import_device(Certificate) ->
         [] -> not_found
     end.
 
+linked_ca_certificate(not_found) ->
+    not_found;
+linked_ca_certificate(Service) ->
+    ServiceId = maps:get(id, Service, undefined),
+    case [Certificate || Relationship <- ias_demo_store:relationships(),
+                         maps:get(relation_type, Relationship, undefined) =:= uses_ca_certificate,
+                         maps:get(source_kind, Relationship, undefined) =:= vpn_service,
+                         maps:get(source_id, Relationship, undefined) =:= ServiceId,
+                         maps:get(target_kind, Relationship, undefined) =:= certificate,
+                         {ok, Certificate} <- [ias_demo_store:get(maps:get(target_id, Relationship, undefined))],
+                         maps:get(kind, Certificate, undefined) =:= certificate] of
+        [Certificate | _] -> Certificate;
+        [] -> same_import_ca_certificate(Service)
+    end.
+
+same_import_ca_certificate(Service) ->
+    ImportId = maps:get(import_id, Service, undefined),
+    case [Certificate || Certificate <- ias_demo_store:certificates(),
+                         maps:get(import_id, Certificate, undefined) =:= ImportId,
+                         certificate_ca_like(Certificate)] of
+        [Certificate | _] -> Certificate;
+        [] -> not_found
+    end.
+
+certificate_ca_like(Certificate) ->
+    Source = maps:get(source, Certificate, undefined),
+    Issuer = ias_html:text(maps:get(issuer, Certificate, maps:get(issuer_cn, Certificate, undefined))),
+    Subject = ias_html:text(maps:get(subject, Certificate, maps:get(subject_cn, Certificate, undefined))),
+    Source =:= ca_demo orelse
+        Source =:= ca_certificate orelse
+        contains(Issuer, <<"CN=CA">>) orelse
+        contains(Subject, <<"CN=CA">>).
+
+contains(Value, Pattern) when is_binary(Value) ->
+    binary:match(Value, Pattern) =/= nomatch;
+contains(_Value, _Pattern) ->
+    false.
+
 linked_service(not_found) ->
     not_found;
 linked_service(Device) ->
@@ -315,6 +356,11 @@ protocol(Service) ->
         not_found -> <<"udp">>;
         Protocol -> ias_html:text(Protocol)
     end.
+
+ca_certificate_status(not_found) ->
+    missing;
+ca_certificate_status(Certificate) ->
+    certificate_status(Certificate).
 
 certificate_status(not_found) ->
     unknown;

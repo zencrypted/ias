@@ -12,11 +12,13 @@ preview(#{kind := certificate} = Object) ->
     #{kind => certificate,
       used_by_device => not_linked,
       suggested_devices => candidate_devices(Object),
+      suggested_ca_services => candidate_services(Object),
       suggested_security_policies => candidate_security_policies(Object)};
 preview(#{kind := vpn_service} = Object) ->
     #{kind => vpn_service,
       used_by_device => not_linked,
       suggested_devices => candidate_devices(Object),
+      suggested_ca_certificates => candidate_ca_certificates(Object),
       suggested_security_policies => candidate_security_policies(Object)};
 preview(#{kind := security_policy}) ->
     #{kind => security_policy};
@@ -36,6 +38,9 @@ candidate_certificates(Object) ->
 
 candidate_services(Object) ->
     candidates(Object, ias_demo_store:services()).
+
+candidate_ca_certificates(Object) ->
+    candidates(Object, ias_demo_store:certificates()).
 
 candidate_devices(Object) ->
     candidates(Object, ias_demo_store:devices()).
@@ -64,6 +69,10 @@ score(#{kind := device} = Device, #{kind := vpn_service} = Service) ->
     device_service_score(Device, Service);
 score(#{kind := vpn_service} = Service, #{kind := device} = Device) ->
     device_service_score(Device, Service);
+score(#{kind := vpn_service} = Service, #{kind := certificate} = Certificate) ->
+    ca_certificate_score(Service, Certificate);
+score(#{kind := certificate} = Certificate, #{kind := vpn_service} = Service) ->
+    ca_certificate_score(Service, Certificate);
 score(#{kind := Kind}, #{kind := security_policy})
   when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
     10;
@@ -93,6 +102,13 @@ device_service_score(Device, Service) ->
     ServiceHosts = service_hosts(Service),
     exact_any_score(DeviceHosts, ServiceHosts, 80) + flow_score(Device, Service).
 
+ca_certificate_score(Service, Certificate) ->
+    SourceScore = flow_score(Service, Certificate),
+    case certificate_ca_like(Certificate) of
+        true -> 60 + SourceScore;
+        false -> SourceScore
+    end.
+
 flow_score(Object, Candidate) ->
     same_import_score(Object, Candidate) + same_source_score(Object, Candidate).
 
@@ -113,6 +129,20 @@ same_source_score(Object, Candidate) ->
         {Source, Source} -> 10;
         _ -> 0
     end.
+
+certificate_ca_like(Certificate) ->
+    Source = maps:get(source, Certificate, undefined),
+    Issuer = text_value(maps:get(issuer, Certificate, maps:get(issuer_cn, Certificate, undefined))),
+    Subject = text_value(maps:get(subject, Certificate, maps:get(subject_cn, Certificate, undefined))),
+    Source =:= ca_demo orelse
+        Source =:= ca_certificate orelse
+        contains(Issuer, <<"CN=CA">>) orelse
+        contains(Subject, <<"CN=CA">>).
+
+contains(Value, Pattern) when is_binary(Value) ->
+    binary:match(Value, Pattern) =/= nomatch;
+contains(_Value, _Pattern) ->
+    false.
 
 device_names(Device) ->
     values(Device, [common_name, device_name, hostname, imported_ovpn_device_name,

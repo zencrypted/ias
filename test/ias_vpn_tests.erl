@@ -17,6 +17,29 @@ create_vpn_service_stores_runtime_service_test() ->
     ?assertEqual(tcp, maps:get(protocol, Service)),
     ?assertMatch({ok, _}, ias_demo_store:get(maps:get(id, Service))).
 
+
+create_vpn_service_links_policy_and_ca_certificate_test() ->
+    ias_demo_store:clear(),
+    CaCertificate = ias_demo_store:add_certificate(#{id => <<"vpn_service_ca_certificate">>,
+                                                     source => ca_certificate,
+                                                     subject => <<"CN=CA">>}),
+
+    {ok, Service} = ias_vpn:create_vpn_service(<<"Office VPN">>,
+                                               <<"vpn.example.com">>,
+                                               <<"1194">>,
+                                               udp,
+                                               <<"standard">>,
+                                               maps:get(id, CaCertificate)),
+
+    ?assertEqual(<<"standard">>, maps:get(security_policy_id, Service)),
+    ?assertEqual(maps:get(id, CaCertificate), maps:get(ca_certificate_id, Service)),
+    ?assertMatch({linked, _}, ias_relationship_link:status(uses_security_policy,
+                                                           maps:get(id, Service),
+                                                           <<"standard">>)),
+    ?assertMatch({linked, _}, ias_relationship_link:status(uses_ca_certificate,
+                                                           maps:get(id, Service),
+                                                           maps:get(id, CaCertificate))).
+
 create_vpn_service_requires_remote_host_test() ->
     ias_demo_store:clear(),
 
@@ -28,4 +51,6 @@ vpn_page_renders_create_service_form_test() ->
 
     ?assertMatch({_, _}, binary:match(Html, <<"Create VPN Service">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Remote Host">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Security Policy">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"CA Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Managed VPN Services">>)).
