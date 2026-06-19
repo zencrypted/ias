@@ -1,6 +1,7 @@
 -module(ias_ovpn_export).
 -export([certificate_preview/1,
          device_preview/1,
+         service_preview/1,
          ovpn_provisioning_decision/1,
          certificate_artifact/1,
          device_artifact/1,
@@ -38,6 +39,56 @@ safe_filename_char($_) -> $_;
 safe_filename_char($-) -> $-;
 safe_filename_char($.) -> $.;
 safe_filename_char(_) -> $_.
+
+
+service_preview(ServiceId) ->
+    case ias_demo_store:get(ServiceId) of
+        {ok, #{kind := vpn_service} = Service} ->
+            Policy = ias_security_profile:applied_policy(Service),
+            CaCertificate = linked_ca_certificate(Service),
+            {RemoteHost, RemotePort} = remote_endpoint(Service),
+            Protocol = protocol(Service),
+            #{authorization => service_export_authorization(Service, CaCertificate),
+              authorization_reason => service_export_reason(Service, CaCertificate),
+              device_id => not_found,
+              certificate_id => not_found,
+              vpn_service_id => object_id(Service),
+              ca_certificate_id => object_id(CaCertificate),
+              ca_certificate_status => ca_certificate_status(CaCertificate),
+              device_lock => policy_device_lock(Policy),
+              two_factor => policy_two_factor(Policy),
+              remote_host => RemoteHost,
+              remote_port => RemotePort,
+              protocol => Protocol,
+              certificate_status => not_applicable,
+              preview => ovpn_skeleton(RemoteHost, RemotePort, Protocol)};
+        _ ->
+            denied_preview(<<"vpn service not found">>)
+    end.
+
+service_export_authorization(Service, CaCertificate) ->
+    case service_export_reasons(Service, CaCertificate) of
+        [] -> allow;
+        _ -> deny
+    end.
+
+service_export_reason(Service, CaCertificate) ->
+    case service_export_reasons(Service, CaCertificate) of
+        [] -> <<"VPN service is ready for OVPN export preview">>;
+        Reasons -> reason_text(Reasons)
+    end.
+
+service_export_reasons(Service, CaCertificate) ->
+    EndpointReasons = case remote_endpoint(Service) of
+        {<<"not found">>, _} -> [<<"no vpn endpoint">>];
+        {_, <<"not found">>} -> [<<"no vpn endpoint">>];
+        _ -> []
+    end,
+    CaReasons = case CaCertificate of
+        not_found -> [<<"no CA certificate">>];
+        _ -> []
+    end,
+    unique_reasons(EndpointReasons ++ CaReasons).
 
 device_preview(DeviceId) ->
     case ias_demo_store:get(DeviceId) of

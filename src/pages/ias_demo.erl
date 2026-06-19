@@ -802,6 +802,10 @@ ovpn_export_preview(#{kind := certificate} = Object) ->
     ObjectId = maps:get(id, Object, undefined),
     Preview = ias_ovpn_export:certificate_preview(ObjectId),
     ovpn_export_card(Preview, certificate, ObjectId);
+ovpn_export_preview(#{kind := vpn_service} = Object) ->
+    ObjectId = maps:get(id, Object, undefined),
+    Preview = ias_ovpn_export:service_preview(ObjectId),
+    ovpn_service_export_card(Preview);
 ovpn_export_preview(_Object) ->
     [].
 
@@ -826,6 +830,32 @@ ovpn_export_card(Preview, SubjectKind, SubjectId) ->
         ovpn_configuration_section(Preview, SubjectKind, SubjectId),
         #panel{id = ovpn_export_result_id(SubjectKind, SubjectId)}
     ]}.
+
+
+ovpn_service_export_card(Preview) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("OVPN EXPORT READINESS")},
+        #p{body = ias_html:text("Shows whether this VPN service has enough provisioning metadata to be used as an OVPN export source.")},
+        key_value_table([
+            {"Export Status", ovpn_provisioning_status(Preview)},
+            {"Reason", ovpn_authorization_reason(Preview)},
+            {"Remote Endpoint", ovpn_remote_endpoint(Preview)}
+        ]),
+        #h3{body = ias_html:text("Export Readiness")},
+        key_value_table([
+            {"VPN Endpoint", ovpn_endpoint_status(Preview)},
+            {"CA Certificate", maps:get(ca_certificate_status, Preview, missing)},
+            {"Client Certificate", <<"selected during user/device provisioning">>},
+            {"Export Artifact", service_export_artifact_status(Preview)}
+        ]),
+        #h3{body = ias_html:text("Profile Components")},
+        ovpn_components_table(Preview)
+    ]}.
+
+service_export_artifact_status(#{authorization := allow}) ->
+    <<"available after certificate selection">>;
+service_export_artifact_status(_Preview) ->
+    <<"unavailable">>.
 
 ovpn_provisioning_status(#{authorization := allow}) ->
     <<"ready for export preview">>;

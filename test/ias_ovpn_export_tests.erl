@@ -144,6 +144,23 @@ allowed_device_generates_demo_ovpn_artifact_test() ->
     ?assertMatch({_, _}, binary:match(Content, <<"client">>)),
     ?assertMatch({_, _}, binary:match(Content, <<"remote vpn.example.com 1194">>)).
 
+
+vpn_service_demo_page_renders_export_readiness_test() ->
+    ias_demo_store:clear(),
+    #{service := Service} = setup_ready_device(default_user),
+    CaCertificate = ias_demo_store:add_certificate(#{id => <<"ovpn_export_service_ca_certificate">>,
+                                                     source => ca_certificate,
+                                                     subject => <<"CN=CA">>}),
+    {ok, _CaLink} = ias_relationship_link:create(uses_ca_certificate,
+                                                 maps:get(id, Service),
+                                                 maps:get(id, CaCertificate)),
+
+    Html = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Service))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"OVPN EXPORT READINESS">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"VPN service is ready for OVPN export preview">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"selected during user/device provisioning">>)).
+
 graph_analysis_report_includes_ovpn_export_summary_test() ->
     ias_demo_store:clear(),
     #{device := Device, certificate := Certificate} = setup_ready_device(administrator),
