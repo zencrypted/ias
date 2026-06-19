@@ -75,17 +75,10 @@ relationship_filter_panel(Filter0, VisibleCount, TotalCount) ->
 
 relationship_filter_checkbox(Category, Label, Filter) ->
     Checked = filter_checked(Category, Filter),
-    CheckText = case Checked of
-                    true -> <<"☑ ">>;
-                    false -> <<"☐ ">>
-                end,
-    Class = case Checked of
-                true -> <<"button sgreen ias-filter-checkbox">>;
-                false -> <<"button ias-filter-checkbox">>
-            end,
-    #link{class = Class,
-          body = ias_html:join([CheckText, Label]),
-          postback = {relationship_filter_toggle, Filter, Category}}.
+    #checkbox{class = <<"ias-filter-checkbox">>,
+              checked = Checked,
+              body = ias_html:text(Label),
+              postback = {relationship_filter_toggle, Filter, Category}}.
 
 filter_checked(all, Filter) ->
     lists:member(all, normalize_filters(Filter));

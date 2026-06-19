@@ -979,27 +979,30 @@ body.form-grid-page .app {
 .ias-filter-actions {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 14px;
   align-items: center;
 }
 
-.ias-filter-actions .button,
-.ias-filter-actions .button.sgreen {
-  min-width: 0;
-  padding: 5px 9px;
-  border-radius: 4px;
-  font-size: 12px;
-  line-height: 1.2;
-}
-
 .ias-filter-checkboxes {
-  gap: 6px 10px;
+  gap: 7px 16px;
 }
 
-.ias-filter-checkboxes .ias-filter-checkbox,
-.ias-filter-checkboxes .button.ias-filter-checkbox,
-.ias-filter-checkboxes .button.sgreen.ias-filter-checkbox {
-  text-align: left;
+.ias-filter-checkboxes label.ias-filter-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 22px;
+  color: var(--text-primary, #0f172a);
   font-family: inherit;
+  font-size: 13px;
+  line-height: 1.25;
   white-space: nowrap;
+  cursor: pointer;
+}
+
+.ias-filter-checkboxes input.ias-filter-checkbox[type="checkbox"] {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  cursor: pointer;
 }
