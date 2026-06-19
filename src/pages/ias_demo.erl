@@ -814,6 +814,13 @@ ovpn_export_card(Preview, SubjectKind, SubjectId) ->
             {"Reason", ovpn_authorization_reason(Preview)},
             {"Remote Endpoint", ovpn_remote_endpoint(Preview)}
         ]),
+        #h3{body = ias_html:text("Export Readiness")},
+        key_value_table([
+            {"VPN Endpoint", ovpn_endpoint_status(Preview)},
+            {"CA Certificate", maps:get(ca_certificate_status, Preview, missing)},
+            {"Certificate", maps:get(certificate_status, Preview, unknown)},
+            {"Export Artifact", case maps:get(authorization, Preview, deny) of allow -> <<"available">>; _ -> <<"unavailable">> end}
+        ]),
         #h3{body = ias_html:text("Profile Components")},
         ovpn_components_table(Preview),
         ovpn_configuration_section(Preview, SubjectKind, SubjectId),
