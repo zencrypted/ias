@@ -959,3 +959,35 @@ body.form-grid-page .app {
 .ias-tree-badge-editable {
   color: #2563eb;
 }
+
+.ias-relationship-filter {
+  margin: 12px 0 14px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, rgba(15, 23, 42, 0.12));
+  background: var(--bg-subtle, rgba(15, 23, 42, 0.03));
+}
+
+.ias-relationship-filter h3 {
+  margin-top: 0;
+}
+
+.ias-relationship-filter p {
+  margin: 6px 0 10px 0;
+  color: var(--text-secondary, #475569);
+}
+
+.ias-filter-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.ias-filter-actions .button,
+.ias-filter-actions .button.sgreen {
+  min-width: 0;
+  padding: 5px 9px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.2;
+}

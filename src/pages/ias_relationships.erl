@@ -3,34 +3,42 @@
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
-    render();
+    render(operational);
 event({unlink_relationship, RelationshipId}) ->
     _ = ias_relationship_link:unlink(RelationshipId),
-    render();
+    render(operational);
 event({replace_certificate, DeviceId}) ->
     _ = ias_certificate_replacement:replace(DeviceId),
-    render();
+    render(operational);
+event({relationship_filter, Filter}) ->
+    render(Filter);
 event(_) ->
     ok.
 
 render() ->
+    render(operational).
+
+render(Filter) ->
     %% Use Nitro DOM operations instead of raw innerHTML injection.
     %% Raw innerHTML makes rendered #link postbacks appear in the DOM,
     %% but their client-side actions are not reliably wired.
     nitro:clear(stand),
-    nitro:insert_bottom(stand, content()).
+    nitro:insert_bottom(stand, content(Filter)).
 
-content() ->
+content(Filter) ->
     Summary = ias_relationship_graph:summary(),
     Categories = ias_relationship_graph:categorized_relationships(),
+    KnownRelationships = maps:get(known, Categories, []),
+    VisibleKnownRelationships = filter_relationships(KnownRelationships, Filter),
     Report = ias_relationship_graph:graph_consistency_report(),
     Analysis = ias_graph_analysis:report(),
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Relationship Explorer")},
         #p{body = ias_html:text("Read-only IAS object graph inspection.")},
         summary_panel(Summary),
+        relationship_filter_panel(Filter, length(VisibleKnownRelationships), length(KnownRelationships)),
         #h3{body = ias_html:text("Relationships")},
-        relationship_table(maps:get(known, Categories, []), <<"not linked yet">>),
+        relationship_table(VisibleKnownRelationships, <<"not linked yet">>),
         #h3{body = ias_html:text("Unknown Relationships")},
         relationship_table(maps:get(unknown, Categories, []), <<"not linked yet">>),
         #h3{body = ias_html:text("Broken Relationships")},
@@ -40,6 +48,79 @@ content() ->
         #h3{body = ias_html:text("GRAPH ANALYSIS")},
         analysis_table(Analysis)
     ]}.
+
+
+relationship_filter_panel(Filter, VisibleCount, TotalCount) ->
+    #panel{class = <<"ias-relationship-filter">>, body = [
+        #h3{body = ias_html:text("Graph View")},
+        #p{body = ias_html:join([
+            <<"Showing ">>, VisibleCount, <<" of ">>, TotalCount,
+            <<" known relationships. Audit/verification history is hidden in Operational view. ">>,
+            <<"Use focused views when the full graph becomes noisy.">>
+        ])},
+        #panel{class = <<"ias-filter-actions">>, body = [
+            relationship_filter_button(operational, "Operational", Filter),
+            relationship_filter_button(users, "Users", Filter),
+            relationship_filter_button(devices, "Devices", Filter),
+            relationship_filter_button(vpn_services, "VPN Services", Filter),
+            relationship_filter_button(certificates, "Certificates", Filter),
+            relationship_filter_button(audit, "Audit / Verification", Filter),
+            relationship_filter_button(all, "All", Filter)
+        ]}
+    ]}.
+
+relationship_filter_button(Value, Label, Current) ->
+    Class = case Value =:= Current of
+                true -> [button, sgreen];
+                false -> [button]
+            end,
+    #link{class = Class,
+          body = ias_html:text(Label),
+          postback = {relationship_filter, Value}}.
+
+filter_relationships(Relationships, all) ->
+    Relationships;
+filter_relationships(Relationships, operational) ->
+    [Relationship || Relationship <- Relationships,
+                     not audit_relationship(Relationship)];
+filter_relationships(Relationships, audit) ->
+    [Relationship || Relationship <- Relationships,
+                     audit_relationship(Relationship)];
+filter_relationships(Relationships, users) ->
+    [Relationship || Relationship <- Relationships,
+                     relationship_has_kind(Relationship, user)];
+filter_relationships(Relationships, devices) ->
+    [Relationship || Relationship <- Relationships,
+                     relationship_has_kind(Relationship, device)];
+filter_relationships(Relationships, vpn_services) ->
+    [Relationship || Relationship <- Relationships,
+                     relationship_has_kind(Relationship, vpn_service)];
+filter_relationships(Relationships, certificates) ->
+    [Relationship || Relationship <- Relationships,
+                     relationship_has_certificate_kind(Relationship)];
+filter_relationships(Relationships, _) ->
+    filter_relationships(Relationships, operational).
+
+audit_relationship(Relationship) ->
+    RelationType = maps:get(relation_type, Relationship, undefined),
+    SourceKind = maps:get(source_kind, Relationship, undefined),
+    TargetKind = maps:get(target_kind, Relationship, undefined),
+    lists:member(RelationType, [verified_by, revoked_by]) orelse
+        lists:member(SourceKind, [verification, certificate_revocation]) orelse
+        lists:member(TargetKind, [verification, certificate_revocation]).
+
+relationship_has_kind(Relationship, Kind) ->
+    maps:get(source_kind, Relationship, undefined) =:= Kind orelse
+        maps:get(target_kind, Relationship, undefined) =:= Kind.
+
+relationship_has_certificate_kind(Relationship) ->
+    CertificateKinds = [certificate,
+                        cmp_enrollment_result,
+                        certificate_enrollment,
+                        certificate_replacement,
+                        certificate_revocation],
+    lists:member(maps:get(source_kind, Relationship, undefined), CertificateKinds) orelse
+        lists:member(maps:get(target_kind, Relationship, undefined), CertificateKinds).
 
 summary_panel(Summary) ->
     #panel{class = <<"ias-summary">>, body = [
