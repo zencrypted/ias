@@ -89,6 +89,41 @@ denied_ovpn_export_preview_renders_warning_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Profile Generation Blocked">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"remote vpn.example.com 1194">>)).
 
+
+allowed_certificate_generates_demo_ovpn_artifact_test() ->
+    ias_demo_store:clear(),
+    #{certificate := Certificate} = setup_ready_device(default_user),
+
+    {ok, Filename, Content} = ias_ovpn_export:certificate_artifact(maps:get(id, Certificate)),
+
+    ?assertMatch({_, _}, binary:match(Filename, <<".ovpn">>)),
+    ?assertMatch({_, _}, binary:match(Content, <<"remote vpn.example.com 1194">>)),
+    ?assertMatch({_, _}, binary:match(Content, <<"# device-owned private key">>)),
+    ?assertEqual(nomatch, binary:match(Content, <<"PRIVATE KEY-----">>)),
+    ?assertEqual(nomatch, binary:match(Content, <<"BEGIN CERTIFICATE">>)).
+
+denied_certificate_rejects_demo_ovpn_artifact_test() ->
+    ias_demo_store:clear(),
+    Certificate = ias_demo_store:add_certificate(#{id => <<"ovpn_export_denied_artifact_certificate">>,
+                                                   source => certificate_issue_demo,
+                                                   profile_id => administrator,
+                                                   private_key_stored => false,
+                                                   certificate_body_stored => false}),
+
+    {error, Reason} = ias_ovpn_export:certificate_artifact(maps:get(id, Certificate)),
+
+    ?assertEqual(<<"no device binding">>, Reason).
+
+allowed_device_generates_demo_ovpn_artifact_test() ->
+    ias_demo_store:clear(),
+    #{device := Device} = setup_ready_device(administrator),
+
+    {ok, Filename, Content} = ias_ovpn_export:device_artifact(maps:get(id, Device)),
+
+    ?assertMatch({_, _}, binary:match(Filename, <<".ovpn">>)),
+    ?assertMatch({_, _}, binary:match(Content, <<"client">>)),
+    ?assertMatch({_, _}, binary:match(Content, <<"remote vpn.example.com 1194">>)).
+
 graph_analysis_report_includes_ovpn_export_summary_test() ->
     ias_demo_store:clear(),
     #{device := Device, certificate := Certificate} = setup_ready_device(administrator),

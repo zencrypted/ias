@@ -1,7 +1,43 @@
 -module(ias_ovpn_export).
 -export([certificate_preview/1,
          device_preview/1,
-         ovpn_provisioning_decision/1]).
+         ovpn_provisioning_decision/1,
+         certificate_artifact/1,
+         device_artifact/1,
+         export_artifact/1]).
+
+
+export_artifact(CertificateId) ->
+    certificate_artifact(CertificateId).
+
+certificate_artifact(CertificateId) ->
+    artifact_from_preview(certificate_preview(CertificateId), CertificateId).
+
+device_artifact(DeviceId) ->
+    artifact_from_preview(device_preview(DeviceId), DeviceId).
+
+artifact_from_preview(Preview, SubjectId) ->
+    case maps:get(authorization, Preview, deny) of
+        allow ->
+            {ok, artifact_filename(SubjectId), maps:get(preview, Preview, <<>>)};
+        _ ->
+            {error, maps:get(authorization_reason, Preview, <<"OVPN provisioning denied">>)}
+    end.
+
+artifact_filename(SubjectId) ->
+    SafeId = safe_filename_part(ias_html:text(SubjectId)),
+    ias_html:join([SafeId, <<".ovpn">>]).
+
+safe_filename_part(Value) ->
+    << <<(safe_filename_char(Char))>> || <<Char>> <= Value >>.
+
+safe_filename_char(Char) when Char >= $a, Char =< $z -> Char;
+safe_filename_char(Char) when Char >= $A, Char =< $Z -> Char;
+safe_filename_char(Char) when Char >= $0, Char =< $9 -> Char;
+safe_filename_char($_) -> $_;
+safe_filename_char($-) -> $-;
+safe_filename_char($.) -> $.;
+safe_filename_char(_) -> $_.
 
 device_preview(DeviceId) ->
     case ias_demo_store:get(DeviceId) of
