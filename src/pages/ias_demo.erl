@@ -56,6 +56,7 @@ detail(Object) ->
         certificate_lifecycle_preview(Object),
         operational_readiness_preview(Object),
         effective_status_preview(Object),
+        identity_authorization_status(Object),
         authorization_decision_preview(Object),
         authorization_matrix_preview(Object),
         authorization_enforcement_preview(Object),
@@ -546,10 +547,36 @@ authorization_decision_preview(#{kind := certificate} = Object) ->
                                                                        use_ias),
             authorization_decision_card(use_ias, Decision);
         false ->
-            certificate_role_authorization_not_applicable("ACTION AUTHORIZATION PREVIEW", Object)
+            []
     end;
 authorization_decision_preview(_Object) ->
     [].
+
+identity_authorization_status(#{kind := certificate} = Object) ->
+    case role_authorization_applicable(Object) of
+        true ->
+            [];
+        false ->
+            #panel{class = <<"ias-status-card">>, body = [
+                #h3{body = ias_html:text("IDENTITY AUTHORIZATION STATUS")},
+                #p{body = ias_html:text(role_authorization_intro(Object))},
+                key_value_table([
+                    {"Status", role_authorization_status(Object)},
+                    {"Reason", role_authorization_reason(Object)}
+                ]),
+                certificate_role_next_step(Object)
+            ]}
+    end;
+identity_authorization_status(_Object) ->
+    [].
+
+role_authorization_status(Certificate) ->
+    case {ias_certificate_detail:certificate_class(Certificate), issued_certificate_id(Certificate)} of
+        {<<"Enrollment Certificate">>, not_found} -> <<"ready for issuance">>;
+        {<<"Enrollment Certificate">>, _IssuedCertificateId} -> <<"already issued">>;
+        {<<"Imported OVPN Certificate">>, _} -> <<"imported artifact">>;
+        _ -> <<"not applicable">>
+    end.
 
 authorization_matrix_preview(#{kind := certificate} = Object) ->
     case role_authorization_applicable(Object) of
@@ -563,7 +590,7 @@ authorization_matrix_preview(#{kind := certificate} = Object) ->
                 authorization_matrix_table(Decisions)
             ]};
         false ->
-            certificate_role_authorization_not_applicable("ROLE AUTHORIZATION MATRIX", Object)
+            []
     end;
 authorization_matrix_preview(_Object) ->
     [].
@@ -728,7 +755,7 @@ authorization_enforcement_preview(#{kind := certificate} = Object) ->
                 enforcement_table(Enforcements)
             ]};
         false ->
-            certificate_role_authorization_not_applicable("OPERATION ENFORCEMENT PREVIEW", Object)
+            []
     end;
 authorization_enforcement_preview(_Object) ->
     [].
