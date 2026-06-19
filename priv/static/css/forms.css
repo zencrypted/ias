@@ -991,3 +991,15 @@ body.form-grid-page .app {
   font-size: 12px;
   line-height: 1.2;
 }
+
+.ias-filter-checkboxes {
+  gap: 6px 10px;
+}
+
+.ias-filter-checkboxes .ias-filter-checkbox,
+.ias-filter-checkboxes .button.ias-filter-checkbox,
+.ias-filter-checkboxes .button.sgreen.ias-filter-checkbox {
+  text-align: left;
+  font-family: inherit;
+  white-space: nowrap;
+}

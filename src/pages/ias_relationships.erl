@@ -3,20 +3,24 @@
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
-    render(operational);
+    render(default_filters());
 event({unlink_relationship, RelationshipId}) ->
     _ = ias_relationship_link:unlink(RelationshipId),
-    render(operational);
+    render(default_filters());
 event({replace_certificate, DeviceId}) ->
     _ = ias_certificate_replacement:replace(DeviceId),
-    render(operational);
+    render(default_filters());
+event({relationship_filters, Filters}) ->
+    render(normalize_filters(Filters));
+event({relationship_filter_toggle, Filter, Category}) ->
+    render(toggle_filter(Filter, Category));
 event({relationship_filter, Filter}) ->
-    render(Filter);
+    render(normalize_filters(Filter));
 event(_) ->
     ok.
 
 render() ->
-    render(operational).
+    render(default_filters()).
 
 render(Filter) ->
     %% Use Nitro DOM operations instead of raw innerHTML injection.
@@ -50,56 +54,102 @@ content(Filter) ->
     ]}.
 
 
-relationship_filter_panel(Filter, VisibleCount, TotalCount) ->
+relationship_filter_panel(Filter0, VisibleCount, TotalCount) ->
+    Filter = normalize_filters(Filter0),
     #panel{class = <<"ias-relationship-filter">>, body = [
-        #h3{body = ias_html:text("Graph View")},
+        #h3{body = ias_html:text("Graph Filters")},
         #p{body = ias_html:join([
             <<"Showing ">>, VisibleCount, <<" of ">>, TotalCount,
-            <<" known relationships. Audit/verification history is hidden in Operational view. ">>,
-            <<"Use focused views when the full graph becomes noisy.">>
+            <<" known relationships. Verification and audit history is hidden unless explicitly enabled.">>
         ])},
-        #panel{class = <<"ias-filter-actions">>, body = [
-            relationship_filter_button(operational, "Operational", Filter),
-            relationship_filter_button(users, "Users", Filter),
-            relationship_filter_button(devices, "Devices", Filter),
-            relationship_filter_button(vpn_services, "VPN Services", Filter),
-            relationship_filter_button(certificates, "Certificates", Filter),
-            relationship_filter_button(audit, "Audit / Verification", Filter),
-            relationship_filter_button(all, "All", Filter)
+        #panel{class = <<"ias-filter-actions ias-filter-checkboxes">>, body = [
+            relationship_filter_checkbox(users, "Users", Filter),
+            relationship_filter_checkbox(devices, "Devices", Filter),
+            relationship_filter_checkbox(certificates, "Certificates", Filter),
+            relationship_filter_checkbox(vpn_services, "VPN Services", Filter),
+            relationship_filter_checkbox(security_policies, "Security Profiles / Policies", Filter),
+            relationship_filter_checkbox(audit, "Audit / Verification History", Filter),
+            relationship_filter_checkbox(all, "All Relationships", Filter)
         ]}
     ]}.
 
-relationship_filter_button(Value, Label, Current) ->
-    Class = case Value =:= Current of
-                true -> [button, sgreen];
-                false -> [button]
+relationship_filter_checkbox(Category, Label, Filter) ->
+    Checked = filter_checked(Category, Filter),
+    CheckText = case Checked of
+                    true -> <<"☑ ">>;
+                    false -> <<"☐ ">>
+                end,
+    Class = case Checked of
+                true -> <<"button sgreen ias-filter-checkbox">>;
+                false -> <<"button ias-filter-checkbox">>
             end,
     #link{class = Class,
-          body = ias_html:text(Label),
-          postback = {relationship_filter, Value}}.
+          body = ias_html:join([CheckText, Label]),
+          postback = {relationship_filter_toggle, Filter, Category}}.
 
-filter_relationships(Relationships, all) ->
-    Relationships;
-filter_relationships(Relationships, operational) ->
-    [Relationship || Relationship <- Relationships,
-                     not audit_relationship(Relationship)];
-filter_relationships(Relationships, audit) ->
-    [Relationship || Relationship <- Relationships,
-                     audit_relationship(Relationship)];
-filter_relationships(Relationships, users) ->
-    [Relationship || Relationship <- Relationships,
-                     relationship_has_kind(Relationship, user)];
-filter_relationships(Relationships, devices) ->
-    [Relationship || Relationship <- Relationships,
-                     relationship_has_kind(Relationship, device)];
-filter_relationships(Relationships, vpn_services) ->
-    [Relationship || Relationship <- Relationships,
-                     relationship_has_kind(Relationship, vpn_service)];
-filter_relationships(Relationships, certificates) ->
-    [Relationship || Relationship <- Relationships,
-                     relationship_has_certificate_kind(Relationship)];
-filter_relationships(Relationships, _) ->
-    filter_relationships(Relationships, operational).
+filter_checked(all, Filter) ->
+    lists:member(all, normalize_filters(Filter));
+filter_checked(Category, Filter) ->
+    Normalized = normalize_filters(Filter),
+    lists:member(all, Normalized) orelse lists:member(Category, Normalized).
+
+toggle_filter(Filter0, all) ->
+    Filter = normalize_filters(Filter0),
+    case lists:member(all, Filter) of
+        true -> default_filters();
+        false -> [all]
+    end;
+toggle_filter(Filter0, Category) ->
+    Filter = lists:delete(all, normalize_filters(Filter0)),
+    Toggled = case lists:member(Category, Filter) of
+                  true -> lists:delete(Category, Filter);
+                  false -> [Category | Filter]
+              end,
+    case Toggled of
+        [] -> default_filters();
+        _ -> lists:sort(Toggled)
+    end.
+
+default_filters() ->
+    [certificates, devices, security_policies, users, vpn_services].
+
+normalize_filters(all) -> [all];
+normalize_filters(operational) -> default_filters();
+normalize_filters(audit) -> [audit];
+normalize_filters(users) -> [users];
+normalize_filters(devices) -> [devices];
+normalize_filters(vpn_services) -> [vpn_services];
+normalize_filters(certificates) -> [certificates];
+normalize_filters(security_policies) -> [security_policies];
+normalize_filters(Filter) when is_list(Filter) ->
+    Allowed = [all, users, devices, certificates, vpn_services, security_policies, audit],
+    Normalized = lists:usort([Item || Item <- Filter, lists:member(Item, Allowed)]),
+    case Normalized of
+        [] -> default_filters();
+        _ -> Normalized
+    end;
+normalize_filters(_) ->
+    default_filters().
+
+filter_relationships(Relationships, Filter0) ->
+    Filter = normalize_filters(Filter0),
+    case lists:member(all, Filter) of
+        true -> Relationships;
+        false -> [Relationship || Relationship <- Relationships,
+                                  relationship_matches_filters(Relationship, Filter)]
+    end.
+
+relationship_matches_filters(Relationship, Filter) ->
+    Audit = audit_relationship(Relationship),
+    (lists:member(audit, Filter) andalso Audit) orelse
+        ((not Audit) andalso relationship_matches_operational_filters(Relationship, Filter)).
+
+relationship_matches_operational_filters(Relationship, Filter) ->
+    (lists:member(users, Filter) andalso relationship_has_kind(Relationship, user)) orelse
+        (lists:member(devices, Filter) andalso relationship_has_kind(Relationship, device)) orelse
+        (lists:member(vpn_services, Filter) andalso relationship_has_kind(Relationship, vpn_service)) orelse
+        (lists:member(certificates, Filter) andalso relationship_has_certificate_kind(Relationship)) orelse
+        (lists:member(security_policies, Filter) andalso relationship_has_security_kind(Relationship)).
 
 audit_relationship(Relationship) ->
     RelationType = maps:get(relation_type, Relationship, undefined),
@@ -121,6 +171,10 @@ relationship_has_certificate_kind(Relationship) ->
                         certificate_revocation],
     lists:member(maps:get(source_kind, Relationship, undefined), CertificateKinds) orelse
         lists:member(maps:get(target_kind, Relationship, undefined), CertificateKinds).
+
+relationship_has_security_kind(Relationship) ->
+    relationship_has_kind(Relationship, security_profile) orelse
+        relationship_has_kind(Relationship, security_policy).
 
 summary_panel(Summary) ->
     #panel{class = <<"ias-summary">>, body = [
