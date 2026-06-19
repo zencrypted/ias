@@ -75,7 +75,8 @@ demo_pages_render_ovpn_export_preview_test() ->
     ?assertMatch({_, _}, binary:match(DeviceHtml, <<"OVPN EXPORT PREVIEW">>)),
     ?assertMatch({_, _}, binary:match(DeviceHtml, <<"remote vpn.example.com 1194">>)),
     ?assertMatch({_, _}, binary:match(CertificateHtml, <<"OVPN EXPORT PREVIEW">>)),
-    ?assertMatch({_, _}, binary:match(CertificateHtml, <<"# not exported by IAS">>)).
+    ?assertMatch({_, _}, binary:match(CertificateHtml, <<"# not exported by IAS">>)),
+    ?assertMatch({_, _}, binary:match(CertificateHtml, <<"Download Demo OVPN">>)).
 
 denied_ovpn_export_preview_renders_warning_test() ->
     ias_demo_store:clear(),
@@ -87,7 +88,8 @@ denied_ovpn_export_preview_renders_warning_test() ->
     ?assertMatch({_, _}, binary:match(Html,
         <<"OVPN profile would not be provisioned because OVPN provisioning is denied.">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Profile Generation Blocked">>)),
-    ?assertEqual(nomatch, binary:match(Html, <<"remote vpn.example.com 1194">>)).
+    ?assertEqual(nomatch, binary:match(Html, <<"remote vpn.example.com 1194">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Download Demo OVPN">>)).
 
 
 allowed_certificate_generates_demo_ovpn_artifact_test() ->

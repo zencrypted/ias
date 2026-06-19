@@ -25,6 +25,10 @@ event({revoke_certificate, CertificateId}) ->
     _ = ias_certificate_revocation:revoke(CertificateId),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event({download_ovpn_artifact, device, DeviceId}) ->
+    download_ovpn_artifact(ias_ovpn_export:device_artifact(DeviceId));
+event({download_ovpn_artifact, certificate, CertificateId}) ->
+    download_ovpn_artifact(ias_ovpn_export:certificate_artifact(CertificateId));
 event(_) ->
     ok.
 
@@ -780,15 +784,17 @@ enforcement_row(Enforcement) ->
     ]}.
 
 ovpn_export_preview(#{kind := device} = Object) ->
-    Preview = ias_ovpn_export:device_preview(maps:get(id, Object, undefined)),
-    ovpn_export_card(Preview);
+    ObjectId = maps:get(id, Object, undefined),
+    Preview = ias_ovpn_export:device_preview(ObjectId),
+    ovpn_export_card(Preview, device, ObjectId);
 ovpn_export_preview(#{kind := certificate} = Object) ->
-    Preview = ias_ovpn_export:certificate_preview(maps:get(id, Object, undefined)),
-    ovpn_export_card(Preview);
+    ObjectId = maps:get(id, Object, undefined),
+    Preview = ias_ovpn_export:certificate_preview(ObjectId),
+    ovpn_export_card(Preview, certificate, ObjectId);
 ovpn_export_preview(_Object) ->
     [].
 
-ovpn_export_card(Preview) ->
+ovpn_export_card(Preview, SubjectKind, SubjectId) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("OVPN EXPORT PREVIEW")},
         key_value_table([
@@ -799,7 +805,8 @@ ovpn_export_card(Preview) ->
         ]),
         #h3{body = ias_html:text("Profile Components")},
         ovpn_components_table(Preview),
-        ovpn_configuration_section(Preview)
+        ovpn_configuration_section(Preview, SubjectKind, SubjectId),
+        #panel{id = ovpn_export_result_id(SubjectKind, SubjectId)}
     ]}.
 
 ovpn_provisioning_status(#{authorization := allow}) ->
@@ -877,12 +884,17 @@ ovpn_two_factor_note(#{two_factor := optional}) ->
 ovpn_two_factor_note(_Preview) ->
     <<"2FA is disabled">>.
 
-ovpn_configuration_section(#{authorization := allow} = Preview) ->
+ovpn_configuration_section(#{authorization := allow} = Preview, SubjectKind, SubjectId) ->
     #panel{body = [
         #h3{body = ias_html:text("Configuration Skeleton")},
-        ovpn_profile_block(maps:get(preview, Preview, <<>>))
+        ovpn_profile_block(maps:get(preview, Preview, <<>>)),
+        #panel{style = <<"margin-top:12px;">>, body = [
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Download Demo OVPN"),
+                  postback = {download_ovpn_artifact, SubjectKind, SubjectId}}
+        ]}
     ]};
-ovpn_configuration_section(Preview) ->
+ovpn_configuration_section(Preview, _SubjectKind, _SubjectId) ->
     #panel{body = [
         #h3{body = ias_html:text("Profile Generation Blocked")},
         #p{style = <<"color:#b45309;font-weight:600;">>,
@@ -897,6 +909,60 @@ ovpn_profile_block(Profile) ->
                      "background:#0f172a;color:#e5e7eb;padding:12px;border-radius:6px;",
                      "max-width:640px;overflow:auto;">>,
            body = ias_html:text(Profile)}.
+
+download_ovpn_artifact({ok, Filename, Content}) ->
+    nitro:update(ovpn_export_result, ovpn_artifact_ready(Filename, Content)),
+    nitro:wire(ovpn_download_js(Filename, Content));
+download_ovpn_artifact({error, Reason}) ->
+    nitro:update(ovpn_export_result, ovpn_artifact_error(Reason)).
+
+ovpn_artifact_ready(Filename, Content) ->
+    #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #h3{body = ias_html:text("Demo OVPN artifact ready")},
+               key_value_table([
+                   {"Filename", Filename},
+                   {"Bytes", byte_size(Content)}
+               ])
+           ]}.
+
+ovpn_artifact_error(Reason) ->
+    #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
+           body = [
+               #h3{body = ias_html:text("Demo OVPN artifact unavailable")},
+               key_value_table([
+                   {"Reason", Reason}
+               ])
+           ]}.
+
+ovpn_export_result_id(_SubjectKind, _SubjectId) ->
+    ovpn_export_result.
+
+ovpn_download_js(Filename, Content) ->
+    Encoded = base64:encode(Content),
+    SafeFilename = js_string(Filename),
+    [
+        <<"var data=atob('">>, Encoded, <<"');">>,
+        <<"var blob=new Blob([data],{type:'application/x-openvpn-profile'});">>,
+        <<"var url=URL.createObjectURL(blob);">>,
+        <<"var a=document.createElement('a');">>,
+        <<"a.href=url;">>,
+        <<"a.download='">>, SafeFilename, <<"';">>,
+        <<"document.body.appendChild(a);">>,
+        <<"a.click();">>,
+        <<"document.body.removeChild(a);">>,
+        <<"URL.revokeObjectURL(url);">>
+    ].
+
+js_string(Value) ->
+    Text = ias_html:text(Value),
+    << <<(js_string_char(Char))/binary>> || <<Char>> <= Text >>.
+
+js_string_char($\\) -> <<"\\\\">>;
+js_string_char($') -> <<"\\'">>;
+js_string_char($\n) -> <<"\\n">>;
+js_string_char($\r) -> <<"\\r">>;
+js_string_char(Char) -> <<Char>>.
 
 device_readiness(Device) ->
     DeviceId = maps:get(id, Device, undefined),
