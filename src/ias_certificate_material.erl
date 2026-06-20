@@ -1,4 +1,5 @@
 -module(ias_certificate_material).
+-compile({no_auto_import, [get/1]}).
 -export([put/4, get/1, status/1, delete/1, clear/0,
          stage_cmp/2, attach_staged/2]).
 
