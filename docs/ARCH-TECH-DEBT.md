@@ -314,3 +314,99 @@ Do not automatically create relationships in this step. This remains a navigatio
 Low
 
 ---
+
+## TD-007: OVPN Export Readiness Reason Visibility
+
+**Status:** Open
+
+**Area:** Device Detail / OVPN Export Preview
+
+### Problem
+
+The OVPN provisioning UI can currently show a mixed readiness state such as:
+
+```text
+CA Certificate: degraded
+Export Artifact: available
+```
+
+The state is internally consistent: the operator may inspect or download a configuration skeleton even though real CA certificate material is not yet available. However, the readiness table does not explain why the CA certificate is degraded.
+
+Without that explanation, the operator can reasonably interpret `Export Artifact: available` as meaning that a user-deliverable OVPN profile is ready.
+
+### Current Impact
+
+Medium.
+
+The UI does correctly label the configuration as a skeleton elsewhere, but the compact readiness table can still create ambiguity about whether real PEM material has been assembled.
+
+### Desired Direction
+
+Render a concise reason beside degraded material states.
+
+Example:
+
+```text
+CA Certificate: degraded — metadata only, PEM body absent
+Export Artifact: skeleton available
+```
+
+The same pattern should eventually be applied to other provisioning material states, including:
+
+- client certificate body absent;
+- device-owned private key not available to IAS;
+- TLS authentication material absent;
+- provisioning transaction expired.
+
+Keep the wording compact enough for readiness tables and preserve a separate detailed explanation in the provisioning transaction view.
+
+### Priority
+
+Medium
+
+---
+
+## TD-008: OVPN Skeleton And Provisioning Action Separation
+
+**Status:** Open
+
+**Area:** Device Detail / OVPN Provisioning
+
+### Problem
+
+The device detail page currently presents both of these actions in the same provisioning section:
+
+- `Download OVPN Skeleton`;
+- `Create Device-bound Provisioning`.
+
+The first action downloads an operator-facing configuration preview with no real secret material. The second creates a short-lived provisioning transaction that represents an operator workflow toward a real device-bound profile.
+
+Although both labels are technically correct, their visual proximity makes the skeleton download look like an alternative delivery path for the same final artifact.
+
+### Current Impact
+
+Low to medium.
+
+Experienced operators can distinguish the actions from the explanatory text, but new users may expect both buttons to produce usable user-facing VPN profiles.
+
+### Desired Direction
+
+Separate technical preview actions from provisioning actions visually and semantically.
+
+Suggested structure:
+
+```text
+Configuration Preview
+- View OVPN Skeleton
+- Download OVPN Skeleton
+
+Provisioning
+- Create Device-bound Provisioning
+- View Active Provisioning Transaction
+```
+
+The production UI should reserve terms such as `Generate`, `Deliver`, and `Download Profile` for artifacts that contain all required real material and are ready for their intended delivery mode.
+
+### Priority
+
+Medium
