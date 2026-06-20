@@ -94,9 +94,9 @@ User
 
 Stage 20A implements OVPN Export as a read-only preview. The preview shows the
 profile skeleton IAS would provision from the resolved certificate, VPN service,
-security profile, and authorization state. It does not write `.ovpn` files,
-download profiles, embed certificate bodies, embed private keys, or mutate
-runtime state.
+security profile, and authorization state. The skeleton does not embed real CA,
+client certificate or private-key bodies and is not a user-deliverable VPN
+profile.
 
 Stage 20B separates OVPN provisioning authorization from VPN connection
 enforcement. These are related but different decisions:
@@ -113,6 +113,37 @@ Can IAS provision an OVPN profile for this certificate or user?
 
 The export path therefore evaluates an OVPN provisioning decision instead of
 reusing the device VPN connection enforcement result directly.
+
+
+### Stage 23A Provisioning Transaction
+
+Stage 23A adds a volatile provisioning transaction between authorization and
+future material assembly:
+
+```text
+OVPN Provisioning Decision
+-> Provisioning Transaction
+-> Awaiting Real Material
+-> Future One-time User Delivery
+```
+
+Two transaction modes are represented:
+
+- `portable`: future one-time in-memory key/profile assembly for delivery to a
+  user-selected device;
+- `device_bound`: device-owned key material and delivery to an approved bound
+  device.
+
+The transaction stores references and lifecycle metadata only. An authorized
+transaction has `status = awaiting_material`, `material_status =
+pending_real_material`, `artifact_status = skeleton_only`, and
+`delivery_status = not_ready`. It includes an expiry and a future `downloaded`
+flag, but Stage 23A does not yet perform a one-time secret download.
+
+The transaction never stores private-key, client certificate or CA bodies. The
+current **Download OVPN Skeleton** action remains a non-secret operator preview.
+The next production-oriented stage must assemble real material and enforce the
+one-time delivery transition.
 
 ### Manual VPN Service Provisioning Metadata
 

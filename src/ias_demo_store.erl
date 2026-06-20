@@ -244,6 +244,7 @@ kind_order(vpn_service) -> 7;
 kind_order(security_profile) -> 8;
 kind_order(security_policy) -> 9;
 kind_order(relationship) -> 10;
+kind_order(ovpn_provisioning) -> 11;
 kind_order(_) -> 99.
 
 import_id() ->

@@ -557,6 +557,35 @@ Expected IAS outputs for VPN runtime:
 - authorization decision
 - denial reason when access is blocked
 
+
+### OVPN Provisioning Transaction Object
+
+Stage 23A adds a volatile runtime object that makes the delivery boundary
+explicit:
+
+```text
+Certificate or Device
+      ↓
+OVPN Provisioning Decision
+      ↓
+OVPN Provisioning Transaction
+      ↓
+Awaiting Real Material
+```
+
+The object kind is `ovpn_provisioning`. It references the selected subject,
+certificate, device, VPN service and CA certificate and records either
+`portable` or `device_bound` mode. It also records authorization, expiry,
+material status, artifact status, delivery status and the future one-time
+`downloaded` flag.
+
+This object is not a secret container. It contains no CA body, client certificate
+body, CSR or private key. Portable mode records the future
+`one_time_in_memory` key policy; device-bound mode records `device_owned`.
+Until real material assembly is implemented, the transaction remains
+`awaiting_material`, its artifact is `skeleton_only`, and delivery is
+`not_ready`.
+
 ### OVPN Provisioning Artifact
 
 OVPN is not only an import format. In the VPN provisioning model, OVPN is also

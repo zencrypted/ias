@@ -65,6 +65,7 @@ export_demo_state_does_not_export_private_material_test() ->
         source => certificate_issue_demo,
         private_key_body => <<"PRIVATE-KEY-BODY">>,
         certificate_pem => <<"CERTIFICATE-PEM-BODY">>,
+        ca_body => <<"CA-CERTIFICATE-BODY">>,
         csr_body => <<"CSR-BODY">>,
         private_key_stored => true,
         certificate_body_stored => true
@@ -77,6 +78,7 @@ export_demo_state_does_not_export_private_material_test() ->
 
     ?assertEqual(nomatch, binary:match(Term, <<"PRIVATE-KEY-BODY">>)),
     ?assertEqual(nomatch, binary:match(Term, <<"CERTIFICATE-PEM-BODY">>)),
+    ?assertEqual(nomatch, binary:match(Term, <<"CA-CERTIFICATE-BODY">>)),
     ?assertEqual(nomatch, binary:match(Term, <<"CSR-BODY">>)),
     ?assertEqual(false, maps:get(private_key_stored, Exported)),
     ?assertEqual(false, maps:get(certificate_body_stored, Exported)).
@@ -123,6 +125,69 @@ demo_state_import_restores_verification_objects_test() ->
     end, ias_demo_store:relationships())),
     ?assert(maps:get(imported_objects, Result) >= 4),
     ?assert(maps:get(imported_relationships, Result) >= 4).
+
+import_demo_state_sanitizes_ovpn_provisioning_secret_material_test() ->
+    ias_demo_store:clear(),
+    Snapshot = #{
+        format => ias_demo_state_v1,
+        objects => [#{
+            id => <<"imported_ovpn_provisioning">>,
+            provisioning_id => <<"imported_ovpn_provisioning">>,
+            kind => ovpn_provisioning,
+            mode => portable,
+            subject_kind => certificate,
+            subject_id => <<"imported_certificate">>,
+            private_key_body => <<"IMPORTED-PRIVATE-KEY">>,
+            certificate_body => <<"IMPORTED-CERTIFICATE">>,
+            ca_certificate_body => <<"IMPORTED-CA-CERTIFICATE">>,
+            private_key_stored => true,
+            certificate_body_stored => true,
+            ca_body_stored => true
+        }],
+        relationships => []
+    },
+    Term = iolist_to_binary(io_lib:format("~tp.~n", [Snapshot])),
+
+    Result = ias_demo_state:import(Term),
+    {ok, Imported} = ias_demo_store:get(<<"imported_ovpn_provisioning">>),
+
+    ?assertEqual(1, maps:get(imported_objects, Result)),
+    ?assertEqual(false, maps:is_key(private_key_body, Imported)),
+    ?assertEqual(false, maps:is_key(certificate_body, Imported)),
+    ?assertEqual(false, maps:is_key(ca_certificate_body, Imported)),
+    ?assertEqual(false, maps:get(private_key_stored, Imported)),
+    ?assertEqual(false, maps:get(certificate_body_stored, Imported)),
+    ?assertEqual(false, maps:get(ca_body_stored, Imported)).
+
+demo_state_roundtrip_supports_ovpn_provisioning_transactions_test() ->
+    ias_demo_store:clear(),
+    Transaction = ias_demo_store:put_runtime_object(#{
+        id => <<"state_ovpn_provisioning">>,
+        provisioning_id => <<"state_ovpn_provisioning">>,
+        kind => ovpn_provisioning,
+        source => ovpn_provisioning_demo,
+        mode => portable,
+        subject_kind => certificate,
+        subject_id => <<"state_certificate">>,
+        status => awaiting_material,
+        material_status => pending_real_material,
+        artifact_status => skeleton_only,
+        delivery_status => not_ready,
+        downloaded => false,
+        private_key_stored => false,
+        certificate_body_stored => false,
+        ca_body_stored => false
+    }),
+    Term = ias_demo_state:export(),
+
+    ok = ias_demo_state:clear(),
+    Result = ias_demo_state:import(Term),
+
+    ?assertEqual(1, maps:get(imported_objects, Result)),
+    ?assertMatch({ok, #{kind := ovpn_provisioning,
+                        mode := portable,
+                        status := awaiting_material}},
+                 ias_demo_store:get(maps:get(id, Transaction))).
 
 setup_demo_graph() ->
     Device = ias_demo_store:add_device(#{id => <<"state_device">>,

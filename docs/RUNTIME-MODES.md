@@ -69,6 +69,7 @@ Live Runtime Mode is responsible for:
 - Future certificate issuance workflows.
 - Live OVPN paste/file parsing and IAS mapping preview.
 - Explicit storage of sanitized OVPN demo metadata in volatile ETS state.
+- Explicit creation of sanitized OVPN provisioning transaction metadata in volatile ETS state.
 - Future controlled production OVPN import and VPN activation.
 
 All live-rendered text must follow `docs/NITRO-RENDERING.md`. In particular:
@@ -125,6 +126,8 @@ eventing, integration and authorization semantics belong to Live Runtime Mode.
 | NS/discovery integration | no | future |
 | OVPN paste/file parse and mapping preview | no | yes |
 | OVPN sanitized demo ETS store | no | yes, demo only |
+| OVPN provisioning transaction metadata | no | yes, demo only |
+| User-deliverable OVPN profile | no | future |
 | Production OVPN import and VPN activation | no | future |
 
 Features that depend on backend state, external services or untrusted input must
@@ -216,3 +219,52 @@ IAS should communicate with VPN through runtime APIs/events rather than requirin
 VPN as a hard Erlang dependency. A future development launcher or deployment
 profile may start IAS, VPN, CA, LDAP and NS together, but service coupling should
 remain explicit.
+
+
+### OVPN Export and Provisioning Transactions
+
+OVPN Export is the primary future user-delivery workflow for IAS-managed VPN
+access. Stage 23A introduces an explicit provisioning transaction boundary in
+Live Runtime Mode without pretending that the current skeleton is a usable VPN
+profile.
+
+The current transaction flow is:
+
+```text
+Certificate or Device
+-> OVPN provisioning authorization
+-> choose portable or device-bound mode
+-> create volatile provisioning transaction
+-> await real CA/client certificate/private-key material
+```
+
+A Stage 23A transaction records only sanitized metadata:
+
+- provisioning id;
+- subject kind and id;
+- certificate, device, VPN service and CA certificate references;
+- portable or device-bound delivery mode;
+- authorization result and reason;
+- transaction expiry;
+- material, artifact and delivery status;
+- private-key ownership policy;
+- `downloaded = false` for the future one-time delivery lifecycle.
+
+The transaction status is `awaiting_material` after authorization. Its artifact
+status remains `skeleton_only` and delivery status remains `not_ready`. No CA
+body, client certificate body or private key is generated or stored by this
+stage. Transactions are node-local volatile ETS demo objects and may be included
+in Demo State export/import as sanitized metadata.
+
+Portable mode declares a future `one_time_in_memory` private-key policy. This
+means a later stage may generate a complete profile within a short-lived
+provisioning operation and discard the key after one-time delivery. It does not
+mean that Stage 23A currently generates a key. Device-bound mode keeps the
+`device_owned` policy and continues to require local key generation on the
+approved device.
+
+The existing downloadable file is deliberately labelled **OVPN Skeleton**. It
+is an operator preview only and must not be delivered to a user as a working VPN
+configuration. A future stage must supply real CA and client certificate material
+and implement the chosen private-key delivery boundary before changing the
+transaction to a user-deliverable state.

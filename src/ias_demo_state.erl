@@ -89,7 +89,7 @@ restore_snapshot(Snapshot) ->
     Skipped = length(Objects) - length(ValidObjects) +
         length(Relationships) - length(ValidRelationships),
     ias_demo_store:clear(),
-    [ias_demo_store:put_runtime_object(Object) || Object <- ValidObjects],
+    [ias_demo_store:put_runtime_object(sanitize_record(Object)) || Object <- ValidObjects],
     UniqueRelationships = unique_relationships(ValidRelationships),
     [ias_demo_store:put_runtime_object(Relationship) || Relationship <- UniqueRelationships],
     #{imported_objects => length(ValidObjects),
@@ -128,6 +128,7 @@ is_supported_kind(relationship) -> true;
 is_supported_kind(cmp_enrollment_result) -> true;
 is_supported_kind(user) -> true;
 is_supported_kind(security_profile) -> true;
+is_supported_kind(ovpn_provisioning) -> true;
 is_supported_kind(_) -> false.
 
 usable_id(undefined) ->
@@ -162,13 +163,15 @@ sanitize_record(Record) ->
     Sanitized = maps:without(secret_keys(), Record),
     Sanitized#{
         private_key_stored => false,
-        certificate_body_stored => false
+        certificate_body_stored => false,
+        ca_body_stored => false
     }.
 
 secret_keys() ->
     [private_key, private_key_body, private_key_pem, key_pem,
-     certificate_body, certificate_pem, cert_pem, csr_body, csr_pem,
-     tls_auth_body, shared_secret].
+     certificate_body, certificate_pem, cert_pem,
+     ca_body, ca_pem, ca_certificate_body, ca_certificate_pem,
+     csr_body, csr_pem, tls_auth_body, tls_crypt_body, shared_secret].
 
 created_at() ->
     iolist_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second),

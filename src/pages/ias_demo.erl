@@ -29,6 +29,8 @@ event({download_ovpn_artifact, device, DeviceId}) ->
     download_ovpn_artifact(ias_ovpn_export:device_artifact(DeviceId));
 event({download_ovpn_artifact, certificate, CertificateId}) ->
     download_ovpn_artifact(ias_ovpn_export:certificate_artifact(CertificateId));
+event({create_ovpn_provisioning, Mode, SubjectKind, SubjectId}) ->
+    create_ovpn_provisioning(ias_ovpn_provisioning:create(Mode, SubjectKind, SubjectId));
 event(_) ->
     ok.
 
@@ -100,6 +102,8 @@ title(#{kind := certificate_replacement}) ->
     <<"Certificate Replacement Metadata">>;
 title(#{kind := certificate_revocation}) ->
     <<"Certificate Revocation Metadata">>;
+title(#{kind := ovpn_provisioning}) ->
+    <<"OVPN Provisioning Transaction">>;
 title(_) ->
     <<"Demo Metadata">>.
 
@@ -206,6 +210,26 @@ rows(#{kind := certificate_revocation} = Object) ->
         {"Certificate", object_ref(certificate, maps:get(certificate_id, Object, undefined))},
         {"Reason", maps:get(reason, Object, undefined)},
         {"Status", maps:get(status, Object, undefined)}
+    ] ++ created_row(Object);
+rows(#{kind := ovpn_provisioning} = Object) ->
+    [
+        {"Provisioning ID", maps:get(provisioning_id, Object, undefined)},
+        {"Mode", maps:get(mode, Object, undefined)},
+        {"Subject", object_ref(maps:get(subject_kind, Object, undefined),
+                               maps:get(subject_id, Object, undefined))},
+        {"Device", object_ref(device, maps:get(device_id, Object, undefined))},
+        {"Certificate", object_ref(certificate, maps:get(certificate_id, Object, undefined))},
+        {"VPN Service", object_ref(vpn_service, maps:get(vpn_service_id, Object, undefined))},
+        {"CA Certificate", object_ref(certificate, maps:get(ca_certificate_id, Object, undefined))},
+        {"Authorization", maps:get(authorization, Object, deny)},
+        {"Reason", maps:get(authorization_reason, Object, undefined)},
+        {"Status", maps:get(status, Object, blocked)},
+        {"Material", maps:get(material_status, Object, blocked)},
+        {"Artifact", maps:get(artifact_status, Object, unavailable)},
+        {"Delivery", maps:get(delivery_status, Object, not_ready)},
+        {"Private Key Policy", maps:get(private_key_policy, Object, undefined)},
+        {"Downloaded", maps:get(downloaded, Object, false)},
+        {"Expires At", maps:get(expires_at, Object, undefined)}
     ] ++ created_row(Object);
 rows(Object) ->
     common_rows(Object) ++ created_row(Object).
@@ -610,7 +634,6 @@ authorization_matrix_preview(#{kind := certificate} = Object) ->
 authorization_matrix_preview(_Object) ->
     [].
 
-
 role_authorization_applicable(#{kind := certificate} = Certificate) ->
     case maps:get(profile_id, Certificate, undefined) of
         administrator -> true;
@@ -803,14 +826,14 @@ ovpn_export_preview(#{kind := device} = Object) ->
 ovpn_export_preview(#{kind := certificate} = Object) ->
     ObjectId = maps:get(id, Object, undefined),
     Preview = ias_ovpn_export:certificate_preview(ObjectId),
-    ovpn_export_card(Preview, certificate, ObjectId);
+    Provisioning = ias_ovpn_provisioning:preview(portable, certificate, ObjectId),
+    ovpn_export_card(portable_export_preview(Preview, Provisioning), certificate, ObjectId);
 ovpn_export_preview(#{kind := vpn_service} = Object) ->
     ObjectId = maps:get(id, Object, undefined),
     Preview = ias_ovpn_export:service_preview(ObjectId),
     ovpn_service_export_card(Preview);
 ovpn_export_preview(_Object) ->
     [].
-
 
 device_ovpn_provisioning_card(Preview) ->
     #panel{class = <<"ias-status-card">>, body = [
@@ -835,11 +858,15 @@ device_ovpn_provisioning_card(Preview) ->
         ])
     ]}.
 
-
 device_bound_export_preview(Preview, Provisioning) ->
     Preview#{authorization => maps:get(provisioning, Provisioning, deny),
              authorization_reason => maps:get(provisioning_reason, Provisioning,
                                               <<"device-bound OVPN provisioning unavailable">>)}.
+
+portable_export_preview(Preview, Provisioning) ->
+    Preview#{authorization => maps:get(authorization, Provisioning, deny),
+             authorization_reason => maps:get(authorization_reason, Provisioning,
+                                              <<"portable OVPN provisioning unavailable">>)}.
 
 ovpn_export_card(Preview, SubjectKind, SubjectId) ->
     #panel{class = <<"ias-status-card">>, body = [
@@ -862,7 +889,6 @@ ovpn_export_card(Preview, SubjectKind, SubjectId) ->
         ovpn_configuration_section(Preview, SubjectKind, SubjectId),
         #panel{id = ovpn_export_result_id(SubjectKind, SubjectId)}
     ]}.
-
 
 ovpn_service_export_card(Preview) ->
     #panel{class = <<"ias-status-card">>, body = [
@@ -977,11 +1003,15 @@ ovpn_two_factor_note(_Preview) ->
 ovpn_configuration_section(#{authorization := allow} = Preview, SubjectKind, SubjectId) ->
     #panel{body = [
         #h3{body = ias_html:text("Configuration Skeleton")},
+        #p{body = ias_html:text("This skeleton is an operator preview, not a user-deliverable OVPN profile. Real CA, client certificate and private-key material are not embedded yet.")},
         ovpn_profile_block(maps:get(preview, Preview, <<>>)),
-        #panel{style = <<"margin-top:12px;">>, body = [
+        #h3{body = ias_html:text("Provisioning Transaction")},
+        #p{body = ias_html:text("Creates volatile Stage 23A transaction metadata. It records authorization, delivery mode and expiry without generating or storing secret material.")},
+        #panel{style = <<"margin-top:12px;display:flex;gap:10px;flex-wrap:wrap;">>, body = [
             #link{class = [button, sgreen],
-                  body = ias_html:text("Download Demo OVPN"),
-                  postback = {download_ovpn_artifact, SubjectKind, SubjectId}}
+                  body = ias_html:text("Download OVPN Skeleton"),
+                  postback = {download_ovpn_artifact, SubjectKind, SubjectId}},
+            ovpn_provisioning_action(SubjectKind, SubjectId)
         ]}
     ]};
 ovpn_configuration_section(Preview, _SubjectKind, _SubjectId) ->
@@ -993,6 +1023,17 @@ ovpn_configuration_section(Preview, _SubjectKind, _SubjectId) ->
             {"Blocking Reason", ovpn_authorization_reason(Preview)}
         ])
     ]}.
+
+ovpn_provisioning_action(certificate, SubjectId) ->
+    #link{class = [button, sgreen],
+          body = ias_html:text("Create Portable Provisioning"),
+          postback = {create_ovpn_provisioning, portable, certificate, SubjectId}};
+ovpn_provisioning_action(device, SubjectId) ->
+    #link{class = [button, sgreen],
+          body = ias_html:text("Create Device-bound Provisioning"),
+          postback = {create_ovpn_provisioning, device_bound, device, SubjectId}};
+ovpn_provisioning_action(_SubjectKind, _SubjectId) ->
+    [].
 
 ovpn_profile_block(Profile) ->
     #panel{style = <<"white-space:pre-wrap;font-family:monospace;font-size:12px;",
@@ -1006,10 +1047,43 @@ download_ovpn_artifact({ok, Filename, Content}) ->
 download_ovpn_artifact({error, Reason}) ->
     nitro:update(ovpn_export_result, ovpn_artifact_error(Reason)).
 
+create_ovpn_provisioning({ok, Transaction}) ->
+    nitro:update(ovpn_export_result, ovpn_provisioning_created(Transaction));
+create_ovpn_provisioning({error, Reason}) ->
+    nitro:update(ovpn_export_result, ovpn_provisioning_error(Reason)).
+
+ovpn_provisioning_created(Transaction) ->
+    ProvisioningId = maps:get(provisioning_id, Transaction, not_found),
+    #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #h3{body = ias_html:text("OVPN provisioning transaction created")},
+               #p{body = ias_html:text("The transaction is volatile demo metadata and is awaiting real certificate/key material before user delivery.")},
+               key_value_table([
+                   {"Provisioning ID", ProvisioningId},
+                   {"Mode", maps:get(mode, Transaction, undefined)},
+                   {"Status", maps:get(status, Transaction, blocked)},
+                   {"Material", maps:get(material_status, Transaction, blocked)},
+                   {"Delivery", maps:get(delivery_status, Transaction, not_ready)},
+                   {"Expires At", maps:get(expires_at, Transaction, undefined)}
+               ]),
+               #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(ProvisioningId)]),
+                     body = ias_html:text("View Provisioning Transaction")}
+           ]}.
+
+ovpn_provisioning_error(Reason) ->
+    #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
+           body = [
+               #h3{body = ias_html:text("OVPN provisioning transaction blocked")},
+               key_value_table([
+                   {"Reason", Reason}
+               ])
+           ]}.
+
 ovpn_artifact_ready(Filename, Content) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
-               #h3{body = ias_html:text("Demo OVPN artifact ready")},
+               #h3{body = ias_html:text("OVPN skeleton downloaded")},
+               #p{body = ias_html:text("This file is a non-secret preview skeleton and is not ready for user VPN connection.")},
                key_value_table([
                    {"Filename", Filename},
                    {"Bytes", byte_size(Content)}
@@ -1019,7 +1093,7 @@ ovpn_artifact_ready(Filename, Content) ->
 ovpn_artifact_error(Reason) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
            body = [
-               #h3{body = ias_html:text("Demo OVPN artifact unavailable")},
+               #h3{body = ias_html:text("OVPN skeleton unavailable")},
                key_value_table([
                    {"Reason", Reason}
                ])
