@@ -15,7 +15,7 @@ public_certificate_material_store_test() ->
     ?assertEqual(client_certificate, maps:get(material_type, Status)),
     ?assertEqual(operator_load, maps:get(source, Status)),
     ?assertEqual(false, maps:is_key(body, Status)),
-    ?assertEqual(Pem, maps:get(body, Stored)),
+    ?assertEqual(normalized_certificate_pem(Pem), maps:get(body, Stored)),
     ?assert(byte_size(maps:get(fingerprint_sha256, Status)) > 0).
 
 private_key_material_is_rejected_test() ->
@@ -97,3 +97,7 @@ provisioning_refresh_uses_public_material_store_test() ->
 
 certificate_pem(Der) ->
     public_key:pem_encode([{'Certificate', Der, not_encrypted}]).
+
+normalized_certificate_pem(Pem) ->
+    Trimmed = ias_html:text(string:trim(binary_to_list(Pem), trailing, "\n\r\t ")),
+    <<Trimmed/binary, "\n">>.
