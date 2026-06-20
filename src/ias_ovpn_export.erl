@@ -1,5 +1,6 @@
 -module(ias_ovpn_export).
 -export([certificate_preview/1,
+         portable_certificate_preview/1,
          device_preview/1,
          device_provisioning_preview/1,
          service_preview/1,
@@ -13,7 +14,7 @@ export_artifact(CertificateId) ->
     certificate_artifact(CertificateId).
 
 certificate_artifact(CertificateId) ->
-    artifact_from_preview(certificate_preview(CertificateId), CertificateId).
+    artifact_from_preview(portable_certificate_preview(CertificateId), CertificateId).
 
 device_artifact(DeviceId) ->
     Preview = device_preview(DeviceId),
@@ -218,6 +219,16 @@ certificate_preview(CertificateId) ->
         _ ->
             denied_preview(<<"certificate not found">>)
     end.
+
+portable_certificate_preview(CertificateId) ->
+    portable_mode_preview(certificate_preview(CertificateId)).
+
+portable_mode_preview(#{device_lock := enabled} = Preview) ->
+    Preview#{authorization => deny,
+             authorization_reason =>
+                 <<"device-bound security profile requires device-bound provisioning">>};
+portable_mode_preview(Preview) ->
+    Preview.
 
 ovpn_provisioning_decision(CertificateId) when is_binary(CertificateId); is_atom(CertificateId) ->
     case ias_demo_store:get(CertificateId) of

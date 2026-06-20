@@ -259,9 +259,14 @@ in Demo State export/import as sanitized metadata.
 Portable mode declares a future `one_time_in_memory` private-key policy. This
 means a later stage may generate a complete profile within a short-lived
 provisioning operation and discard the key after one-time delivery. It does not
-mean that Stage 23A currently generates a key. Device-bound mode keeps the
-`device_owned` policy and continues to require local key generation on the
-approved device.
+mean that Stage 23A currently generates a key. Portable mode is valid only when
+the resolved security profile does not require device lock.
+
+Device-bound mode keeps the `device_owned` policy and continues to require local
+key generation on the approved device. When device lock is enabled, portable
+provisioning is denied even if the certificate already has a valid Device
+relationship; the operator must create device-bound provisioning from that
+approved Device object.
 
 The existing downloadable file is deliberately labelled **OVPN Skeleton**. It
 is an operator preview only and must not be delivered to a user as a working VPN

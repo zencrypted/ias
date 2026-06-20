@@ -92,8 +92,12 @@ device_bound_ovpn_provisioning_preview_requires_ca_certificate_test() ->
 
 demo_pages_render_ovpn_export_preview_test() ->
     ias_demo_store:clear(),
-    #{device := Device, certificate := Certificate, service := Service} = setup_ready_device(administrator),
-    _CaCertificate = link_ca_certificate(Service, <<"ovpn_export_demo_page_ca_certificate">>),
+    #{device := Device, service := DeviceService} = setup_ready_device(administrator),
+    _DeviceCaCertificate = link_ca_certificate(
+        DeviceService, <<"ovpn_export_demo_device_ca_certificate">>),
+    #{certificate := Certificate, service := CertificateService} = setup_ready_device(default_user),
+    _CertificateCaCertificate = link_ca_certificate(
+        CertificateService, <<"ovpn_export_demo_certificate_ca_certificate">>),
 
     DeviceHtml = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Device))),
     CertificateHtml = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Certificate))),
@@ -201,6 +205,33 @@ portable_ovpn_provisioning_transaction_is_stored_without_secret_material_test() 
     ?assertEqual(false, maps:is_key(ca_body, Transaction)),
     ?assertMatch({ok, #{kind := ovpn_provisioning}},
                  ias_ovpn_provisioning:get(ProvisioningId)).
+
+portable_ovpn_provisioning_rejects_device_bound_profile_test() ->
+    ias_demo_store:clear(),
+    #{certificate := Certificate, service := Service} = setup_ready_device(administrator),
+    _CaCertificate = link_ca_certificate(Service, <<"ovpn_portable_device_bound_ca">>),
+
+    Preview = ias_ovpn_provisioning:preview(
+        portable, certificate, maps:get(id, Certificate)),
+    {error, Reason} = ias_ovpn_provisioning:create(
+        portable, certificate, maps:get(id, Certificate)),
+    {error, ArtifactReason} = ias_ovpn_export:certificate_artifact(
+        maps:get(id, Certificate)),
+    Html = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Certificate))),
+
+    ?assertEqual(deny, maps:get(authorization, Preview)),
+    ?assertEqual(blocked, maps:get(status, Preview)),
+    ?assertEqual(
+        <<"device-bound security profile requires device-bound provisioning">>,
+        maps:get(authorization_reason, Preview)),
+    ?assertEqual(maps:get(authorization_reason, Preview), Reason),
+    ?assertEqual(Reason, ArtifactReason),
+    ?assertMatch({_, _}, binary:match(Html,
+        <<"device-bound security profile requires device-bound provisioning">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Create Portable Provisioning">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Download OVPN Skeleton">>)),
+    ?assertEqual([], [Object || Object <- ias_demo_store:runtime_objects(),
+                               maps:get(kind, Object, undefined) =:= ovpn_provisioning]).
 
 portable_ovpn_provisioning_transaction_requires_ca_certificate_test() ->
     ias_demo_store:clear(),

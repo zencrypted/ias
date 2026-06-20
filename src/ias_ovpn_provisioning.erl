@@ -7,7 +7,7 @@
 
 preview(portable, certificate, CertificateId) ->
     Preview = portable_readiness(
-        ias_ovpn_export:certificate_preview(CertificateId)),
+        ias_ovpn_export:portable_certificate_preview(CertificateId)),
     export_plan(portable, certificate, CertificateId, Preview);
 preview(device_bound, device, DeviceId) ->
     ExportPreview = ias_ovpn_export:device_preview(DeviceId),

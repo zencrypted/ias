@@ -130,9 +130,15 @@ OVPN Provisioning Decision
 Two transaction modes are represented:
 
 - `portable`: future one-time in-memory key/profile assembly for delivery to a
-  user-selected device;
+  user-selected device. It is valid only for profiles where device lock is not
+  required;
 - `device_bound`: device-owned key material and delivery to an approved bound
-  device.
+  device. It is mandatory when the security profile enables device lock.
+
+The delivery mode is part of authorization, not merely an operator preference.
+A device-bound certificate may be authorized for VPN provisioning while still
+being denied specifically for `portable` provisioning. In that case the
+operator must create the transaction from the approved Device object.
 
 The transaction stores references and lifecycle metadata only. An authorized
 transaction has `status = awaiting_material`, `material_status =
@@ -175,10 +181,11 @@ In the standard VPN profile, the user receives an OVPN profile and chooses the
 client device where it will be installed. Device binding is not mandatory in
 that profile.
 
-In the high-security VPN profile, device binding is mandatory. IAS may deny OVPN
-provisioning until the certificate is bound to an approved device. This allows
-standard VPN users to receive a portable OVPN profile while elevated security
-profiles keep certificate use locked to a specific device.
+In the high-security VPN profile, device binding is mandatory and portable
+provisioning is denied. The operator creates a `device_bound` transaction from
+the approved Device object, keeping private-key ownership on that device. This
+allows standard VPN users to receive a portable OVPN profile while elevated
+security profiles keep certificate use locked to a specific device.
 
 ```text
 User

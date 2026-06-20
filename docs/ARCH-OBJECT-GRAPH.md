@@ -606,18 +606,20 @@ OVPN Export
 User
 ```
 
-For the standard VPN profile, IAS may issue an OVPN profile to a user and let
-the user choose the device where it will be installed. For elevated security
-profiles, IAS may require device lock: the certificate is bound to a specific
-device before the OVPN profile is issued. Optional 2FA belongs to the same
-profile-controlled VPN access layer.
+For the standard VPN profile, IAS may issue a portable OVPN profile to a user
+and let the user choose the device where it will be installed. For elevated
+security profiles, IAS requires device-bound provisioning: the certificate is
+bound to a specific device and the private key remains device-owned. A valid
+device relationship does not make portable delivery acceptable when device lock
+is enabled. Optional 2FA belongs to the same profile-controlled VPN access
+layer.
 
 OVPN provisioning authorization is separate from VPN connection enforcement.
 Connection enforcement answers whether an already configured device may connect
 to VPN. OVPN provisioning answers whether IAS may issue an OVPN profile for a
-certificate or user. Standard profiles may allow OVPN provisioning without a
-current device binding; high-security profiles may require device binding before
-provisioning.
+certificate or user. Standard profiles may allow portable provisioning without
+a current device binding; high-security profiles require device-bound
+provisioning from an approved Device object.
 
 This separates two workflows:
 
