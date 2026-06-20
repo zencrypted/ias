@@ -2,7 +2,8 @@
 -export([event/1, relationship_rows/2, certificate_lifecycle_preview/1,
          operational_readiness_preview/1, effective_status_preview/1,
          authorization_decision_preview/1, authorization_matrix_preview/1,
-         authorization_enforcement_preview/1, ovpn_export_preview/1]).
+         authorization_enforcement_preview/1, ovpn_export_preview/1,
+         ovpn_material_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -59,6 +60,7 @@ detail(Object) ->
         #p{body = ias_html:text("Read-only metadata stored in ETS demo runtime state.")},
         #h3{body = title(Object)},
         key_value_table(rows(Object)),
+        ovpn_material_preview(Object),
         certificate_lifecycle_preview(Object),
         operational_readiness_preview(Object),
         effective_status_preview(Object),
@@ -225,6 +227,8 @@ rows(#{kind := ovpn_provisioning} = Object) ->
         {"Reason", maps:get(authorization_reason, Object, undefined)},
         {"Status", maps:get(status, Object, blocked)},
         {"Material", maps:get(material_status, Object, blocked)},
+        {"Assembly", maps:get(assembly_status, Object, blocked)},
+        {"Assembly Reason", maps:get(assembly_reason, Object, undefined)},
         {"Artifact", maps:get(artifact_status, Object, unavailable)},
         {"Delivery", maps:get(delivery_status, Object, not_ready)},
         {"Private Key Policy", maps:get(private_key_policy, Object, undefined)},
@@ -233,6 +237,53 @@ rows(#{kind := ovpn_provisioning} = Object) ->
     ] ++ created_row(Object);
 rows(Object) ->
     common_rows(Object) ++ created_row(Object).
+
+ovpn_material_preview(#{kind := ovpn_provisioning} = Object) ->
+    Requirements = maps:get(material_requirements, Object, #{}),
+    Sources = maps:get(material_sources, Object, #{}),
+    Components = maps:get(material_components, Object, #{}),
+    #panel{body = [
+        #h3{body = ias_html:text("Material Requirements")},
+        #p{body = ias_html:text(
+            "This transaction records material requirements and readiness only. No PEM body or private key is stored in demo state.")},
+        material_requirements_table(Requirements, Sources, Components),
+        #h3{body = ias_html:text("Assembly Readiness")},
+        key_value_table([
+            {"OVPN Assembly", maps:get(assembly_status, Object, blocked)},
+            {"Reason", maps:get(assembly_reason, Object, undefined)},
+            {"Next Step", maps:get(next_step, Object, undefined)}
+        ])
+    ]};
+ovpn_material_preview(_Object) ->
+    #panel{body = []}.
+
+material_requirements_table(Requirements, Sources, Components) ->
+    Materials = [ca_certificate, client_certificate, private_key, tls_auth],
+    Header = #tr{cells = [
+        #th{body = ias_html:text("Material")},
+        #th{body = ias_html:text("Requirement")},
+        #th{body = ias_html:text("Source")},
+        #th{body = ias_html:text("Status")}
+    ]},
+    Rows = [material_requirement_row(Material, Requirements, Sources, Components)
+            || Material <- Materials],
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>, body = #tbody{body = [Header | Rows]}}
+    ]}.
+
+material_requirement_row(Material, Requirements, Sources, Components) ->
+    #tr{cells = [
+        #td{body = material_label(Material)},
+        #td{body = ias_html:text(maps:get(Material, Requirements, undefined))},
+        #td{body = ias_html:text(maps:get(Material, Sources, undefined))},
+        #td{body = ias_html:text(maps:get(Material, Components, undefined))}
+    ]}.
+
+material_label(ca_certificate) -> <<"CA Certificate PEM">>;
+material_label(client_certificate) -> <<"Client Certificate PEM">>;
+material_label(private_key) -> <<"Private Key">>;
+material_label(tls_auth) -> <<"TLS Auth">>;
+material_label(Material) -> ias_html:text(Material).
 
 common_rows(Object) ->
     [{"ID", maps:get(id, Object, undefined)},
@@ -1063,6 +1114,8 @@ ovpn_provisioning_created(Transaction) ->
                    {"Mode", maps:get(mode, Transaction, undefined)},
                    {"Status", maps:get(status, Transaction, blocked)},
                    {"Material", maps:get(material_status, Transaction, blocked)},
+                   {"Assembly", maps:get(assembly_status, Transaction, blocked)},
+                   {"Assembly Reason", maps:get(assembly_reason, Transaction, undefined)},
                    {"Delivery", maps:get(delivery_status, Transaction, not_ready)},
                    {"Expires At", maps:get(expires_at, Transaction, undefined)}
                ]),

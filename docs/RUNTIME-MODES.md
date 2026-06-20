@@ -273,3 +273,29 @@ is an operator preview only and must not be delivered to a user as a working VPN
 configuration. A future stage must supply real CA and client certificate material
 and implement the chosen private-key delivery boundary before changing the
 transaction to a user-deliverable state.
+
+Stage 23B adds an explicit material assembly contract to each provisioning
+transaction. The contract separates four concerns:
+
+```text
+material requirement
+-> expected source
+-> current component status
+-> overall assembly readiness
+```
+
+The current required components are:
+
+- CA certificate PEM from the CA certificate store;
+- client certificate PEM from the IAS certificate store;
+- a private key generated one time in memory for portable mode, or owned by the
+  approved device for device-bound mode;
+- optional TLS-auth material from the VPN service configuration.
+
+Stage 23B still stores metadata only. Referenced CA and client certificates are
+reported as `missing_body`, portable private keys as
+`pending_one_time_generation`, and device-bound private keys as
+`available_on_device`. Assembly remains `blocked` until a later stage provides
+real public certificate material and implements the selected private-key flow.
+No PEM, CSR, private key, TLS-auth body or shared secret is generated or stored
+by this stage.

@@ -113,6 +113,12 @@ export_plan(Mode, SubjectKind, SubjectId, Preview) ->
       authorization_reason => ias_html:text(Reason),
       status => transaction_status(Authorization),
       material_status => material_status(Authorization),
+      material_requirements => material_requirements(Mode),
+      material_sources => material_sources(Mode),
+      material_components => material_components(Mode, Preview, Authorization),
+      assembly_status => assembly_status(Authorization),
+      assembly_reason => assembly_reason(Mode, Preview, Authorization),
+      next_step => assembly_next_step(Authorization),
       artifact_status => artifact_status(Authorization),
       delivery_status => not_ready,
       private_key_policy => private_key_policy(Mode),
@@ -133,6 +139,12 @@ blocked_plan(Mode, SubjectKind, SubjectId, Reason) ->
       authorization_reason => ias_html:text(Reason),
       status => blocked,
       material_status => blocked,
+      material_requirements => material_requirements(Mode),
+      material_sources => material_sources(Mode),
+      material_components => blocked_material_components(Mode),
+      assembly_status => blocked,
+      assembly_reason => ias_html:text(Reason),
+      next_step => <<"Resolve OVPN provisioning authorization before material assembly.">>,
       artifact_status => unavailable,
       delivery_status => not_ready,
       private_key_policy => private_key_policy(Mode),
@@ -155,6 +167,87 @@ artifact_status(allow) ->
     skeleton_only;
 artifact_status(_Authorization) ->
     unavailable.
+
+material_requirements(Mode) ->
+    #{ca_certificate => required,
+      client_certificate => required,
+      private_key => private_key_requirement(Mode),
+      tls_auth => optional}.
+
+material_sources(Mode) ->
+    #{ca_certificate => ca_certificate_store,
+      client_certificate => certificate_store,
+      private_key => private_key_source(Mode),
+      tls_auth => vpn_service}.
+
+material_components(Mode, Preview, allow) ->
+    #{ca_certificate => referenced_material_status(
+          maps:get(ca_certificate_id, Preview, not_found)),
+      client_certificate => referenced_material_status(
+          maps:get(certificate_id, Preview, not_found)),
+      private_key => private_key_component_status(Mode),
+      tls_auth => not_configured};
+material_components(Mode, _Preview, _Authorization) ->
+    blocked_material_components(Mode).
+
+blocked_material_components(Mode) ->
+    #{ca_certificate => blocked,
+      client_certificate => blocked,
+      private_key => blocked_private_key_status(Mode),
+      tls_auth => blocked}.
+
+referenced_material_status(not_found) ->
+    not_linked;
+referenced_material_status(_Id) ->
+    missing_body.
+
+assembly_status(allow) ->
+    blocked;
+assembly_status(_Authorization) ->
+    blocked.
+
+assembly_reason(_Mode, Preview, Authorization) when Authorization =/= allow ->
+    ias_html:text(maps:get(authorization_reason, Preview,
+                           <<"OVPN provisioning authorization is denied">>));
+assembly_reason(portable, Preview, allow) ->
+    reason_text(material_reasons(Preview) ++
+                [<<"one-time private key generation is pending">>]);
+assembly_reason(device_bound, Preview, allow) ->
+    reason_text(material_reasons(Preview));
+assembly_reason(_Mode, Preview, allow) ->
+    reason_text(material_reasons(Preview)).
+
+material_reasons(Preview) ->
+    CaReasons = case maps:get(ca_certificate_id, Preview, not_found) of
+        not_found -> [<<"CA certificate is not linked">>];
+        _ -> [<<"CA certificate PEM is unavailable">>]
+    end,
+    CertificateReasons = case maps:get(certificate_id, Preview, not_found) of
+        not_found -> [<<"client certificate is not linked">>];
+        _ -> [<<"client certificate PEM is unavailable">>]
+    end,
+    CaReasons ++ CertificateReasons.
+
+assembly_next_step(allow) ->
+    <<"Load public certificate material from the CA/CMP response or certificate store.">>;
+assembly_next_step(_Authorization) ->
+    <<"Resolve OVPN provisioning authorization before material assembly.">>.
+
+private_key_requirement(portable) -> pending_one_time_generation;
+private_key_requirement(device_bound) -> device_owned;
+private_key_requirement(_Mode) -> undefined.
+
+private_key_source(portable) -> provisioning_transaction;
+private_key_source(device_bound) -> device;
+private_key_source(_Mode) -> undefined.
+
+private_key_component_status(portable) -> pending_one_time_generation;
+private_key_component_status(device_bound) -> available_on_device;
+private_key_component_status(_Mode) -> unavailable.
+
+blocked_private_key_status(portable) -> pending_one_time_generation;
+blocked_private_key_status(device_bound) -> device_owned;
+blocked_private_key_status(_Mode) -> blocked.
 
 private_key_policy(portable) ->
     one_time_in_memory;
