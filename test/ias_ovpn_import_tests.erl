@@ -42,6 +42,11 @@ demo_import_store_test() ->
     ?assertEqual(true, maps:get(client_certificate_present, Certificate)),
     ?assertEqual(true, maps:get(private_key_present, Certificate)),
     ?assertEqual(false, maps:get(private_key_stored, Certificate)),
+    ?assertEqual(false, maps:is_key(private_key, Certificate)),
+    ?assertEqual(false, maps:is_key(private_key_body, Certificate)),
+    ?assertEqual(false, maps:is_key(certificate_body, Certificate)),
+    ?assertEqual(false, maps:is_key(ca_body, Certificate)),
+    ?assertEqual(false, maps:is_key(tls_auth_body, Certificate)),
     ?assertEqual(true, maps:get(tls_auth_present, Certificate)),
 
     ?assertEqual(openvpn, maps:get(service, VpnService)),

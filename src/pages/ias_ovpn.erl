@@ -21,7 +21,7 @@ event(_) ->
 content() ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Import OVPN Preview")},
-        #p{body = ias_html:text("Paste an OpenVPN client configuration for a live-only IAS import preview.")},
+        #p{body = ias_html:text("Paste an OpenVPN client configuration to preview its IAS mapping and optionally store sanitized demo objects in volatile ETS state.")},
         form_panel(),
         preview_panel(ias_ovpn_preview:analyze(<<"">>))
     ]}.
@@ -30,7 +30,7 @@ form_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("OVPN Input")},
         #p{style = <<"font-size:12px;margin:0 0 10px;color:#64748b;">>,
-           body = ias_html:text("Preview only. Nothing is imported, stored, or connected.")},
+           body = ias_html:text("Preview is read-only. The explicit demo action stores sanitized metadata in volatile ETS only; it never stores key material or connects a VPN.")},
         #textarea{id = ovpn_text,
                   name = <<"ovpn_text">>,
                   rows = 24,
@@ -112,20 +112,20 @@ preview_panel(Preview, ExtraBody) ->
                ]),
                #h3{body = ias_html:text("Import Plan Preview")},
                key_value_table([
-                   {"Device Action", <<"create preview">>},
+                   {"Device Action", <<"propose demo device">>},
                    {"Device Type", <<"vpn-client">>},
                    {"Device Endpoint", endpoint(Preview)},
-                   {"Certificate Action", <<"register preview">>},
+                   {"Certificate Action", <<"propose certificate metadata">>},
                    {"CA", presence(maps:get(has_ca, Preview, false))},
                    {"Client Certificate", presence(maps:get(has_cert, Preview, false))},
                    {"Private Key", private_key_plan(maps:get(has_key, Preview, false))},
                    {"TLS Auth", presence(maps:get(tls_auth, Preview, false))},
-                   {"VPN Service Action", <<"bind preview">>},
+                   {"VPN Service Action", <<"propose demo service binding">>},
                    {"VPN Service", <<"OpenVPN">>},
                    {"VPN Remote", endpoint(Preview)},
                    {"VPN Protocol", missing_text(maps:get(proto, Preview, not_found))},
                    {"VPN Cipher", missing_text(maps:get(cipher, Preview, not_found))},
-                   {"Status", <<"preview only - no changes were applied">>}
+                   {"Status", <<"read-only preview - no state changes">>}
                ]),
                import_demo_button()
            ] ++ ExtraBody}.
@@ -141,11 +141,11 @@ import_demo_button() ->
                      postback = import_plan},
                #link{id = ovpn_import_demo_button,
                      class = [button, sgreen],
-                     body = ias_html:text("Import as Demo"),
+                     body = ias_html:text("Store Demo Objects"),
                      source = [ovpn_text],
                      postback = import_demo},
                #span{style = <<"font-size:12px;color:#64748b;">>,
-                     body = ias_html:text("Demo import only. Stored in ETS runtime state.")}
+                     body = ias_html:text("Explicit demo action. Volatile ETS metadata only; private key material is never stored.")}
            ]}.
 
 import_plan_panel(Preview) ->
@@ -153,36 +153,36 @@ import_plan_panel(Preview) ->
            body = [
                #h3{body = ias_html:text("IMPORT PLAN")},
                key_value_table([
-                   {"Device Action", <<"create preview">>},
+                   {"Device Action", <<"propose demo device">>},
                    {"Device Type", <<"vpn-client">>},
                    {"Device Endpoint", endpoint(Preview)},
-                   {"Certificate Action", <<"register preview">>},
+                   {"Certificate Action", <<"propose certificate metadata">>},
                    {"CA", presence(maps:get(has_ca, Preview, false))},
                    {"Client Certificate", presence(maps:get(has_cert, Preview, false))},
                    {"Private Key", private_key_plan(maps:get(has_key, Preview, false))},
                    {"TLS Auth", presence(maps:get(tls_auth, Preview, false))},
-                   {"VPN Service Action", <<"bind preview">>},
+                   {"VPN Service Action", <<"propose demo service binding">>},
                    {"VPN Service", <<"OpenVPN">>},
                    {"VPN Remote", endpoint(Preview)},
                    {"VPN Protocol", missing_text(maps:get(proto, Preview, not_found))},
                    {"VPN Cipher", missing_text(maps:get(cipher, Preview, not_found))},
-                   {"Status", <<"preview only">>}
+                   {"Status", <<"read-only plan - no state changes">>}
                ])
            ]}.
 
 demo_import_panel(Preview, ImportId) ->
     #panel{style = <<"margin-top:16px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
-               #h3{body = ias_html:text("Demo Import Result")},
+               #h3{body = ias_html:text("Demo Store Result")},
                #p{style = <<"font-size:12px;margin:0 0 10px;color:#166534;">>,
-                  body = ias_html:text("Demo import completed. Objects were stored in ETS demo runtime state only.")},
+                  body = ias_html:text("Sanitized Device, Certificate metadata, and VPN Service objects were stored in volatile ETS demo state.")},
                key_value_table([
                    {"Import ID", ImportId},
                    {"Device", ias_html:join([<<"vpn-client " >>, endpoint(Preview)])},
                    {"Certificate", certificate_result(Preview)},
                    {"VPN Service", vpn_service_result(Preview)},
                    {"Private Key", private_key_plan(maps:get(has_key, Preview, false))},
-                   {"Status", <<"demo only - no changes were applied">>}
+                   {"Status", <<"stored in volatile ETS demo state">>}
                ]),
                #panel{style = <<"display:flex;gap:10px;flex-wrap:wrap;margin-top:12px;">>,
                       body = [

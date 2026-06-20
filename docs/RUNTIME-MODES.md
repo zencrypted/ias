@@ -67,7 +67,9 @@ Live Runtime Mode is responsible for:
 - Future LDAP-backed identity/profile lookup.
 - Future NS/discovery integration.
 - Future certificate issuance workflows.
-- Future configuration import workflows such as OVPN import.
+- Live OVPN paste/file parsing and IAS mapping preview.
+- Explicit storage of sanitized OVPN demo metadata in volatile ETS state.
+- Future controlled production OVPN import and VPN activation.
 
 All live-rendered text must follow `docs/NITRO-RENDERING.md`. In particular:
 
@@ -121,7 +123,9 @@ eventing, integration and authorization semantics belong to Live Runtime Mode.
 | Certificate issuance | no | future |
 | LDAP identity/profile lookup | no | future |
 | NS/discovery integration | no | future |
-| OVPN upload/parse/import | no | future |
+| OVPN paste/file parse and mapping preview | no | yes |
+| OVPN sanitized demo ETS store | no | yes, demo only |
+| Production OVPN import and VPN activation | no | future |
 
 Features that depend on backend state, external services or untrusted input must
 be implemented in Live Runtime Mode first. Static Preview Mode may mirror their
@@ -137,50 +141,67 @@ GitHub Pages content must not imply that the static preview is performing live
 validation, issuing certificates, reading VPN state, importing configurations or
 enforcing policy.
 
-## Future Runtime Work
+## Runtime Workflows and Future Work
 
-### OVPN Import Preview
+### OVPN Preview and Demo Store
 
-OVPN import is a future **Live Runtime Mode** workflow. It must not be
-implemented as static-only behavior.
+OVPN handling is a **Live Runtime Mode** workflow. It must not be implemented
+as authoritative static-only behavior.
 
-Planned flow:
+The current read-only flow is:
 
 ```text
 .ovpn upload/paste
 -> parse
--> extract CA/cert/key/remote/routes
+-> extract CA/cert/key presence, remote, protocol and routes
 -> config preview
--> map to IAS Device
--> map to IAS Certificate
--> map to VPN Service
+-> map to IAS Device preview
+-> map to IAS Certificate preview
+-> map to VPN Service preview
+-> import plan preview
 ```
 
-The implementation should treat `.ovpn` input as untrusted runtime data. The
-parser should extract only the data needed for preview and later import:
+The current explicit demo flow is:
+
+```text
+import plan preview
+-> sanitize extracted metadata
+-> store demo Device, Certificate metadata and VPN Service objects
+-> volatile ETS runtime state
+```
+
+The `.ovpn` input is untrusted runtime data. The parser extracts only the data
+needed for preview and demo mapping:
 
 - remote endpoint and port;
 - protocol intent;
 - route intent;
 - CA material presence;
-- client certificate identity and metadata;
-- private key presence, without persisting secret material during preview.
+- client certificate presence;
+- private key presence, without retaining secret material;
+- TLS-auth presence;
+- selected compatibility properties such as cipher and compression.
 
-The preview should map extracted data to IAS concepts:
+The mapping is:
 
-- **IAS Device**: client endpoint or peer identity represented by the config.
-- **IAS Certificate**: certificate identity and metadata derived from the config.
+- **IAS Device**: the VPN client endpoint or peer represented by the config.
+- **IAS Certificate**: sanitized certificate and key-presence metadata.
 - **VPN Service**: OpenVPN service, remote endpoint and route intent represented
   by the config.
 
-OVPN files usually do not directly contain IAS policy claims. Claims should be
-resolved later by IAS through Security Profiles, certificate metadata and policy
-rules.
+Preview and import-plan actions do not change state. The explicit
+`Store Demo Objects` action writes sanitized metadata to node-local, volatile ETS
+demo state only. It does not persist the original `.ovpn` document, CA body,
+certificate body, private-key body or TLS-auth body; `private_key_stored` remains
+`false`. It also does not install a configuration, start a tunnel or call CA, LDAP
+or external VPN services.
 
-The import workflow should remain a preview until validation, authorization and
-secret-handling semantics are defined. Static Preview Mode may later show a fixed
-demonstration of the flow, but authoritative parsing and mapping belong to Live
-Runtime Mode.
+OVPN files usually do not directly contain IAS policy claims. Claims should be
+resolved by IAS through Security Profiles, certificate metadata and policy rules.
+
+A future production import requires explicit validation, authorization, audit,
+rollback, persistent storage and secret-handling semantics. Static Preview Mode
+may mirror only a fixed, non-authoritative representation of this workflow.
 
 ### JSON Compatibility
 
