@@ -671,3 +671,11 @@ VPN owns:
 
 This keeps the dataplane small and prevents the VPN service from duplicating
 IAS policy logic.
+
+## Public Certificate Material Boundary
+
+Certificate domain objects contain lifecycle, identity and relationship
+metadata. Public PEM bodies are referenced by certificate id from the separate
+runtime certificate-material store. Private keys never belong to this store.
+This separation lets OVPN provisioning resolve public assembly inputs without
+making Demo State or the relationship graph a secret-bearing persistence layer.

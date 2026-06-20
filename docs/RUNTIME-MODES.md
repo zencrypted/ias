@@ -299,3 +299,12 @@ reported as `missing_body`, portable private keys as
 real public certificate material and implements the selected private-key flow.
 No PEM, CSR, private key, TLS-auth body or shared secret is generated or stored
 by this stage.
+
+### Public Certificate Material Store
+
+Stage 23C adds a Live Runtime-only store for public X.509 certificate PEM
+material. Certificate bodies remain separate from IAS certificate metadata and
+from Demo State snapshots. The store accepts only a single public certificate
+PEM for an existing certificate object, rejects private-key material, records a
+SHA-256 fingerprint, and updates OVPN assembly readiness without generating or
+storing private keys.

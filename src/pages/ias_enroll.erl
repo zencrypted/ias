@@ -120,6 +120,7 @@ issued_certificate_table(preview) ->
     ]);
 issued_certificate_table({ok, Certificate}) ->
     EnrollmentId = ias_demo_store:add_enrollment_result(Certificate),
+    _ = maybe_stage_cmp_material(EnrollmentId, Certificate),
     #panel{body = [
         key_value_table([
             {"Status", <<"issued">>},
@@ -140,6 +141,13 @@ issued_certificate_table({error, Reason}) ->
         {"Status", <<"failed">>},
         {"Reason", Reason}
     ]).
+
+
+maybe_stage_cmp_material(EnrollmentId, Certificate) ->
+    case maps:get(certificate_pem, Certificate, undefined) of
+        undefined -> not_found;
+        Pem -> ias_certificate_material:stage_cmp(EnrollmentId, Pem)
+    end.
 
 csr_status({ok, _Certificate}) ->
     <<"generated">>;

@@ -17,7 +17,8 @@ summary() ->
       total_records => length(Objects)}.
 
 clear() ->
-    ias_demo_store:clear().
+    ok = ias_demo_store:clear(),
+    ias_certificate_material:clear().
 
 export() ->
     Objects = runtime_objects(),
@@ -89,6 +90,7 @@ restore_snapshot(Snapshot) ->
     Skipped = length(Objects) - length(ValidObjects) +
         length(Relationships) - length(ValidRelationships),
     ias_demo_store:clear(),
+    ias_certificate_material:clear(),
     [ias_demo_store:put_runtime_object(sanitize_record(Object)) || Object <- ValidObjects],
     UniqueRelationships = unique_relationships(ValidRelationships),
     [ias_demo_store:put_runtime_object(Relationship) || Relationship <- UniqueRelationships],

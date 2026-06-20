@@ -6,6 +6,8 @@ import(EnrollmentId) ->
         {ok, Enrollment} ->
             Certificate = ias_demo_store:add_certificate(certificate_demo_object(Enrollment)),
             _ = ias_relationship_link:create(issues, EnrollmentId, maps:get(id, Certificate, undefined)),
+            _ = ias_certificate_material:attach_staged(EnrollmentId,
+                                                       maps:get(id, Certificate, undefined)),
             {ok, Certificate};
         not_found ->
             not_found

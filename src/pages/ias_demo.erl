@@ -32,6 +32,20 @@ event({download_ovpn_artifact, certificate, CertificateId}) ->
     download_ovpn_artifact(ias_ovpn_export:certificate_artifact(CertificateId));
 event({create_ovpn_provisioning, Mode, SubjectKind, SubjectId}) ->
     create_ovpn_provisioning(ias_ovpn_provisioning:create(Mode, SubjectKind, SubjectId));
+event({store_certificate_material, CertificateId, MaterialType}) ->
+    Pem = nitro:q(certificate_material_pem),
+    case ias_certificate_material:put(CertificateId, MaterialType, Pem, operator_load) of
+        {ok, _Status} ->
+            nitro:clear(stand),
+            nitro:insert_bottom(stand, content());
+        {error, Reason} ->
+            nitro:update(certificate_material_feedback,
+                         certificate_material_error(Reason))
+    end;
+event({delete_certificate_material, CertificateId}) ->
+    ok = ias_certificate_material:delete(CertificateId),
+    nitro:clear(stand),
+    nitro:insert_bottom(stand, content());
 event(_) ->
     ok.
 
@@ -53,13 +67,18 @@ query_id() ->
             nitro:qc(id)
     end.
 
-detail(Object) ->
+detail(Object0) ->
+    Object = case maps:get(kind, Object0, undefined) of
+        ovpn_provisioning -> ias_ovpn_provisioning:refresh(Object0);
+        _ -> Object0
+    end,
     #panel{class = <<"ias-placeholder">>, body = [
         breadcrumb(),
         #h2{body = ias_html:text("Demo Object")},
         #p{body = ias_html:text("Read-only metadata stored in ETS demo runtime state.")},
         #h3{body = title(Object)},
         key_value_table(rows(Object)),
+        certificate_material_preview(Object),
         ovpn_material_preview(Object),
         certificate_lifecycle_preview(Object),
         operational_readiness_preview(Object),
@@ -237,6 +256,60 @@ rows(#{kind := ovpn_provisioning} = Object) ->
     ] ++ created_row(Object);
 rows(Object) ->
     common_rows(Object) ++ created_row(Object).
+
+certificate_material_preview(#{kind := certificate} = Certificate) ->
+    CertificateId = maps:get(id, Certificate, undefined),
+    MaterialType = certificate_material_type(Certificate),
+    Status = ias_certificate_material:status(CertificateId),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Public Certificate Material")},
+        #p{body = ias_html:text(
+            "Store one public X.509 certificate PEM block. Private keys are rejected and Demo State never exports this material.")},
+        certificate_material_status(Status),
+        #textarea{id = certificate_material_pem,
+                  rows = 8,
+                  placeholder = <<"-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----">>,
+                  style = <<"width:100%;font-family:monospace;box-sizing:border-box;">>},
+        #panel{style = <<"margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;">>, body = [
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Store Public PEM"),
+                  source = [certificate_material_pem],
+                  postback = {store_certificate_material, CertificateId, MaterialType}},
+            certificate_material_delete_button(CertificateId, Status)
+        ]},
+        #panel{id = certificate_material_feedback}
+    ]};
+certificate_material_preview(_Object) ->
+    #panel{body = []}.
+
+certificate_material_status({ok, Status}) ->
+    key_value_table([
+        {"Status", available},
+        {"Material Type", maps:get(material_type, Status, undefined)},
+        {"Source", maps:get(source, Status, undefined)},
+        {"SHA-256 Fingerprint", maps:get(fingerprint_sha256, Status, undefined)},
+        {"Stored At", maps:get(stored_at, Status, undefined)}
+    ]);
+certificate_material_status(not_found) ->
+    key_value_table([{"Status", missing_body}]).
+
+certificate_material_delete_button(CertificateId, {ok, _}) ->
+    #link{class = [button], body = ias_html:text("Delete Public PEM"),
+          postback = {delete_certificate_material, CertificateId}};
+certificate_material_delete_button(_CertificateId, not_found) ->
+    #span{body = <<>>}.
+
+certificate_material_error(Reason) ->
+    #panel{style = <<"margin-top:10px;padding:10px;border:1px solid #fecaca;background:#fef2f2;">>,
+           body = ias_html:join([<<"Public PEM was rejected: ">>, ias_html:text(Reason)])}.
+
+certificate_material_type(Certificate) ->
+    case maps:get(source, Certificate, undefined) of
+        ca_certificate -> ca_certificate;
+        _ -> client_certificate
+    end.
 
 ovpn_material_preview(#{kind := ovpn_provisioning} = Object) ->
     Requirements = maps:get(material_requirements, Object, #{}),

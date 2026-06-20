@@ -1,7 +1,8 @@
 -module(ias_ovpn_provisioning).
 -export([preview/3,
          create/3,
-         get/1]).
+         get/1,
+         refresh/1]).
 
 -define(TTL_SECONDS, 900).
 
@@ -53,10 +54,23 @@ create(Mode, SubjectKind, SubjectId) ->
 get(ProvisioningId) ->
     case ias_demo_store:get(ProvisioningId) of
         {ok, #{kind := ovpn_provisioning} = Transaction} ->
-            {ok, Transaction};
+            {ok, refresh(Transaction)};
         _ ->
             not_found
     end.
+
+refresh(#{kind := ovpn_provisioning} = Transaction) ->
+    Mode = maps:get(mode, Transaction, undefined),
+    Authorization = maps:get(authorization, Transaction, deny),
+    Components = material_components_from_transaction(Mode, Transaction, Authorization),
+    Transaction#{material_components => Components,
+                 material_status => refreshed_material_status(Components, Authorization),
+                 assembly_status => assembly_status_for(Mode, Components, Authorization),
+                 assembly_reason => refreshed_assembly_reason(Mode, Components,
+                                                               Authorization, Transaction),
+                 next_step => assembly_next_step_for(Mode, Components, Authorization)};
+refresh(Transaction) ->
+    Transaction.
 
 portable_readiness(Preview) ->
     AuthorizationReasons = case maps:get(authorization, Preview, deny) of
@@ -102,7 +116,8 @@ reason_text(Reasons) ->
 export_plan(Mode, SubjectKind, SubjectId, Preview) ->
     Authorization = maps:get(authorization, Preview, deny),
     Reason = maps:get(authorization_reason, Preview, <<"OVPN provisioning denied">>),
-    #{mode => Mode,
+    refresh(#{kind => ovpn_provisioning,
+      mode => Mode,
       subject_kind => SubjectKind,
       subject_id => ias_html:text(SubjectId),
       device_id => maps:get(device_id, Preview, not_found),
@@ -125,7 +140,7 @@ export_plan(Mode, SubjectKind, SubjectId, Preview) ->
       downloaded => false,
       private_key_stored => false,
       certificate_body_stored => false,
-      ca_body_stored => false}.
+      ca_body_stored => false}).
 
 blocked_plan(Mode, SubjectKind, SubjectId, Reason) ->
     #{mode => Mode,
@@ -198,40 +213,106 @@ blocked_material_components(Mode) ->
 
 referenced_material_status(not_found) ->
     not_linked;
-referenced_material_status(_Id) ->
-    missing_body.
+referenced_material_status(Id) ->
+    case ias_certificate_material:status(Id) of
+        {ok, _} -> available;
+        not_found -> missing_body
+    end.
 
-assembly_status(allow) ->
-    blocked;
-assembly_status(_Authorization) ->
-    blocked.
+assembly_status(Authorization) ->
+    assembly_status_for(undefined, #{}, Authorization).
 
-assembly_reason(_Mode, Preview, Authorization) when Authorization =/= allow ->
-    ias_html:text(maps:get(authorization_reason, Preview,
+assembly_reason(Mode, Preview, Authorization) ->
+    Components = material_components(Mode, Preview, Authorization),
+    assembly_reason_for(Mode, Components, Authorization).
+
+assembly_next_step(Authorization) ->
+    assembly_next_step_for(undefined, #{}, Authorization).
+
+material_components_from_transaction(Mode, Transaction, allow) ->
+    #{ca_certificate => referenced_material_status(
+          maps:get(ca_certificate_id, Transaction, not_found)),
+      client_certificate => referenced_material_status(
+          maps:get(certificate_id, Transaction, not_found)),
+      private_key => private_key_component_status(Mode),
+      tls_auth => maps:get(tls_auth, maps:get(material_components, Transaction, #{}),
+                           not_configured)};
+material_components_from_transaction(Mode, _Transaction, _Authorization) ->
+    blocked_material_components(Mode).
+
+
+
+refreshed_assembly_reason(_Mode, _Components, Authorization, Transaction)
+  when Authorization =/= allow ->
+    ias_html:text(maps:get(authorization_reason, Transaction,
                            <<"OVPN provisioning authorization is denied">>));
-assembly_reason(portable, Preview, allow) ->
-    reason_text(material_reasons(Preview) ++
-                [<<"one-time private key generation is pending">>]);
-assembly_reason(device_bound, Preview, allow) ->
-    reason_text(material_reasons(Preview));
-assembly_reason(_Mode, Preview, allow) ->
-    reason_text(material_reasons(Preview)).
+refreshed_assembly_reason(Mode, Components, allow, _Transaction) ->
+    assembly_reason_for(Mode, Components, allow).
 
-material_reasons(Preview) ->
-    CaReasons = case maps:get(ca_certificate_id, Preview, not_found) of
-        not_found -> [<<"CA certificate is not linked">>];
+refreshed_material_status(_Components, Authorization) when Authorization =/= allow -> blocked;
+refreshed_material_status(Components, allow) ->
+    case public_material_available(Components) of
+        true -> public_material_available;
+        false -> pending_real_material
+    end.
+
+assembly_status_for(_Mode, _Components, Authorization) when Authorization =/= allow -> blocked;
+assembly_status_for(device_bound, Components, allow) ->
+    case public_material_available(Components) of
+        true -> ready_for_device_assembly;
+        false -> blocked
+    end;
+assembly_status_for(portable, Components, allow) ->
+    case public_material_available(Components) of
+        true -> awaiting_private_key_generation;
+        false -> blocked
+    end;
+assembly_status_for(_, _, _) -> blocked.
+
+assembly_reason_for(_Mode, _Components, Authorization) when Authorization =/= allow ->
+    <<"OVPN provisioning authorization is denied">>;
+assembly_reason_for(device_bound, Components, allow) ->
+    case missing_public_material_reasons(Components) of
+        [] -> <<"public certificate material is available; assembly remains on the device">>;
+        Reasons -> reason_text(Reasons)
+    end;
+assembly_reason_for(portable, Components, allow) ->
+    case missing_public_material_reasons(Components) of
+        [] -> <<"public certificate material is available; one-time private key generation is pending">>;
+        Reasons -> reason_text(Reasons ++ [<<"one-time private key generation is pending">>])
+    end;
+assembly_reason_for(_, Components, allow) -> reason_text(missing_public_material_reasons(Components)).
+
+assembly_next_step_for(_Mode, _Components, Authorization) when Authorization =/= allow ->
+    <<"Resolve OVPN provisioning authorization before material assembly.">>;
+assembly_next_step_for(device_bound, Components, allow) ->
+    case public_material_available(Components) of
+        true -> <<"Send the public OVPN bundle to the device for local private-key assembly.">>;
+        false -> <<"Load public certificate material from the CA/CMP response or certificate store.">>
+    end;
+assembly_next_step_for(portable, Components, allow) ->
+    case public_material_available(Components) of
+        true -> <<"Generate the one-time private key and CSR in a later provisioning stage.">>;
+        false -> <<"Load public certificate material from the CA/CMP response or certificate store.">>
+    end;
+assembly_next_step_for(_, _, _) -> <<"Load required OVPN material.">>.
+
+public_material_available(Components) ->
+    maps:get(ca_certificate, Components, missing_body) =:= available andalso
+    maps:get(client_certificate, Components, missing_body) =:= available.
+
+missing_public_material_reasons(Components) ->
+    Ca = case maps:get(ca_certificate, Components, missing_body) of
+        available -> [];
+        not_linked -> [<<"CA certificate is not linked">>];
         _ -> [<<"CA certificate PEM is unavailable">>]
     end,
-    CertificateReasons = case maps:get(certificate_id, Preview, not_found) of
-        not_found -> [<<"client certificate is not linked">>];
+    Cert = case maps:get(client_certificate, Components, missing_body) of
+        available -> [];
+        not_linked -> [<<"client certificate is not linked">>];
         _ -> [<<"client certificate PEM is unavailable">>]
     end,
-    CaReasons ++ CertificateReasons.
-
-assembly_next_step(allow) ->
-    <<"Load public certificate material from the CA/CMP response or certificate store.">>;
-assembly_next_step(_Authorization) ->
-    <<"Resolve OVPN provisioning authorization before material assembly.">>.
+    Ca ++ Cert.
 
 private_key_requirement(portable) -> pending_one_time_generation;
 private_key_requirement(device_bound) -> device_owned;

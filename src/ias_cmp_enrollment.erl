@@ -64,14 +64,23 @@ run_steps(OpenSSL, CaOpenSSLDir, Dir, CommonName, EnrollmentCN, Curve, Server,
                          <<"-noout">>, <<"-subject">>, <<"-issuer">>, <<"-dates">>]}
     ],
     run_steps(OpenSSL, Steps, #{
+        certificate_path => Cert,
         requested_cn => ias_html:text(CommonName),
         enrollment_cn => ias_html:text(EnrollmentCN),
         profile => ias_html:text(Curve),
         cmp_server => ias_html:text(Server)
     }).
 
-run_steps(_OpenSSL, [], #{metadata := Metadata} = State) ->
-    {ok, maps:merge(maps:without([metadata], State), parse_metadata(Metadata))};
+run_steps(_OpenSSL, [], #{metadata := Metadata, certificate_path := Cert} = State) ->
+    case file:read_file(Cert) of
+        {ok, CertificatePem} ->
+            PublicState = maps:without([metadata, certificate_path], State),
+            {ok, maps:merge(PublicState#{certificate_pem => CertificatePem},
+                            parse_metadata(Metadata))};
+        {error, Reason} ->
+            {error, ias_html:join([<<"failed to read issued certificate: ">>,
+                                   ias_html:text(Reason)])}
+    end;
 run_steps(OpenSSL, [{metadata, Cwd, Args} | Rest], State) ->
     case run(OpenSSL, Args, Cwd) of
         {ok, Output} -> run_steps(OpenSSL, Rest, State#{metadata => Output});
