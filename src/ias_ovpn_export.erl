@@ -223,7 +223,7 @@ certificate_preview(CertificateId) ->
 portable_certificate_preview(CertificateId) ->
     portable_mode_preview(certificate_preview(CertificateId)).
 
-portable_mode_preview(#{device_lock := enabled} = Preview) ->
+portable_mode_preview(#{authorization := allow, device_lock := enabled} = Preview) ->
     Preview#{authorization => deny,
              authorization_reason =>
                  <<"device-bound security profile requires device-bound provisioning">>};
