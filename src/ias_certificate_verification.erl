@@ -17,7 +17,9 @@ verify(Certificate) ->
     {ok, Verification}.
 
 unique_verified_certificates() ->
-    grouped_verified_certificates(verified_by_relationships(), []).
+    [Group#{verification_ids => sort_verification_ids(
+                                  maps:get(verification_ids, Group, []))}
+     || Group <- grouped_verified_certificates(verified_by_relationships(), [])].
 
 total_verification_records() ->
     verifications().
@@ -192,6 +194,21 @@ take_certificate_group(CertificateId, [#{certificate_id := CertificateId} = Grou
     {Group, lists:reverse(Kept) ++ Rest};
 take_certificate_group(CertificateId, [Group | Rest], Kept) ->
     take_certificate_group(CertificateId, Rest, [Group | Kept]).
+
+sort_verification_ids(VerificationIds) ->
+    lists:sort(fun verification_id_before/2, VerificationIds).
+
+verification_id_before(A, B) ->
+    verification_sort_key(A) =< verification_sort_key(B).
+
+verification_sort_key(Id) ->
+    case ias_demo_store:get(Id) of
+        {ok, Verification} ->
+            {ias_html:text(maps:get(created_at, Verification, <<>>)),
+             ias_html:text(maps:get(id, Verification, Id))};
+        not_found ->
+            {<<>>, ias_html:text(Id)}
+    end.
 
 created_at() ->
     iolist_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second),
