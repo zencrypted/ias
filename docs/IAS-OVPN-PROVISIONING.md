@@ -84,8 +84,9 @@ transactions or export artifacts merely by navigating between steps.
 Once the wizard started carrying selected Device, Security Profile and VPN
 Service references, sanitized drafts became part of the Demo State boundary.
 Demo State export/import preserves only the wizard id, scenario, current step,
-selected object ids, the relationship-apply marker and timestamps. PEM, CSR,
-private-key, TLS secret, form and session data are never included. Older
+selected object ids, the relationship-apply marker, the latest provisioning
+transaction id, completion metadata and timestamps. PEM, CSR, private-key, TLS
+secret, form and session data are never included. Older
 snapshots without `wizard_drafts` remain valid, and stale object references are
 restored so the wizard can surface its
 existing blocked-selection guidance rather than silently discarding operator
@@ -111,12 +112,14 @@ Profile remains disabled until one-time private-key generation and delivery are
 implemented.
 
 Stage 24G turns the Relationships step into an explicit graph commit boundary.
-The wizard preflights the four required links before changing runtime state:
+The wizard preflights the six required links before changing runtime state:
 
 ```text
 Device -> Security Profile
+Device -> derived Security Policy
 Device -> VPN Service
 Device -> Client Certificate
+Client Certificate -> derived Security Policy
 VPN Service -> CA Certificate
 ```
 
@@ -143,6 +146,15 @@ is available, both public certificate PEM bodies are present and assembly report
 `ready_for_device_assembly`. Missing public material is recovered through links to
 the selected certificate detail pages. The final Provisioning step remains the
 transaction creation boundary.
+
+Stage 24I implements that final boundary. The wizard repeats the readiness
+preflight immediately before calling the existing device-bound provisioning
+service. The created transaction id is stored in the wizard draft together with
+a completion marker and timestamp. Reopening or resubmitting a completed wizard
+reuses the recorded transaction and does not create a duplicate. Creating a new
+transaction requires the explicit `Create Another Transaction` action. Completed
+wizard metadata is included in the sanitized Demo State draft section; the
+provisioning transaction itself remains a normal sanitized runtime object.
 
 Material observation is independent from authorization. The wizard reads CA and
 client certificate availability directly from the public certificate material

@@ -25,6 +25,9 @@
          relationships_ready/1,
          material_readiness/1,
          material_readiness_ready/1,
+         create_provisioning/1,
+         create_another_provisioning/1,
+         provisioning_transaction/1,
          steps/0,
          step_title/1,
          step_description/1,
@@ -49,6 +52,9 @@ new(device_bound) ->
         ca_certificate_id => undefined,
         client_certificate_id => undefined,
         relationships_applied => false,
+        provisioning_id => undefined,
+        completed => false,
+        completed_at => undefined,
         created_at => Now,
         updated_at => Now
     },
@@ -127,8 +133,8 @@ back(Id) ->
 select_device(Id, DeviceId) ->
     case valid_device(DeviceId) of
         {ok, Device} ->
-            update(Id, #{device_id => maps:get(id, Device),
-                         relationships_applied => false});
+            update(Id, reset_completion(#{device_id => maps:get(id, Device),
+                                         relationships_applied => false}));
         {error, Reason} ->
             {error, Reason}
     end.
@@ -144,8 +150,8 @@ select_security_profile(Id, ProfileId) ->
         {ok, Profile} ->
             case security_profile_compatibility(Profile) of
                 {blocked, Reason} -> {error, Reason};
-                _ -> update(Id, #{security_profile_id => maps:get(id, Profile),
-                                   relationships_applied => false})
+                _ -> update(Id, reset_completion(#{security_profile_id => maps:get(id, Profile),
+                                           relationships_applied => false}))
             end;
         {error, Reason} ->
             {error, Reason}
@@ -166,8 +172,8 @@ security_profile_compatibility(_Profile) ->
 
 select_vpn_service(Id, ServiceId) ->
     case valid_vpn_service(ServiceId) of
-        {ok, Service} -> update(Id, #{vpn_service_id => maps:get(id, Service),
-                                        relationships_applied => false});
+        {ok, Service} -> update(Id, reset_completion(#{vpn_service_id => maps:get(id, Service),
+                                           relationships_applied => false}));
         {error, Reason} -> {error, Reason}
     end.
 
@@ -179,8 +185,8 @@ selected_vpn_service(Draft) when is_map(Draft) ->
 
 select_ca_certificate(Id, CertificateId) ->
     case valid_ca_certificate(CertificateId) of
-        {ok, Certificate} -> update(Id, #{ca_certificate_id => maps:get(id, Certificate),
-                                            relationships_applied => false});
+        {ok, Certificate} -> update(Id, reset_completion(#{ca_certificate_id => maps:get(id, Certificate),
+                                           relationships_applied => false}));
         {error, Reason} -> {error, Reason}
     end.
 
@@ -196,8 +202,8 @@ select_client_certificate(Id, CertificateId) ->
             case valid_client_certificate(CertificateId) of
                 {ok, Certificate} ->
                     case client_certificate_device_status(Certificate, Draft) of
-                        ok -> update(Id, #{client_certificate_id => maps:get(id, Certificate),
-                                         relationships_applied => false});
+                        ok -> update(Id, reset_completion(#{client_certificate_id => maps:get(id, Certificate),
+                                                 relationships_applied => false}));
                         {error, Reason} -> {error, Reason}
                     end;
                 {error, Reason} -> {error, Reason}
@@ -239,6 +245,88 @@ material_readiness_ready(Draft) when is_map(Draft) ->
     ias_provisioning_wizard_readiness:ready(Draft);
 material_readiness_ready(_Draft) ->
     false.
+
+create_provisioning(Id) ->
+    case get(Id) of
+        {ok, Draft} ->
+            case provisioning_transaction(Draft) of
+                {ok, Transaction} -> {ok, Draft, Transaction};
+                not_found ->
+                    case maps:get(provisioning_id, Draft, undefined) of
+                        undefined -> create_new_provisioning(Draft);
+                        _ -> {error, provisioning_transaction_missing}
+                    end
+            end;
+        not_found ->
+            {error, not_found}
+    end.
+
+create_another_provisioning(Id) ->
+    case get(Id) of
+        {ok, Draft} -> create_new_provisioning(Draft);
+        not_found -> {error, not_found}
+    end.
+
+provisioning_transaction(Draft) when is_map(Draft) ->
+    case maps:get(provisioning_id, Draft, undefined) of
+        undefined -> not_found;
+        <<>> -> not_found;
+        ProvisioningId -> ias_ovpn_provisioning:get(ProvisioningId)
+    end;
+provisioning_transaction(_Draft) ->
+    not_found.
+
+create_new_provisioning(Draft) ->
+    case material_readiness_ready(Draft) of
+        false ->
+            {error, material_readiness_blocked};
+        true ->
+            DeviceId = maps:get(device_id, Draft, undefined),
+            case ias_ovpn_provisioning:create(device_bound, device, DeviceId) of
+                {ok, Transaction} ->
+                    case provisioning_matches_draft(Transaction, Draft) of
+                        true -> persist_provisioning_result(Draft, Transaction);
+                        false ->
+                            ok = ias_demo_store:delete_runtime_object(
+                                   ovpn_provisioning, maps:get(id, Transaction)),
+                            {error, provisioning_reference_mismatch}
+                    end;
+                {error, Reason} ->
+                    {error, Reason}
+            end
+    end.
+
+persist_provisioning_result(Draft, Transaction) ->
+    ProvisioningId = maps:get(id, Transaction),
+    Updates = #{provisioning_id => ProvisioningId,
+                completed => true,
+                completed_at => created_at(),
+                current_step => provisioning},
+    case update(maps:get(id, Draft), Updates) of
+        {ok, Updated} -> {ok, Updated, Transaction};
+        {error, Reason} ->
+            ok = ias_demo_store:delete_runtime_object(ovpn_provisioning,
+                                                       ProvisioningId),
+            {error, Reason}
+    end.
+
+provisioning_matches_draft(Transaction, Draft) ->
+    same_reference(maps:get(device_id, Transaction, undefined),
+                   maps:get(device_id, Draft, undefined)) andalso
+    same_reference(maps:get(vpn_service_id, Transaction, undefined),
+                   maps:get(vpn_service_id, Draft, undefined)) andalso
+    same_reference(maps:get(ca_certificate_id, Transaction, undefined),
+                   maps:get(ca_certificate_id, Draft, undefined)) andalso
+    same_reference(maps:get(certificate_id, Transaction, undefined),
+                   maps:get(client_certificate_id, Draft, undefined)).
+
+same_reference(Left, Right) ->
+    normalize_id(Left) =:= normalize_id(Right).
+
+reset_completion(Updates) ->
+    Updates#{provisioning_id => undefined,
+             completed => false,
+             completed_at => undefined}.
 
 apply_relationships(Id) ->
     case get(Id) of
@@ -292,7 +380,7 @@ step_description(relationships) ->
 step_description(material_readiness) ->
     <<"Check public certificate material and assembly readiness before provisioning.">>;
 step_description(provisioning) ->
-    <<"Preview the future device-bound OVPN provisioning transaction. No artifact is created in Stage 24A.">>;
+    <<"Review the final device-bound inputs and create one idempotent OVPN provisioning transaction.">>;
 step_description(Step) ->
     ias_html:join([<<"Provisioning step: ">>, step_title(Step)]).
 
@@ -502,10 +590,14 @@ clamp(Value, _Min, _Max) ->
 validate_restored_draft(Draft) ->
     Allowed = [id, scenario, current_step, device_id, security_profile_id,
                vpn_service_id, ca_certificate_id, client_certificate_id,
-               relationships_applied, created_at, updated_at],
+               relationships_applied, provisioning_id, completed,
+               completed_at, created_at, updated_at],
     Selected = maps:with(Allowed, Draft),
     Safe = Selected#{relationships_applied =>
-                         maps:get(relationships_applied, Selected, false)},
+                         maps:get(relationships_applied, Selected, false),
+                     provisioning_id => maps:get(provisioning_id, Selected, undefined),
+                     completed => maps:get(completed, Selected, false),
+                     completed_at => maps:get(completed_at, Selected, undefined)},
     case {maps:get(id, Safe, undefined),
           maps:get(scenario, Safe, undefined),
           maps:get(current_step, Safe, undefined)} of
@@ -516,7 +608,10 @@ validate_restored_draft(Draft) ->
                  andalso valid_optional_reference(maps:get(vpn_service_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(ca_certificate_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(client_certificate_id, Safe, undefined))
-                 andalso is_boolean(maps:get(relationships_applied, Safe, false)) of
+                 andalso valid_optional_reference(maps:get(provisioning_id, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(completed_at, Safe, undefined))
+                 andalso is_boolean(maps:get(relationships_applied, Safe, false))
+                 andalso valid_completion_state(Safe) of
                 true -> {ok, Safe};
                 false -> {error, invalid_draft}
             end;
@@ -534,6 +629,13 @@ valid_optional_reference(Id) -> usable_restore_id(Id).
 valid_optional_profile_reference(undefined) -> true;
 valid_optional_profile_reference(Id) when is_atom(Id) -> true;
 valid_optional_profile_reference(Id) -> usable_restore_id(Id).
+
+valid_completion_state(Draft) ->
+    case maps:get(completed, Draft, false) of
+        false -> true;
+        true -> usable_restore_id(maps:get(provisioning_id, Draft, undefined));
+        _ -> false
+    end.
 
 normalize_updates(Updates) ->
     CurrentStep = maps:get(current_step, Updates, undefined),

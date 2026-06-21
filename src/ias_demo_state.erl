@@ -191,7 +191,8 @@ restore_wizard_drafts(Drafts) ->
 sanitize_wizard_draft(Draft) ->
     maps:with([id, scenario, current_step, device_id, security_profile_id,
                vpn_service_id, ca_certificate_id, client_certificate_id,
-               relationships_applied, created_at, updated_at], Draft).
+               relationships_applied, provisioning_id, completed, completed_at,
+               created_at, updated_at], Draft).
 
 sanitize_record(Record) ->
     Sanitized = maps:without(secret_keys(), Record),

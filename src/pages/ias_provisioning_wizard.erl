@@ -42,6 +42,16 @@ event({wizard_verify_client_certificate, WizardId}) ->
         not_found ->
             nitro:update(wizard_feedback, wizard_error(not_found))
     end;
+event({wizard_create_provisioning, WizardId}) ->
+    case ias_provisioning_wizard_store:create_provisioning(WizardId) of
+        {ok, Draft, _Transaction} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
+        {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
+    end;
+event({wizard_create_another_provisioning, WizardId}) ->
+    case ias_provisioning_wizard_store:create_another_provisioning(WizardId) of
+        {ok, Draft, _Transaction} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
+        {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
+    end;
 event({wizard_issue_client_certificate, WizardId}) ->
     Fields = #{user_id => nitro:q(wizard_client_certificate_user),
                subject_cn => nitro:q(wizard_client_certificate_subject_cn),
@@ -163,6 +173,7 @@ existing_wizard_draft_card(Draft) ->
                key_value_table([
                    {"Scenario", maps:get(scenario, Draft, undefined)},
                    {"Current Step", maps:get(current_step, Draft, undefined)},
+                   {"Status", draft_status(Draft)},
                    {"Device", draft_reference(maps:get(device_id, Draft, undefined))},
                    {"VPN Service", draft_reference(maps:get(vpn_service_id, Draft, undefined))},
                    {"Updated At", maps:get(updated_at, Draft, undefined)}
@@ -218,6 +229,8 @@ draft_summary(Draft) ->
             {"Wizard ID", maps:get(id, Draft, undefined)},
             {"Scenario", maps:get(scenario, Draft, undefined)},
             {"Current Step", maps:get(current_step, Draft, undefined)},
+            {"Status", draft_status(Draft)},
+            {"Provisioning", draft_reference(maps:get(provisioning_id, Draft, undefined))},
             {"Created At", maps:get(created_at, Draft, undefined)},
             {"Updated At", maps:get(updated_at, Draft, undefined)}
         ])
@@ -273,11 +286,131 @@ step_content(relationships, Draft) ->
     relationships_step(Draft);
 step_content(material_readiness, Draft) ->
     material_readiness_step(Draft);
+step_content(provisioning, Draft) ->
+    provisioning_step(Draft);
 step_content(_Step, _Draft) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px dashed rgba(15,23,42,0.2);border-radius:6px;background:#f8fafc;">>,
            body = ias_html:text("Placeholder only. Selection and validation for this step will be implemented in a later stage.")}.
 
 
+
+draft_status(Draft) ->
+    case maps:get(completed, Draft, false) of
+        true -> completed;
+        false -> in_progress
+    end.
+
+provisioning_step(Draft) ->
+    Readiness = ias_provisioning_wizard_store:material_readiness(Draft),
+    #panel{body = [
+        provisioning_final_summary(Draft, Readiness),
+        provisioning_result_panel(Draft, Readiness)
+    ]}.
+
+provisioning_final_summary(Draft, Readiness) ->
+    Plan = maps:get(plan, Readiness, #{}),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Final Provisioning Summary")},
+        key_value_table([
+            {"Device", device_link(maps:get(device_id, Draft, undefined))},
+            {"Security Profile", selected_profile_value(Draft)},
+            {"Security Policy", derived_policy_value(Draft)},
+            {"VPN Service", service_link(maps:get(vpn_service_id, Draft, undefined))},
+            {"CA Certificate", certificate_link(maps:get(ca_certificate_id, Draft, undefined))},
+            {"Client Certificate", certificate_link(maps:get(client_certificate_id, Draft, undefined))},
+            {"Authorization", maps:get(authorization, Plan, deny)},
+            {"Material", maps:get(material_status, Readiness,
+                                  maps:get(material_status, Plan, blocked))},
+            {"Assembly", maps:get(assembly_status, Plan, blocked)}
+        ])
+    ]}.
+
+selected_profile_value(Draft) ->
+    case ias_provisioning_wizard_store:selected_security_profile(Draft) of
+        {ok, Profile} -> maps:get(name, Profile, maps:get(id, Profile, undefined));
+        _ -> undefined
+    end.
+
+derived_policy_value(Draft) ->
+    case ias_provisioning_wizard_authorization:derived_policy(Draft) of
+        {ok, Policy} -> maps:get(id, Policy, undefined);
+        _ -> undefined
+    end.
+
+provisioning_result_panel(Draft, Readiness) ->
+    case ias_provisioning_wizard_store:provisioning_transaction(Draft) of
+        {ok, Transaction} ->
+            provisioning_created_panel(Draft, Transaction);
+        not_found ->
+            case maps:get(provisioning_id, Draft, undefined) of
+                undefined -> provisioning_create_panel(Draft, Readiness);
+                <<>> -> provisioning_create_panel(Draft, Readiness);
+                MissingId -> provisioning_missing_panel(Draft, Readiness, MissingId)
+            end
+    end.
+
+provisioning_created_panel(Draft, Transaction) ->
+    ProvisioningId = maps:get(id, Transaction, undefined),
+    #panel{class = <<"ias-status-card">>, body = [
+        wizard_notice("Provisioning Transaction Created",
+                      "The wizard is complete. Reopening this draft reuses the same transaction instead of creating a duplicate."),
+        key_value_table([
+            {"Provisioning ID", provisioning_link(ProvisioningId)},
+            {"Authorization", maps:get(authorization, Transaction, deny)},
+            {"Material", maps:get(material_status, Transaction, blocked)},
+            {"Assembly", maps:get(assembly_status, Transaction, blocked)},
+            {"Artifact", maps:get(artifact_status, Transaction, unavailable)},
+            {"Delivery", maps:get(delivery_status, Transaction, not_ready)},
+            {"Expires At", maps:get(expires_at, Transaction, undefined)},
+            {"Completed At", maps:get(completed_at, Draft, undefined)}
+        ]),
+        #panel{style = <<"margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>, body = [
+            #link{url = demo_object_url(ProvisioningId), class = [button, sgreen],
+                  body = ias_html:text("Open Provisioning Transaction")},
+            #link{class = [button, more],
+                  body = ias_html:text("Create Another Transaction"),
+                  postback = {wizard_create_another_provisioning, maps:get(id, Draft)}}
+        ]}
+    ]}.
+
+provisioning_create_panel(Draft, #{ready := true}) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        wizard_notice("Ready to Create Transaction",
+                      "Final preflight passed. Create the sanitized device-bound provisioning transaction."),
+        #link{class = [button, sgreen],
+              body = ias_html:text("Create Provisioning Transaction"),
+              postback = {wizard_create_provisioning, maps:get(id, Draft)}}
+    ]};
+provisioning_create_panel(_Draft, Readiness) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        wizard_error_panel(maps:get(reason, Readiness,
+                                    <<"Provisioning preflight is blocked.">>)),
+        #p{body = ias_html:text("Return to Material Readiness and resolve the failed checks before creating a transaction.")}
+    ]}.
+
+provisioning_missing_panel(Draft, #{ready := true}, MissingId) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        wizard_error_panel(ias_html:join([<<"The stored provisioning transaction ">>,
+                                          ias_html:text(MissingId),
+                                          <<" no longer exists.">>])),
+        #link{class = [button, sgreen],
+              body = ias_html:text("Create Replacement Transaction"),
+              postback = {wizard_create_another_provisioning, maps:get(id, Draft)}}
+    ]};
+provisioning_missing_panel(_Draft, Readiness, MissingId) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        wizard_error_panel(ias_html:join([<<"The stored provisioning transaction ">>,
+                                          ias_html:text(MissingId),
+                                          <<" no longer exists, and current readiness is blocked: ">>,
+                                          ias_html:text(maps:get(reason, Readiness, undefined))]))
+    ]}.
+
+provisioning_link(undefined) -> undefined;
+provisioning_link(ProvisioningId) ->
+    #link{url = demo_object_url(ProvisioningId), body = ias_html:text(ProvisioningId)}.
+
+demo_object_url(ObjectId) ->
+    ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(ObjectId)]).
 
 material_readiness_step(Draft) ->
     Readiness = ias_provisioning_wizard_store:material_readiness(Draft),
@@ -1209,6 +1342,10 @@ wizard_error(relationships_not_applied) ->
     wizard_error_panel("Apply all required relationships before continuing to Material Readiness.");
 wizard_error(material_readiness_blocked) ->
     wizard_error_panel("Material readiness is blocked. Resolve the failed checks before continuing to Provisioning.");
+wizard_error(provisioning_transaction_missing) ->
+    wizard_error_panel("The provisioning transaction stored in this wizard draft no longer exists. Create a replacement transaction.");
+wizard_error(provisioning_reference_mismatch) ->
+    wizard_error_panel("Provisioning references no longer match the wizard selections. Review relationships and readiness before retrying.");
 wizard_error({relationship_preflight_failed, _Review}) ->
     wizard_error_panel("Relationship preflight failed. Resolve conflicts or stale selections before applying the graph.");
 wizard_error({relationship_apply_failed, Key, Reason}) ->
@@ -1306,6 +1443,10 @@ next_action(#{current_step := material_readiness} = Draft, WizardId) ->
         true -> nav_action("Next", {wizard_next, WizardId});
         false -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
     end;
+next_action(#{current_step := provisioning, completed := true}, _WizardId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Completed")};
+next_action(#{current_step := provisioning}, _WizardId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Final Step")};
 next_action(_Draft, WizardId) ->
     nav_action("Next", {wizard_next, WizardId}).
 
@@ -1314,7 +1455,7 @@ boundary_note(scheme) ->
           body = ias_html:text("Select or keep the device-bound scenario before continuing.")};
 boundary_note(provisioning) ->
     #span{style = note_style(),
-          body = ias_html:text("This is the last skeleton step. Next stays on Provisioning.")};
+          body = ias_html:text("Provisioning creation is explicit and idempotent. Existing transactions are reused unless Create Another Transaction is chosen.")};
 boundary_note(_Step) ->
     #span{style = note_style(),
           body = ias_html:text("Wizard selections are stored in the volatile runtime draft.")}.
