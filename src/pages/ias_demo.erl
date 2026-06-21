@@ -3,7 +3,7 @@
          operational_readiness_preview/1, effective_status_preview/1,
          authorization_decision_preview/1, authorization_matrix_preview/1,
          authorization_enforcement_preview/1, ovpn_export_preview/1,
-         ovpn_material_preview/1]).
+         ovpn_material_preview/1, relationship_preview/1]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -401,20 +401,21 @@ relationship_preview(Object) ->
                     {"Related Certificate", linked_targets(uses_certificate, Relationships)},
                     {"Related VPN Service", linked_targets(uses_service, Relationships)}
                 ]),
+                operational_slot_notices(Object, [uses_certificate, uses_service]),
                 #h3{body = ias_html:text("Suggested Relationships")},
-                candidate_table([
+                candidate_table(filter_occupied_groups([
                     {"Suggested Certificate", ias_relationship_preview:suggested_candidates(maps:get(suggested_certificates, Preview, [])),
                      uses_certificate, SourceId},
                     {"Suggested VPN Service", ias_relationship_preview:suggested_candidates(maps:get(suggested_services, Preview, [])),
                      uses_service, SourceId}
-                ], <<"no candidates">>),
+                ]), <<"no candidates">>),
                 #h3{body = ias_html:text("Available Objects")},
-                candidate_table([
+                candidate_table(filter_occupied_groups([
                     {"Available Certificates", ias_relationship_preview:available_candidates(maps:get(suggested_certificates, Preview, [])),
                      uses_certificate, SourceId},
                     {"Available VPN Services", ias_relationship_preview:available_candidates(maps:get(suggested_services, Preview, [])),
                      uses_service, SourceId}
-                ], <<"no available objects">>),
+                ]), <<"no available objects">>),
                 #h3{body = ias_html:text("Suggested Security Policies")},
                 candidate_table([
                     {"Security Policy", maps:get(suggested_security_policies, Preview, []),
@@ -464,20 +465,21 @@ relationship_preview(Object) ->
                     {"CA Certificate", linked_targets(uses_ca_certificate, Relationships)},
                     {"Security Policy", linked_targets(uses_security_policy, Relationships)}
                 ]),
+                operational_slot_notices(Object, [uses_ca_certificate]),
                 #h3{body = ias_html:text("Suggested Relationships")},
-                candidate_table([
+                candidate_table(filter_occupied_groups([
                     {"Suggested Devices", ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_service, SourceId},
                     {"Suggested CA Certificates", ias_relationship_preview:suggested_candidates(maps:get(suggested_ca_certificates, Preview, [])),
                      uses_ca_certificate, SourceId}
-                ], <<"no candidates">>),
+                ]), <<"no candidates">>),
                 #h3{body = ias_html:text("Available Objects")},
-                candidate_table([
+                candidate_table(filter_occupied_groups([
                     {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_service, SourceId},
                     {"Available CA Certificates", ias_relationship_preview:available_candidates(maps:get(suggested_ca_certificates, Preview, [])),
                      uses_ca_certificate, SourceId}
-                ], <<"no available objects">>),
+                ]), <<"no available objects">>),
                 #h3{body = ias_html:text("Suggested Security Policies")},
                 candidate_table([
                     {"Security Policy", maps:get(suggested_security_policies, Preview, []),
@@ -1393,13 +1395,14 @@ not_linked(Value) ->
 
 candidate_table(Groups, EmptyLabel) ->
     Header = #tr{cells = [
-        #th{body = ias_html:text("Type")},
-        #th{body = ias_html:text("Object")},
-        #th{body = ias_html:text("Action")}
+        #th{style = <<"width:24%;">>, body = ias_html:text("Type")},
+        #th{style = <<"width:auto;">>, body = ias_html:text("Object")},
+        #th{style = <<"width:170px;">>, body = ias_html:text("Action")}
     ]},
     Rows = candidate_rows(Groups, EmptyLabel),
     #panel{class = <<"ias-table-container">>, body = [
         #table{class = <<"ias-table">>,
+               style = <<"table-layout:fixed;width:100%;">>,
                body = #tbody{body = [Header | Rows]}}
     ]}.
 
@@ -1415,9 +1418,9 @@ candidate_rows(Groups, EmptyLabel) ->
 candidate_row(Type, Candidate, RelationType, SourceId) ->
     #tr{cells = [
         #td{style = <<"width:24%;">>, body = ias_html:text(Type)},
-        #td{style = <<"word-break:break-all;white-space:normal;">>,
+        #td{style = <<"overflow-wrap:anywhere;word-break:normal;white-space:normal;">>,
             body = candidate_body(Candidate, RelationType, SourceId)},
-        #td{style = <<"width:90px;white-space:nowrap;">>,
+        #td{style = <<"width:170px;white-space:normal;">>,
             body = candidate_action(Candidate, RelationType, SourceId)}
     ]}.
 
@@ -1470,6 +1473,79 @@ candidate_constraint_lines(Candidate, RelationType, SourceId) ->
         _ ->
             []
     end.
+
+filter_occupied_groups(Groups) ->
+    [Group || Group <- Groups, not operational_group_occupied(Group)].
+
+operational_group_occupied({_Type, _Candidates, RelationType, SourceId}) ->
+    operational_slot_status(RelationType, SourceId) =/= not_occupied.
+
+operational_slot_notices(Object, RelationTypes) ->
+    Notices = [operational_slot_notice(Object, RelationType)
+               || RelationType <- RelationTypes],
+    #panel{body = [Notice || Notice <- Notices, Notice =/= []]}.
+
+operational_slot_notice(Object, RelationType) ->
+    SourceId = maps:get(id, Object, undefined),
+    case operational_slot_status(RelationType, SourceId) of
+        not_occupied ->
+            [];
+        #{target_kind := TargetKind, target_id := TargetId} = Relationship ->
+            operational_notice_panel(RelationType, TargetKind, TargetId, Relationship)
+    end.
+
+operational_slot_status(uses_certificate, SourceId) ->
+    first_relationship(uses_certificate, device, SourceId, certificate);
+operational_slot_status(uses_service, SourceId) ->
+    first_relationship(uses_service, device, SourceId, vpn_service);
+operational_slot_status(uses_ca_certificate, SourceId) ->
+    first_relationship(uses_ca_certificate, vpn_service, SourceId, certificate);
+operational_slot_status(_RelationType, _SourceId) ->
+    not_occupied.
+
+first_relationship(RelationType, SourceKind, SourceId, TargetKind) ->
+    case [Relationship || Relationship <- ias_demo_store:relationships(),
+                          maps:get(relation_type, Relationship, undefined) =:= RelationType,
+                          maps:get(source_kind, Relationship, undefined) =:= SourceKind,
+                          maps:get(source_id, Relationship, undefined) =:= SourceId,
+                          maps:get(target_kind, Relationship, undefined) =:= TargetKind] of
+        [Relationship | _] -> Relationship;
+        [] -> not_occupied
+    end.
+
+operational_notice_panel(uses_certificate, TargetKind, TargetId, Relationship) ->
+    compact_notice([
+        ias_html:text("Active Certificate: "),
+        ias_relationship_ui:object_entry(TargetKind, TargetId, Relationship),
+        #br{},
+        ias_html:text("Another certificate cannot be linked while the active one exists."),
+        #br{},
+        ias_html:text("Unlink it or use Certificate Replacement.")
+    ]);
+operational_notice_panel(uses_service, TargetKind, TargetId, Relationship) ->
+    compact_notice([
+        ias_html:text("Active VPN Service: "),
+        ias_relationship_ui:object_entry(TargetKind, TargetId, Relationship),
+        #br{},
+        ias_html:text("Another VPN service cannot be linked while the active one exists."),
+        #br{},
+        ias_html:text("Unlink it first.")
+    ]);
+operational_notice_panel(uses_ca_certificate, TargetKind, TargetId, Relationship) ->
+    compact_notice([
+        ias_html:text("Active CA Certificate: "),
+        ias_relationship_ui:object_entry(TargetKind, TargetId, Relationship),
+        #br{},
+        ias_html:text("Another CA certificate cannot be linked while the active one exists."),
+        #br{},
+        ias_html:text("Unlink it first.")
+    ]);
+operational_notice_panel(_RelationType, _TargetKind, _TargetId, _Relationship) ->
+    [].
+
+compact_notice(Body) ->
+    #panel{style = <<"margin:8px 0;padding:10px;border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;font-size:12px;line-height:1.45;">>,
+           body = Body}.
 
 candidate_policy_warning(#{kind := certificate} = Candidate, uses_certificate, SourceId) ->
     case ias_demo_store:get(SourceId) of
@@ -1542,9 +1618,14 @@ blocked_relationship_action(Reason) ->
     #span{style = <<"color:#991b1b;font-size:12px;">>, body = ias_html:text(Reason)}.
 
 warning_lines(Warnings) ->
-    [#span{style = <<"color:#b45309;font-size:12px;">>,
-           body = ias_html:text(maps:get(message, Warning, undefined))}
-     || Warning <- Warnings].
+    [warning_badge(Warning) || Warning <- Warnings].
+
+warning_badge(#{warning := unclassified_certificate_role}) ->
+    #span{style = <<"display:inline-block;margin-top:4px;padding:2px 6px;border:1px solid #f59e0b;border-radius:999px;color:#92400e;background:#fffbeb;font-size:11px;font-weight:600;">>,
+           body = ias_html:text("Unclassified role")};
+warning_badge(Warning) ->
+    #span{style = <<"display:inline-block;margin-top:4px;padding:2px 6px;border:1px solid #f59e0b;border-radius:999px;color:#92400e;background:#fffbeb;font-size:11px;font-weight:600;">>,
+           body = ias_html:text(maps:get(message, Warning, undefined))}.
 
 blocked_reason_lines(#{message := Message}) ->
     [#span{style = <<"color:#991b1b;font-size:12px;">>,

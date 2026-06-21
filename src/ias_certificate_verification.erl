@@ -205,9 +205,22 @@ verification_sort_key(Id) ->
     case ias_demo_store:get(Id) of
         {ok, Verification} ->
             {ias_html:text(maps:get(created_at, Verification, <<>>)),
+             verification_id_suffix_number(Id),
              ias_html:text(maps:get(id, Verification, Id))};
         not_found ->
-            {<<>>, ias_html:text(Id)}
+            {<<>>, verification_id_suffix_number(Id), ias_html:text(Id)}
+    end.
+
+verification_id_suffix_number(Id) ->
+    Text = ias_html:text(Id),
+    case lists:reverse(binary:split(Text, <<"_">>, [global])) of
+        [Suffix | _] ->
+            case catch binary_to_integer(Suffix) of
+                Number when is_integer(Number) -> Number;
+                _ -> 0
+            end;
+        [] ->
+            0
     end.
 
 created_at() ->
