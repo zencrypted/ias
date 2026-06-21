@@ -23,6 +23,19 @@ event({wizard_select_security_profile, WizardId, ProfileId}) ->
     redirect_after(ias_provisioning_wizard_store:select_security_profile(WizardId, ProfileId));
 event({wizard_select_vpn_service, WizardId, ServiceId}) ->
     redirect_after(ias_provisioning_wizard_store:select_vpn_service(WizardId, ServiceId));
+event({wizard_select_ca_certificate, WizardId, CertificateId}) ->
+    redirect_after(ias_provisioning_wizard_store:select_ca_certificate(WizardId, CertificateId));
+event({wizard_register_ca_certificate, WizardId}) ->
+    Fields = #{name => nitro:q(wizard_ca_certificate_name),
+               subject => nitro:q(wizard_ca_certificate_subject),
+               pem => nitro:q(wizard_ca_certificate_pem)},
+    case ias_demo_ca_certificate:register(Fields) of
+        {ok, Certificate} ->
+            redirect_after(ias_provisioning_wizard_store:select_ca_certificate(
+                WizardId, maps:get(id, Certificate)));
+        {error, Reason} ->
+            nitro:update(wizard_feedback, wizard_error(Reason))
+    end;
 event({wizard_create_vpn_service, WizardId}) ->
     Fields = #{name => nitro:q(wizard_vpn_service_name),
                endpoint => nitro:q(wizard_vpn_service_endpoint),
@@ -78,7 +91,7 @@ content_for({draft, Draft}) ->
     CurrentStep = maps:get(current_step, Draft, scheme),
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24D can select or create a Device and VPN Service and select a Security Profile; relationships are not created yet.")},
+        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24E can select or create a Device and VPN Service, select a Security Profile, and select or register a CA Certificate; relationships are not created yet.")},
         draft_summary(Draft),
         progress_panel(CurrentStep),
         step_panel(Draft)
@@ -224,10 +237,144 @@ step_content(security_profile, Draft) ->
     security_profile_step(Draft);
 step_content(vpn_service, Draft) ->
     vpn_service_step(Draft);
+step_content(ca_certificate, Draft) ->
+    ca_certificate_step(Draft);
 step_content(_Step, _Draft) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px dashed rgba(15,23,42,0.2);border-radius:6px;background:#f8fafc;">>,
            body = ias_html:text("Placeholder only. Selection and validation for this step will be implemented in a later stage.")}.
 
+
+
+ca_certificate_step(Draft) ->
+    #panel{body = [
+        selected_ca_certificate_panel(Draft),
+        existing_ca_certificates_panel(Draft),
+        register_ca_certificate_panel(maps:get(id, Draft))
+    ]}.
+
+selected_ca_certificate_panel(Draft) ->
+    case ias_provisioning_wizard_store:selected_ca_certificate(Draft) of
+        {ok, Certificate} ->
+            CertificateId = maps:get(id, Certificate, undefined),
+            Material = ias_certificate_material:status(CertificateId),
+            #panel{style = selected_ca_style(Material), body = [
+                #h3{body = ias_html:text("Selected CA Certificate")},
+                key_value_table([
+                    {"Certificate", certificate_link(CertificateId)},
+                    {"Name", maps:get(name, Certificate, CertificateId)},
+                    {"Subject", maps:get(subject, Certificate, undefined)},
+                    {"Status", maps:get(certificate_status, Certificate, undefined)},
+                    {"Public PEM", ca_material_label(Material)},
+                    {"Fingerprint", ca_material_fingerprint(Material)}
+                ]),
+                ca_material_notice(Material)
+            ]};
+        not_selected ->
+            wizard_notice("No CA Certificate selected", "Select an existing CA certificate with public PEM material or register a new demo CA certificate before continuing.");
+        {error, selected_ca_certificate_missing} ->
+            wizard_error_panel("The CA Certificate stored in this wizard draft no longer exists. Select another CA certificate.");
+        {error, invalid_ca_certificate} ->
+            wizard_error_panel("The selected certificate is not classified as a CA certificate.");
+        {error, _Reason} ->
+            wizard_error_panel("The selected CA Certificate is invalid.")
+    end.
+
+existing_ca_certificates_panel(Draft) ->
+    Certificates = [Certificate || Certificate <- ias_demo_store:certificates(),
+                                   explicit_ca_certificate(Certificate)],
+    WizardId = maps:get(id, Draft),
+    SelectedId = maps:get(ca_certificate_id, Draft, undefined),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Use Existing CA Certificate")},
+        existing_ca_certificates(Certificates, WizardId, SelectedId)
+    ]}.
+
+existing_ca_certificates([], _WizardId, _SelectedId) ->
+    #p{body = ias_html:text("No explicit CA certificates exist yet. Register one below.")};
+existing_ca_certificates(Certificates, WizardId, SelectedId) ->
+    #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;">>,
+           body = [ca_certificate_choice(Certificate, WizardId, SelectedId)
+                   || Certificate <- Certificates]}.
+
+ca_certificate_choice(Certificate, WizardId, SelectedId) ->
+    CertificateId = maps:get(id, Certificate, undefined),
+    IsSelected = ias_html:text(CertificateId) =:= ias_html:text(SelectedId),
+    Material = ias_certificate_material:status(CertificateId),
+    #panel{style = ca_choice_style(IsSelected, Material), body = [
+        #h3{style = <<"margin:0 0 6px;font-size:14px;overflow-wrap:anywhere;">>,
+            body = ias_html:text(maps:get(name, Certificate, CertificateId))},
+        #p{style = <<"margin:0 0 6px;font-size:12px;color:#64748b;overflow-wrap:anywhere;">>,
+           body = ias_html:text(maps:get(subject, Certificate, <<>>))},
+        #p{style = <<"margin:0 0 8px;font-size:11px;">>,
+           body = ias_html:join([<<"Public PEM: ">>, ca_material_label(Material)])},
+        ca_certificate_select_action(IsSelected, Material, WizardId, CertificateId)
+    ]}.
+
+ca_certificate_select_action(true, _Material, _WizardId, _CertificateId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Selected")};
+ca_certificate_select_action(false, {ok, #{material_type := ca_certificate}}, WizardId, CertificateId) ->
+    #link{class = [button, sgreen], body = ias_html:text("Select"),
+          postback = {wizard_select_ca_certificate, WizardId, CertificateId}};
+ca_certificate_select_action(false, _Material, WizardId, CertificateId) ->
+    #link{class = [button, more], body = ias_html:text("Select — PEM required"),
+          postback = {wizard_select_ca_certificate, WizardId, CertificateId}}.
+
+register_ca_certificate_panel(WizardId) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Register New Demo CA Certificate")},
+        wizard_input_row("Name", wizard_ca_certificate_name, <<>>),
+        wizard_input_row("Subject", wizard_ca_certificate_subject, <<"CN=Demo CA">>),
+        #panel{style = <<"margin:8px 0;">>, body = [
+            #label{for = wizard_ca_certificate_pem,
+                   style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
+                   body = ias_html:text("Certificate PEM")},
+            #textarea{id = wizard_ca_certificate_pem, rows = 8,
+                      placeholder = <<"-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----">>,
+                      style = <<"width:100%;font-family:monospace;box-sizing:border-box;">>}
+        ]},
+        #panel{style = <<"margin-top:12px;">>, body = [
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Register and Select CA Certificate"),
+                  source = [wizard_ca_certificate_name, wizard_ca_certificate_subject,
+                            wizard_ca_certificate_pem],
+                  postback = {wizard_register_ca_certificate, WizardId}}
+        ]}
+    ]}.
+
+explicit_ca_certificate(#{certificate_role := ca_certificate}) -> true;
+explicit_ca_certificate(#{material_type := ca_certificate}) -> true;
+explicit_ca_certificate(#{source := ca_certificate}) -> true;
+explicit_ca_certificate(_) -> false.
+
+selected_ca_style({ok, #{material_type := ca_certificate}}) ->
+    <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>;
+selected_ca_style(_) ->
+    <<"margin-top:12px;padding:12px;border:1px solid rgba(217,119,6,0.25);border-radius:6px;background:#fffbeb;">>.
+
+ca_choice_style(true, _Material) ->
+    <<"padding:12px;border:1px solid rgba(37,99,235,0.35);border-radius:6px;background:#eff6ff;">>;
+ca_choice_style(false, {ok, #{material_type := ca_certificate}}) ->
+    <<"padding:12px;border:1px solid rgba(22,163,74,0.22);border-radius:6px;background:#fff;">>;
+ca_choice_style(false, _) ->
+    <<"padding:12px;border:1px solid rgba(217,119,6,0.22);border-radius:6px;background:#fffbeb;">>.
+
+ca_material_label({ok, #{material_type := ca_certificate}}) -> <<"available">>;
+ca_material_label(_) -> <<"missing_body">>.
+
+ca_material_fingerprint({ok, Status}) -> maps:get(fingerprint_sha256, Status, undefined);
+ca_material_fingerprint(_) -> undefined.
+
+ca_material_notice({ok, #{material_type := ca_certificate}}) ->
+    wizard_notice("CA material available", "The public CA certificate PEM is ready for later relationship and provisioning steps.");
+ca_material_notice(_) ->
+    wizard_error_panel("Public CA certificate PEM is unavailable. Load material on the certificate detail page or register a new CA certificate below.").
+
+certificate_link(undefined) -> undefined;
+certificate_link(CertificateId) ->
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(CertificateId)]),
+          body = ias_html:text(CertificateId)}.
 
 vpn_service_step(Draft) ->
     #panel{body = [
@@ -564,6 +711,14 @@ wizard_error(vpn_service_required) ->
     wizard_error_panel("Select or create a VPN Service before continuing.");
 wizard_error(selected_vpn_service_missing) ->
     wizard_error_panel("The selected VPN Service no longer exists. Select another service.");
+wizard_error(ca_certificate_required) ->
+    wizard_error_panel("Select or register a CA Certificate before continuing.");
+wizard_error(selected_ca_certificate_missing) ->
+    wizard_error_panel("The selected CA Certificate no longer exists. Select another CA certificate.");
+wizard_error(invalid_ca_certificate) ->
+    wizard_error_panel("The selected certificate is not classified as a CA certificate.");
+wizard_error(ca_certificate_material_required) ->
+    wizard_error_panel("Public CA certificate PEM is required before continuing.");
 wizard_error(Reason) ->
     wizard_error_panel(Reason).
 
@@ -616,6 +771,15 @@ next_action(#{current_step := security_profile} = Draft, WizardId) ->
 next_action(#{current_step := vpn_service} = Draft, WizardId) ->
     case ias_provisioning_wizard_store:selected_vpn_service(Draft) of
         {ok, _Service} -> nav_action("Next", {wizard_next, WizardId});
+        _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
+    end;
+next_action(#{current_step := ca_certificate} = Draft, WizardId) ->
+    case ias_provisioning_wizard_store:selected_ca_certificate(Draft) of
+        {ok, Certificate} ->
+            case ias_certificate_material:status(maps:get(id, Certificate)) of
+                {ok, #{material_type := ca_certificate}} -> nav_action("Next", {wizard_next, WizardId});
+                _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
+            end;
         _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
     end;
 next_action(_Draft, WizardId) ->

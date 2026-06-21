@@ -16,6 +16,8 @@
          security_profile_compatibility/1,
          select_vpn_service/2,
          selected_vpn_service/1,
+         select_ca_certificate/2,
+         selected_ca_certificate/1,
          steps/0,
          step_title/1,
          step_description/1,
@@ -164,6 +166,18 @@ selected_vpn_service(Draft) when is_map(Draft) ->
         ServiceId -> valid_vpn_service(ServiceId)
     end.
 
+select_ca_certificate(Id, CertificateId) ->
+    case valid_ca_certificate(CertificateId) of
+        {ok, Certificate} -> update(Id, #{ca_certificate_id => maps:get(id, Certificate)});
+        {error, Reason} -> {error, Reason}
+    end.
+
+selected_ca_certificate(Draft) when is_map(Draft) ->
+    case maps:get(ca_certificate_id, Draft, undefined) of
+        undefined -> not_selected;
+        CertificateId -> valid_ca_certificate(CertificateId)
+    end.
+
 steps() ->
     [scheme,
      device,
@@ -256,6 +270,16 @@ movement_allowed(next_step, vpn_service, Draft) ->
         not_selected -> {error, vpn_service_required};
         {error, _Reason} -> {error, selected_vpn_service_missing}
     end;
+movement_allowed(next_step, ca_certificate, Draft) ->
+    case selected_ca_certificate(Draft) of
+        {ok, Certificate} ->
+            case ias_certificate_material:status(maps:get(id, Certificate)) of
+                {ok, #{material_type := ca_certificate}} -> ok;
+                _ -> {error, ca_certificate_material_required}
+            end;
+        not_selected -> {error, ca_certificate_required};
+        {error, _Reason} -> {error, selected_ca_certificate_missing}
+    end;
 movement_allowed(_Direction, _Current, _Draft) ->
     ok.
 
@@ -290,6 +314,26 @@ valid_vpn_service(ServiceId) ->
         {ok, _Other} -> {error, invalid_vpn_service};
         not_found -> {error, selected_vpn_service_missing}
     end.
+
+valid_ca_certificate(undefined) ->
+    {error, ca_certificate_required};
+valid_ca_certificate(<<>>) ->
+    {error, ca_certificate_required};
+valid_ca_certificate(CertificateId) ->
+    case ias_demo_store:get(normalize_id(CertificateId)) of
+        {ok, #{kind := certificate} = Certificate} ->
+            case ca_certificate_role(Certificate) of
+                true -> {ok, Certificate};
+                false -> {error, invalid_ca_certificate}
+            end;
+        {ok, _Other} -> {error, invalid_ca_certificate};
+        not_found -> {error, selected_ca_certificate_missing}
+    end.
+
+ca_certificate_role(#{certificate_role := ca_certificate}) -> true;
+ca_certificate_role(#{material_type := ca_certificate}) -> true;
+ca_certificate_role(#{source := ca_certificate}) -> true;
+ca_certificate_role(_) -> false.
 
 adjacent_step(Current, Delta) ->
     StepList = steps(),

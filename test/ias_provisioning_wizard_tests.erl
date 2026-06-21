@@ -390,3 +390,89 @@ demo_vpn_service(Id) ->
                                         remote_port => <<"1194">>,
                                         protocol => <<"udp">>,
                                         tls_auth => not_configured}).
+
+
+ca_certificate_step_requires_selection_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+    ?assertEqual({error, ca_certificate_required},
+                 ias_provisioning_wizard_store:next(maps:get(id, Step))).
+
+ca_certificate_with_material_can_be_selected_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Certificate} = ias_demo_ca_certificate:register(valid_ca_fields()),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_ca_certificate(
+        maps:get(id, Step), maps:get(id, Certificate)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(ca_certificate_id, Selected)),
+    {ok, ClientStep} = ias_provisioning_wizard_store:next(maps:get(id, Selected)),
+    ?assertEqual(client_certificate, maps:get(current_step, ClientStep)).
+
+ca_certificate_without_material_blocks_next_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Certificate = #{id => <<"wizard_ca_without_material">>, kind => certificate,
+                    source => ca_certificate, material_type => ca_certificate,
+                    certificate_role => ca_certificate, name => <<"CA">>,
+                    subject => <<"CN=CA">>},
+    ias_demo_store:put_runtime_object(Certificate),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_ca_certificate(
+        maps:get(id, Step), maps:get(id, Certificate)),
+    ?assertEqual({error, ca_certificate_material_required},
+                 ias_provisioning_wizard_store:next(maps:get(id, Selected))).
+
+client_certificate_is_rejected_as_ca_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Certificate = #{id => <<"wizard_client_certificate">>, kind => certificate,
+                    source => certificate_issue_demo,
+                    certificate_role => client_certificate},
+    ias_demo_store:put_runtime_object(Certificate),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    ?assertEqual({error, invalid_ca_certificate},
+                 ias_provisioning_wizard_store:select_ca_certificate(
+                     maps:get(id, Draft), maps:get(id, Certificate))).
+
+stale_ca_certificate_blocks_next_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Stale} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate,
+                               ca_certificate_id => <<"missing_ca">>}),
+    ?assertEqual({error, selected_ca_certificate_missing},
+                 ias_provisioning_wizard_store:next(maps:get(id, Stale))).
+
+ca_certificate_step_renders_selection_and_registration_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, _Certificate} = ias_demo_ca_certificate:register(valid_ca_fields()),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+    ?assertMatch({_, _}, binary:match(Html, <<"Use Existing CA Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Register New Demo CA Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Register and Select CA Certificate">>)).
+
+ca_certificate_next_is_disabled_without_material_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+    ?assertMatch({_, _}, binary:match(Html, <<">Next</span>">>)).
+
+valid_ca_fields() ->
+    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
+    #{name => <<"Wizard Demo CA">>, subject => <<"CN=Wizard Demo CA">>, pem => Pem}.
