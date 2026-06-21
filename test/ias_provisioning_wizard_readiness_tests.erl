@@ -43,7 +43,37 @@ material_readiness_step_links_to_missing_certificate_material_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Open Client Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html, <<">Next</span>">>)).
 
+material_observation_is_independent_from_authorization_test() ->
+    Draft = setup_graph(true, false),
+    Readiness = ias_provisioning_wizard_store:material_readiness(Draft),
+    Plan = maps:get(plan, Readiness),
+    PlanComponents = maps:get(material_components, Plan),
+    ObservedComponents = maps:get(material_components, Readiness),
+    ?assertEqual(deny, maps:get(authorization, Plan)),
+    ?assertEqual(blocked, maps:get(ca_certificate, PlanComponents)),
+    ?assertEqual(blocked, maps:get(client_certificate, PlanComponents)),
+    ?assertEqual(available, maps:get(ca_certificate, ObservedComponents)),
+    ?assertEqual(available, maps:get(client_certificate, ObservedComponents)),
+    ?assertEqual(available_on_device, maps:get(private_key, ObservedComponents)),
+    ?assertEqual(public_material_available, maps:get(material_status, Readiness)),
+    ?assertEqual(blocked, maps:get(assembly_status, Plan)),
+    ?assertEqual(false, maps:get(ready, Readiness)).
+
+material_readiness_renders_available_material_during_authorization_denial_test() ->
+    Draft = setup_graph(true, false),
+    Html = iolist_to_binary(nitro:render(
+        ias_provisioning_wizard:content_for({draft, Draft}))),
+    ?assertMatch({_, _}, binary:match(Html, <<"Public CA certificate material is available.">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Public client certificate material is available.">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"available_on_device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Provisioning Authorization">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Open CA Certificate">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Open Client Certificate">>)).
+
 setup_ready_graph(StoreMaterial) ->
+    setup_graph(StoreMaterial, true).
+
+setup_graph(StoreMaterial, AuthorizationReady) ->
     ias_demo_state:clear(),
     ias_provisioning_wizard_store:clear(),
     Device = ias_demo_store:put_runtime_object(
@@ -73,11 +103,7 @@ setup_ready_graph(StoreMaterial) ->
                                             maps:get(id, Device), maps:get(id, ClientCertificate)),
     {ok, _} = ias_relationship_link:create(uses_ca_certificate,
                                             maps:get(id, Service), maps:get(id, CaCertificate)),
-    {ok, _} = ias_relationship_link:create(uses_security_policy,
-                                            maps:get(id, Device), <<"high_security">>),
-    {ok, _} = ias_relationship_link:create(uses_security_policy,
-                                            maps:get(id, ClientCertificate), <<"high_security">>),
-    verify_client_certificate(ClientCertificate),
+    maybe_authorize(AuthorizationReady, Device, ClientCertificate),
     maybe_store_material(StoreMaterial, CaCertificate, ClientCertificate),
     {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
     {ok, Draft} = ias_provisioning_wizard_store:update(
@@ -90,6 +116,15 @@ setup_ready_graph(StoreMaterial) ->
           client_certificate_id => maps:get(id, ClientCertificate),
           relationships_applied => true}),
     Draft.
+
+maybe_authorize(true, Device, ClientCertificate) ->
+    {ok, _} = ias_relationship_link:create(uses_security_policy,
+                                            maps:get(id, Device), <<"high_security">>),
+    {ok, _} = ias_relationship_link:create(uses_security_policy,
+                                            maps:get(id, ClientCertificate), <<"high_security">>),
+    verify_client_certificate(ClientCertificate);
+maybe_authorize(false, _Device, _ClientCertificate) ->
+    ok.
 
 verify_client_certificate(Certificate) ->
     {ok, Profile} = ias_security_profile:profile(administrator),

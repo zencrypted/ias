@@ -144,6 +144,13 @@ is available, both public certificate PEM bodies are present and assembly report
 the selected certificate detail pages. The final Provisioning step remains the
 transaction creation boundary.
 
+Material observation is independent from authorization. The wizard reads CA and
+client certificate availability directly from the public certificate material
+store and reports a device-bound private key as `available_on_device` when the
+selected Device exists. An authorization denial still blocks assembly and the
+final readiness decision, but it must not relabel already stored public PEM as
+missing or unavailable.
+
 Material Contract
 -----------------
 

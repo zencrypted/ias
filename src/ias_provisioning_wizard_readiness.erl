@@ -7,7 +7,7 @@ preview(Draft) when is_map(Draft) ->
     Plan = ias_ovpn_provisioning:preview(device_bound, device, DeviceId),
     ExportPreview = ias_ovpn_export:device_preview(DeviceId),
     ProvisioningPreview = ias_ovpn_export:device_provisioning_preview(DeviceId),
-    Components = maps:get(material_components, Plan, #{}),
+    Components = observed_material_components(Draft),
     ReferenceMatch = references_match(Draft, Plan),
     Items = [
         relationships_item(RelationshipReview),
@@ -34,6 +34,8 @@ preview(Draft) when is_map(Draft) ->
       reference_match => ReferenceMatch,
       relationship_review => RelationshipReview,
       plan => Plan,
+      material_components => Components,
+      material_status => observed_material_status(Components),
       export_preview => ExportPreview,
       provisioning_preview => ProvisioningPreview,
       items => Items,
@@ -177,7 +179,46 @@ certificate_detail(Certificate) ->
 
 material_detail(available, AvailableText) -> AvailableText;
 material_detail(not_linked, _AvailableText) -> <<"The certificate is not linked.">>;
+material_detail(incompatible_material, _AvailableText) ->
+    <<"Stored public material has an incompatible certificate role.">>;
 material_detail(_Status, _AvailableText) -> <<"Public certificate PEM is unavailable.">>.
+
+observed_material_components(Draft) ->
+    #{ca_certificate => observed_certificate_material_status(
+          maps:get(ca_certificate_id, Draft, undefined), ca_certificate),
+      client_certificate => observed_certificate_material_status(
+          maps:get(client_certificate_id, Draft, undefined), client_certificate),
+      private_key => observed_private_key_status(Draft),
+      tls_auth => observed_tls_auth_status(Draft)}.
+
+observed_certificate_material_status(undefined, _ExpectedType) ->
+    not_linked;
+observed_certificate_material_status(CertificateId, ExpectedType) ->
+    case ias_certificate_material:status(CertificateId) of
+        {ok, #{material_type := ExpectedType}} -> available;
+        {ok, _OtherMaterial} -> incompatible_material;
+        not_found -> missing_body
+    end.
+
+observed_private_key_status(Draft) ->
+    case {maps:get(scenario, Draft, undefined),
+          ias_provisioning_wizard_store:selected_device(Draft)} of
+        {device_bound, {ok, _Device}} -> available_on_device;
+        _ -> unavailable
+    end.
+
+observed_tls_auth_status(Draft) ->
+    case ias_provisioning_wizard_store:selected_vpn_service(Draft) of
+        {ok, Service} -> tls_auth_status(Service);
+        _ -> not_configured
+    end.
+
+observed_material_status(Components) ->
+    case {maps:get(ca_certificate, Components, missing_body),
+          maps:get(client_certificate, Components, missing_body)} of
+        {available, available} -> public_material_available;
+        _ -> pending_real_material
+    end.
 
 tls_auth_status(Service) ->
     Value = maps:get(tls_auth, Service, maps:get(tls_auth_present, Service, not_configured)),

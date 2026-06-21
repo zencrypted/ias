@@ -362,7 +362,8 @@ material_readiness_summary(Readiness) ->
         key_value_table([
             {"Ready", maps:get(ready, Readiness, false)},
             {"Authorization", maps:get(authorization, Plan, deny)},
-            {"Material", maps:get(material_status, Plan, blocked)},
+            {"Material", maps:get(material_status, Readiness,
+                                  maps:get(material_status, Plan, blocked))},
             {"Assembly", maps:get(assembly_status, Plan, blocked)},
             {"Reason", maps:get(reason, Readiness, undefined)},
             {"Next Step", maps:get(next_step, Readiness, undefined)}
@@ -370,8 +371,7 @@ material_readiness_summary(Readiness) ->
     ]}.
 
 material_readiness_actions(Draft, Readiness) ->
-    Plan = maps:get(plan, Readiness, #{}),
-    Components = maps:get(material_components, Plan, #{}),
+    Components = maps:get(material_components, Readiness, #{}),
     CaId = maps:get(ca_certificate_id, Draft, undefined),
     ClientId = maps:get(client_certificate_id, Draft, undefined),
     Actions0 = [
