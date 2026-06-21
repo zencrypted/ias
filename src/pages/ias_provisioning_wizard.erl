@@ -25,6 +25,19 @@ event({wizard_select_vpn_service, WizardId, ServiceId}) ->
     redirect_after(ias_provisioning_wizard_store:select_vpn_service(WizardId, ServiceId));
 event({wizard_select_ca_certificate, WizardId, CertificateId}) ->
     redirect_after(ias_provisioning_wizard_store:select_ca_certificate(WizardId, CertificateId));
+event({wizard_select_client_certificate, WizardId, CertificateId}) ->
+    redirect_after(ias_provisioning_wizard_store:select_client_certificate(WizardId, CertificateId));
+event({wizard_issue_client_certificate, WizardId}) ->
+    Fields = #{user_id => nitro:q(wizard_client_certificate_user),
+               subject_cn => nitro:q(wizard_client_certificate_subject_cn),
+               pem => nitro:q(wizard_client_certificate_pem)},
+    case ias_wizard_client_certificate:issue(Fields) of
+        {ok, Certificate} ->
+            redirect_after(ias_provisioning_wizard_store:select_client_certificate(
+                WizardId, maps:get(id, Certificate)));
+        {error, Reason} ->
+            nitro:update(wizard_feedback, wizard_error(Reason))
+    end;
 event({wizard_register_ca_certificate, WizardId}) ->
     Fields = #{name => nitro:q(wizard_ca_certificate_name),
                subject => nitro:q(wizard_ca_certificate_subject),
@@ -91,7 +104,7 @@ content_for({draft, Draft}) ->
     CurrentStep = maps:get(current_step, Draft, scheme),
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24E can select or create a Device and VPN Service, select a Security Profile, and select or register a CA Certificate; relationships are not created yet.")},
+        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24F can select or create a Device and VPN Service, select a Security Profile and CA Certificate, and select or issue a Client Certificate; relationships are not created yet.")},
         draft_summary(Draft),
         progress_panel(CurrentStep),
         step_panel(Draft)
@@ -239,11 +252,197 @@ step_content(vpn_service, Draft) ->
     vpn_service_step(Draft);
 step_content(ca_certificate, Draft) ->
     ca_certificate_step(Draft);
+step_content(client_certificate, Draft) ->
+    client_certificate_step(Draft);
 step_content(_Step, _Draft) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px dashed rgba(15,23,42,0.2);border-radius:6px;background:#f8fafc;">>,
            body = ias_html:text("Placeholder only. Selection and validation for this step will be implemented in a later stage.")}.
 
 
+
+
+client_certificate_step(Draft) ->
+    #panel{body = [
+        selected_client_certificate_panel(Draft),
+        existing_client_certificates_panel(Draft),
+        issue_client_certificate_panel(maps:get(id, Draft))
+    ]}.
+
+selected_client_certificate_panel(Draft) ->
+    case ias_provisioning_wizard_store:selected_client_certificate(Draft) of
+        {ok, Certificate} ->
+            CertificateId = maps:get(id, Certificate, undefined),
+            Material = ias_certificate_material:status(CertificateId),
+            #panel{style = selected_client_style(Material), body = [
+                #h3{body = ias_html:text("Selected Client Certificate")},
+                key_value_table([
+                    {"Certificate", certificate_link(CertificateId)},
+                    {"Subject CN", maps:get(subject_cn, Certificate, maps:get(subject, Certificate, undefined))},
+                    {"Status", maps:get(certificate_status, Certificate, trusted)},
+                    {"Public PEM", client_material_label(Material)},
+                    {"Fingerprint", client_material_fingerprint(Material)},
+                    {"Used By Device", client_certificate_device(CertificateId)}
+                ]),
+                client_material_notice(Material)
+            ]};
+        not_selected ->
+            wizard_notice("No Client Certificate selected", "Select an existing client certificate with public PEM material or issue a new demo certificate before continuing.");
+        {error, client_certificate_linked_to_other_device} ->
+            wizard_error_panel("The selected Client Certificate is already linked to another Device. Use certificate replacement or select another certificate.");
+        {error, selected_client_certificate_missing} ->
+            wizard_error_panel("The Client Certificate stored in this wizard draft no longer exists. Select another certificate.");
+        {error, invalid_client_certificate} ->
+            wizard_error_panel("The selected certificate is not classified as a client certificate.");
+        {error, _Reason} ->
+            wizard_error_panel("The selected Client Certificate is invalid.")
+    end.
+
+existing_client_certificates_panel(Draft) ->
+    Certificates = [Certificate || Certificate <- ias_demo_store:certificates(),
+                                   explicit_client_certificate(Certificate)],
+    WizardId = maps:get(id, Draft),
+    SelectedId = maps:get(client_certificate_id, Draft, undefined),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Use Existing Client Certificate")},
+        existing_client_certificates(Certificates, Draft, WizardId, SelectedId)
+    ]}.
+
+existing_client_certificates([], _Draft, _WizardId, _SelectedId) ->
+    #p{body = ias_html:text("No client certificates exist yet. Issue one below.")};
+existing_client_certificates(Certificates, Draft, WizardId, SelectedId) ->
+    #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;">>,
+           body = [client_certificate_choice(Certificate, Draft, WizardId, SelectedId)
+                   || Certificate <- Certificates]}.
+
+client_certificate_choice(Certificate, Draft, WizardId, SelectedId) ->
+    CertificateId = maps:get(id, Certificate, undefined),
+    IsSelected = ias_html:text(CertificateId) =:= ias_html:text(SelectedId),
+    Material = ias_certificate_material:status(CertificateId),
+    Binding = client_certificate_binding(CertificateId, maps:get(device_id, Draft, undefined)),
+    #panel{style = client_choice_style(IsSelected, Material, Binding), body = [
+        #h3{style = <<"margin:0 0 6px;font-size:14px;overflow-wrap:anywhere;">>,
+            body = ias_html:text(maps:get(subject_cn, Certificate, CertificateId))},
+        #p{style = <<"margin:0 0 6px;font-size:12px;color:#64748b;overflow-wrap:anywhere;">>,
+           body = ias_html:text(CertificateId)},
+        #p{style = <<"margin:0 0 4px;font-size:11px;">>,
+           body = ias_html:join([<<"Public PEM: ">>, client_material_label(Material)])},
+        #p{style = <<"margin:0 0 8px;font-size:11px;">>,
+           body = ias_html:join([<<"Device binding: ">>, client_binding_label(Binding)])},
+        client_certificate_select_action(IsSelected, Material, Binding, WizardId, CertificateId)
+    ]}.
+
+client_certificate_select_action(true, _Material, _Binding, _WizardId, _CertificateId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Selected")};
+client_certificate_select_action(false, _Material, {other_device, _}, _WizardId, _CertificateId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Linked elsewhere")};
+client_certificate_select_action(false, {ok, #{material_type := client_certificate}}, _Binding, WizardId, CertificateId) ->
+    #link{class = [button, sgreen], body = ias_html:text("Select"),
+          postback = {wizard_select_client_certificate, WizardId, CertificateId}};
+client_certificate_select_action(false, _Material, _Binding, WizardId, CertificateId) ->
+    #link{class = [button, more], body = ias_html:text("Select — PEM required"),
+          postback = {wizard_select_client_certificate, WizardId, CertificateId}}.
+
+issue_client_certificate_panel(WizardId) ->
+    Users = ias_demo_store:users(),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Issue New Demo Client Certificate")},
+        #p{style = <<"font-size:12px;color:#64748b;">>,
+           body = ias_html:text("Demo issuance creates certificate metadata through the existing issuance service. Paste the returned public certificate PEM; no private key is stored by IAS.")},
+        wizard_user_row(Users),
+        wizard_input_row("Subject CN", wizard_client_certificate_subject_cn, <<"vpn-client">>),
+        #panel{style = <<"margin:8px 0;">>, body = [
+            #label{for = wizard_client_certificate_pem,
+                   style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
+                   body = ias_html:text("Certificate PEM")},
+            #textarea{id = wizard_client_certificate_pem, rows = 8,
+                      placeholder = <<"-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----">>,
+                      style = <<"width:100%;font-family:monospace;box-sizing:border-box;">>}
+        ]},
+        issue_client_certificate_action(Users, WizardId)
+    ]}.
+
+wizard_user_row([]) ->
+    wizard_error_panel("No runtime Users are available for demo certificate issuance.");
+wizard_user_row(Users) ->
+    #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0;">>, body = [
+        #label{for = wizard_client_certificate_user,
+               style = <<"min-width:130px;font-weight:600;color:#334155;">>,
+               body = ias_html:text("User")},
+        #select{id = wizard_client_certificate_user,
+                style = <<"min-width:260px;max-width:420px;width:100%;">>,
+                body = [#option{value = ias_html:text(maps:get(id, User)),
+                                body = ias_html:text(maps:get(name, User, maps:get(id, User)))}
+                        || User <- Users]}
+    ]}.
+
+issue_client_certificate_action([], _WizardId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Issue and Select Client Certificate")};
+issue_client_certificate_action(_Users, WizardId) ->
+    #panel{style = <<"margin-top:12px;">>, body = [
+        #link{class = [button, sgreen],
+              body = ias_html:text("Issue and Select Client Certificate"),
+              source = [wizard_client_certificate_user, wizard_client_certificate_subject_cn,
+                        wizard_client_certificate_pem],
+              postback = {wizard_issue_client_certificate, WizardId}}
+    ]}.
+
+explicit_client_certificate(#{certificate_role := client_certificate}) -> true;
+explicit_client_certificate(#{material_type := client_certificate}) -> true;
+explicit_client_certificate(#{source := certificate_issue_demo}) -> true;
+explicit_client_certificate(#{source := cmp_demo_enrollment}) -> true;
+explicit_client_certificate(#{source := ovpn_demo_import}) -> true;
+explicit_client_certificate(_) -> false.
+
+selected_client_style({ok, #{material_type := client_certificate}}) ->
+    <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>;
+selected_client_style(_) ->
+    <<"margin-top:12px;padding:12px;border:1px solid rgba(217,119,6,0.25);border-radius:6px;background:#fffbeb;">>.
+
+client_choice_style(true, _Material, _Binding) ->
+    <<"padding:12px;border:1px solid rgba(37,99,235,0.35);border-radius:6px;background:#eff6ff;">>;
+client_choice_style(false, _Material, {other_device, _}) ->
+    <<"padding:12px;border:1px solid rgba(220,38,38,0.22);border-radius:6px;background:#fef2f2;">>;
+client_choice_style(false, {ok, #{material_type := client_certificate}}, _Binding) ->
+    <<"padding:12px;border:1px solid rgba(22,163,74,0.22);border-radius:6px;background:#fff;">>;
+client_choice_style(false, _Material, _Binding) ->
+    <<"padding:12px;border:1px solid rgba(217,119,6,0.22);border-radius:6px;background:#fffbeb;">>.
+
+client_material_label({ok, #{material_type := client_certificate}}) -> <<"available">>;
+client_material_label(_) -> <<"missing_body">>.
+
+client_material_fingerprint({ok, Status}) -> maps:get(fingerprint_sha256, Status, undefined);
+client_material_fingerprint(_) -> undefined.
+
+client_material_notice({ok, #{material_type := client_certificate}}) ->
+    wizard_notice("Client material available", "The public client certificate PEM is ready for relationship review.");
+client_material_notice(_) ->
+    wizard_error_panel("Public client certificate PEM is unavailable. Load material on the certificate detail page or issue a new certificate below.").
+
+client_certificate_device(CertificateId) ->
+    case client_certificate_binding(CertificateId, undefined) of
+        unbound -> <<"not linked yet">>;
+        {selected_device, DeviceId} -> DeviceId;
+        {other_device, DeviceId} -> DeviceId
+    end.
+
+client_certificate_binding(CertificateId, SelectedDeviceId) ->
+    DeviceIds = lists:usort([maps:get(source_id, Relationship, undefined)
+                            || Relationship <- ias_demo_store:relationships(),
+                               maps:get(relation_type, Relationship, undefined) =:= uses_certificate,
+                               maps:get(source_kind, Relationship, undefined) =:= device,
+                               maps:get(target_kind, Relationship, undefined) =:= certificate,
+                               maps:get(target_id, Relationship, undefined) =:= CertificateId]),
+    case DeviceIds of
+        [] -> unbound;
+        [SelectedDeviceId] when SelectedDeviceId =/= undefined -> {selected_device, SelectedDeviceId};
+        [DeviceId | _] -> {other_device, DeviceId}
+    end.
+
+client_binding_label(unbound) -> <<"unbound">>;
+client_binding_label({selected_device, DeviceId}) -> ias_html:join([<<"selected Device ">>, DeviceId]);
+client_binding_label({other_device, DeviceId}) -> ias_html:join([<<"other Device ">>, DeviceId]).
 
 ca_certificate_step(Draft) ->
     #panel{body = [
@@ -719,6 +918,16 @@ wizard_error(invalid_ca_certificate) ->
     wizard_error_panel("The selected certificate is not classified as a CA certificate.");
 wizard_error(ca_certificate_material_required) ->
     wizard_error_panel("Public CA certificate PEM is required before continuing.");
+wizard_error(client_certificate_required) ->
+    wizard_error_panel("Select or issue a Client Certificate before continuing.");
+wizard_error(selected_client_certificate_missing) ->
+    wizard_error_panel("The selected Client Certificate no longer exists. Select another certificate.");
+wizard_error(invalid_client_certificate) ->
+    wizard_error_panel("The selected certificate is not classified as a client certificate.");
+wizard_error(client_certificate_material_required) ->
+    wizard_error_panel("Public client certificate PEM is required before continuing.");
+wizard_error(client_certificate_linked_to_other_device) ->
+    wizard_error_panel("The selected Client Certificate is already linked to another Device.");
 wizard_error(Reason) ->
     wizard_error_panel(Reason).
 
@@ -778,6 +987,15 @@ next_action(#{current_step := ca_certificate} = Draft, WizardId) ->
         {ok, Certificate} ->
             case ias_certificate_material:status(maps:get(id, Certificate)) of
                 {ok, #{material_type := ca_certificate}} -> nav_action("Next", {wizard_next, WizardId});
+                _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
+            end;
+        _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
+    end;
+next_action(#{current_step := client_certificate} = Draft, WizardId) ->
+    case ias_provisioning_wizard_store:selected_client_certificate(Draft) of
+        {ok, Certificate} ->
+            case ias_certificate_material:status(maps:get(id, Certificate)) of
+                {ok, #{material_type := client_certificate}} -> nav_action("Next", {wizard_next, WizardId});
                 _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
             end;
         _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}

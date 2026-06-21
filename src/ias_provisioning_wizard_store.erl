@@ -18,6 +18,8 @@
          selected_vpn_service/1,
          select_ca_certificate/2,
          selected_ca_certificate/1,
+         select_client_certificate/2,
+         selected_client_certificate/1,
          steps/0,
          step_title/1,
          step_description/1,
@@ -178,6 +180,35 @@ selected_ca_certificate(Draft) when is_map(Draft) ->
         CertificateId -> valid_ca_certificate(CertificateId)
     end.
 
+select_client_certificate(Id, CertificateId) ->
+    case get(Id) of
+        {ok, Draft} ->
+            case valid_client_certificate(CertificateId) of
+                {ok, Certificate} ->
+                    case client_certificate_device_status(Certificate, Draft) of
+                        ok -> update(Id, #{client_certificate_id => maps:get(id, Certificate)});
+                        {error, Reason} -> {error, Reason}
+                    end;
+                {error, Reason} -> {error, Reason}
+            end;
+        not_found ->
+            {error, not_found}
+    end.
+
+selected_client_certificate(Draft) when is_map(Draft) ->
+    case maps:get(client_certificate_id, Draft, undefined) of
+        undefined -> not_selected;
+        CertificateId ->
+            case valid_client_certificate(CertificateId) of
+                {ok, Certificate} ->
+                    case client_certificate_device_status(Certificate, Draft) of
+                        ok -> {ok, Certificate};
+                        {error, Reason} -> {error, Reason}
+                    end;
+                Error -> Error
+            end
+    end.
+
 steps() ->
     [scheme,
      device,
@@ -280,6 +311,19 @@ movement_allowed(next_step, ca_certificate, Draft) ->
         not_selected -> {error, ca_certificate_required};
         {error, _Reason} -> {error, selected_ca_certificate_missing}
     end;
+movement_allowed(next_step, client_certificate, Draft) ->
+    case selected_client_certificate(Draft) of
+        {ok, Certificate} ->
+            case ias_certificate_material:status(maps:get(id, Certificate)) of
+                {ok, #{material_type := client_certificate}} -> ok;
+                _ -> {error, client_certificate_material_required}
+            end;
+        not_selected -> {error, client_certificate_required};
+        {error, client_certificate_linked_to_other_device} ->
+            {error, client_certificate_linked_to_other_device};
+        {error, invalid_client_certificate} -> {error, invalid_client_certificate};
+        {error, _Reason} -> {error, selected_client_certificate_missing}
+    end;
 movement_allowed(_Direction, _Current, _Draft) ->
     ok.
 
@@ -334,6 +378,45 @@ ca_certificate_role(#{certificate_role := ca_certificate}) -> true;
 ca_certificate_role(#{material_type := ca_certificate}) -> true;
 ca_certificate_role(#{source := ca_certificate}) -> true;
 ca_certificate_role(_) -> false.
+
+valid_client_certificate(undefined) ->
+    {error, client_certificate_required};
+valid_client_certificate(<<>>) ->
+    {error, client_certificate_required};
+valid_client_certificate(CertificateId) ->
+    case ias_demo_store:get(normalize_id(CertificateId)) of
+        {ok, #{kind := certificate} = Certificate} ->
+            case client_certificate_role(Certificate) of
+                true -> {ok, Certificate};
+                false -> {error, invalid_client_certificate}
+            end;
+        {ok, _Other} -> {error, invalid_client_certificate};
+        not_found -> {error, selected_client_certificate_missing}
+    end.
+
+client_certificate_role(#{certificate_role := client_certificate}) -> true;
+client_certificate_role(#{material_type := client_certificate}) -> true;
+client_certificate_role(#{source := certificate_issue_demo}) -> true;
+client_certificate_role(#{source := cmp_demo_enrollment}) -> true;
+client_certificate_role(#{source := ovpn_demo_import}) -> true;
+client_certificate_role(_) -> false.
+
+client_certificate_device_status(Certificate, Draft) ->
+    CertificateId = maps:get(id, Certificate, undefined),
+    SelectedDeviceId = maps:get(device_id, Draft, undefined),
+    DeviceIds = lists:usort([
+        maps:get(source_id, Relationship, undefined)
+        || Relationship <- ias_demo_store:relationships(),
+           maps:get(relation_type, Relationship, undefined) =:= uses_certificate,
+           maps:get(source_kind, Relationship, undefined) =:= device,
+           maps:get(target_kind, Relationship, undefined) =:= certificate,
+           maps:get(target_id, Relationship, undefined) =:= CertificateId
+    ]),
+    case DeviceIds of
+        [] -> ok;
+        [SelectedDeviceId] when SelectedDeviceId =/= undefined -> ok;
+        _ -> {error, client_certificate_linked_to_other_device}
+    end.
 
 adjacent_step(Current, Delta) ->
     StepList = steps(),

@@ -473,6 +473,116 @@ ca_certificate_next_is_disabled_without_material_test() ->
     Html = render(ias_provisioning_wizard:content_for({draft, Step})),
     ?assertMatch({_, _}, binary:match(Html, <<">Next</span>">>)).
 
+
+client_certificate_step_requires_selection_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate}),
+    ?assertEqual({error, client_certificate_required},
+                 ias_provisioning_wizard_store:next(maps:get(id, Step))).
+
+client_certificate_with_material_can_be_selected_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = ias_demo_store:put_runtime_object(
+        #{id => <<"wizard_client_device">>, kind => device, source => manual_device}),
+    Certificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_client_with_material">>, source => certificate_issue_demo,
+          certificate_role => client_certificate, subject_cn => <<"wizard-client">>}),
+    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
+    {ok, _} = ias_certificate_material:put(maps:get(id, Certificate), client_certificate,
+                                           Pem, operator_load),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate,
+                               device_id => maps:get(id, Device)}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_client_certificate(
+        maps:get(id, Step), maps:get(id, Certificate)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(client_certificate_id, Selected)),
+    {ok, RelationshipsStep} = ias_provisioning_wizard_store:next(maps:get(id, Selected)),
+    ?assertEqual(relationships, maps:get(current_step, RelationshipsStep)).
+
+client_certificate_without_material_blocks_next_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Certificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_client_without_material">>, source => certificate_issue_demo,
+          certificate_role => client_certificate}),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_client_certificate(
+        maps:get(id, Step), maps:get(id, Certificate)),
+    ?assertEqual({error, client_certificate_material_required},
+                 ias_provisioning_wizard_store:next(maps:get(id, Selected))).
+
+ca_certificate_is_rejected_as_client_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Certificate} = ias_demo_ca_certificate:register(valid_ca_fields()),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    ?assertEqual({error, invalid_client_certificate},
+                 ias_provisioning_wizard_store:select_client_certificate(
+                     maps:get(id, Draft), maps:get(id, Certificate))).
+
+client_certificate_linked_to_other_device_is_rejected_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device1 = ias_demo_store:put_runtime_object(
+        #{id => <<"wizard_client_device_1">>, kind => device, source => manual_device}),
+    Device2 = ias_demo_store:put_runtime_object(
+        #{id => <<"wizard_client_device_2">>, kind => device, source => manual_device}),
+    Certificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_bound_client">>, source => certificate_issue_demo,
+          certificate_role => client_certificate}),
+    {ok, _} = ias_relationship_link:create(uses_certificate,
+                                           maps:get(id, Device1), maps:get(id, Certificate)),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{device_id => maps:get(id, Device2)}),
+    ?assertEqual({error, client_certificate_linked_to_other_device},
+                 ias_provisioning_wizard_store:select_client_certificate(
+                     maps:get(id, Draft), maps:get(id, Certificate))).
+
+stale_client_certificate_blocks_next_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Stale} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate,
+                               client_certificate_id => <<"missing_client">>}),
+    ?assertEqual({error, selected_client_certificate_missing},
+                 ias_provisioning_wizard_store:next(maps:get(id, Stale))).
+
+wizard_demo_client_certificate_issue_stores_material_test() ->
+    ias_demo_state:clear(),
+    User = ias_demo_store:put_runtime_object(
+        #{id => alice, kind => user, name => <<"Alice">>, profile_id => administrator}),
+    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
+    {ok, Certificate} = ias_wizard_client_certificate:issue(
+        #{user_id => maps:get(id, User), subject_cn => <<"alice-vpn">>, pem => Pem}),
+    ?assertEqual(certificate_issue_demo, maps:get(source, Certificate)),
+    ?assertMatch({ok, #{material_type := client_certificate}},
+                 ias_certificate_material:status(maps:get(id, Certificate))).
+
+client_certificate_step_renders_selection_and_issue_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    _User = ias_demo_store:put_runtime_object(
+        #{id => alice, kind => user, name => <<"Alice">>, profile_id => administrator}),
+    _Certificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_render_client">>, source => certificate_issue_demo,
+          certificate_role => client_certificate, subject_cn => <<"wizard-client">>}),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate}),
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+    ?assertMatch({_, _}, binary:match(Html, <<"Use Existing Client Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Issue New Demo Client Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Issue and Select Client Certificate">>)).
+
 valid_ca_fields() ->
     Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
     #{name => <<"Wizard Demo CA">>, subject => <<"CN=Wizard Demo CA">>, pem => Pem}.
