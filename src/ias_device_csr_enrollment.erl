@@ -1,12 +1,20 @@
 -module(ias_device_csr_enrollment).
--export([enroll_for_wizard/2, complete_for_wizard/3, import_issued_certificate/3]).
+-export([enroll_for_wizard/2,
+         enroll_for_wizard_with/3,
+         complete_for_wizard/3,
+         import_issued_certificate/3,
+         normalize_cmp_error/1]).
 
 enroll_for_wizard(WizardId, CsrPem) ->
+    enroll_for_wizard_with(WizardId, CsrPem,
+                           fun(Request) -> ias_cmp_enrollment:enroll_external_csr(Request) end).
+
+enroll_for_wizard_with(WizardId, CsrPem, CmpFun) when is_function(CmpFun, 1) ->
     case ias_provisioning_wizard_store:get(WizardId) of
         {ok, Draft} ->
             case ias_provisioning_wizard_store:selected_device(Draft) of
                 {ok, Device} ->
-                    enroll_for_device(WizardId, Device, CsrPem);
+                    enroll_for_device(WizardId, Device, CsrPem, CmpFun);
                 _ ->
                     {error, device_required}
             end;
@@ -14,21 +22,47 @@ enroll_for_wizard(WizardId, CsrPem) ->
             {error, wizard_not_found}
     end.
 
-enroll_for_device(WizardId, Device, CsrPem) ->
+enroll_for_device(WizardId, Device, CsrPem, CmpFun) ->
     case ias_csr_validation:validate(CsrPem) of
         {ok, CsrMetadata} ->
+            enroll_validated_csr(WizardId, Device, CsrMetadata, CmpFun);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+enroll_validated_csr(WizardId, Device, CsrMetadata, CmpFun) ->
+    Fingerprint = maps:get(csr_fingerprint, CsrMetadata),
+    case ias_csr_enrollment_state:submitted(Fingerprint) of
+        ok ->
+            Metadata = #{wizard_id => ias_html:text(WizardId),
+                         device_id => ias_html:text(maps:get(id, Device, undefined)),
+                         subject_cn => maps:get(subject_cn, CsrMetadata, <<"vpn-client">>)},
+            {ok, _} = ias_csr_enrollment_state:mark_submitted(Fingerprint, Metadata),
             Request = #{csr_pem => maps:get(pem, CsrMetadata),
                         common_name => maps:get(subject_cn, CsrMetadata, <<"vpn-client">>),
                         profile => <<"secp384r1">>,
                         server => <<"127.0.0.1:8829">>},
-            case ias_cmp_enrollment:enroll_external_csr(Request) of
+            case CmpFun(Request) of
                 {ok, CmpResult} ->
-                    complete_for_wizard(WizardId, Device, CsrMetadata, CmpResult);
-                {error, Reason} ->
+                    case complete_for_wizard(WizardId, Device, CsrMetadata, CmpResult) of
+                        {ok, Draft, Certificate} ->
+                            ias_csr_enrollment_state:mark_issued(
+                                Fingerprint,
+                                #{certificate_id => maps:get(id, Certificate, undefined)}),
+                            {ok, Draft, Certificate};
+                        {error, Reason} ->
+                            ias_csr_enrollment_state:mark_failed(
+                                Fingerprint, enrollment_failure_label(Reason), false),
+                            {error, Reason}
+                    end;
+                {error, Reason0} ->
+                    Reason = normalize_cmp_error(Reason0),
+                    ias_csr_enrollment_state:mark_failed(
+                        Fingerprint, Reason, retryable_cmp_error(Reason)),
                     {error, {cmp_failed, Reason}}
             end;
-        {error, Reason} ->
-            {error, Reason}
+        {error, {duplicate_csr, Record}} ->
+            {error, {duplicate_csr, Record}}
     end.
 
 complete_for_wizard(WizardId, CsrPem, CmpResult) ->
@@ -60,6 +94,48 @@ complete_for_wizard(WizardId, Device, CsrMetadata, CmpResult) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+normalize_cmp_error(ca_unavailable) ->
+    cmp_connection_failed;
+normalize_cmp_error(timeout) ->
+    cmp_timeout;
+normalize_cmp_error(Reason) ->
+    Text = string:lowercase(ias_html:text(Reason)),
+    case contains_any(Text, [<<"certresponse not found">>, <<"expected certreqid">>]) of
+        true -> cmp_unexpected_certificate_response;
+        false -> normalize_cmp_error_text(Text)
+    end.
+
+normalize_cmp_error_text(Text) ->
+    case contains_any(Text, [<<"timed out">>, <<"timeout">>]) of
+        true -> cmp_timeout;
+        false ->
+            case contains_any(Text, [<<"connection refused">>, <<"connect">>,
+                                     <<"network is unreachable">>, <<"ca unavailable">>]) of
+                true -> cmp_connection_failed;
+                false ->
+                    case contains_any(Text, [<<"malformed">>, <<"bad response">>, <<"parse">>]) of
+                        true -> cmp_malformed_response;
+                        false ->
+                            case contains_any(Text, [<<"rejection">>, <<"rejected">>,
+                                                     <<"pkistatus">>, <<"bad request">>]) of
+                                true -> cmp_ca_rejection;
+                                false -> cmp_failed
+                            end
+                    end
+            end
+    end.
+
+contains_any(Text, Needles) ->
+    lists:any(fun(Needle) -> binary:match(Text, Needle) =/= nomatch end, Needles).
+
+retryable_cmp_error(cmp_connection_failed) -> true;
+retryable_cmp_error(cmp_timeout) -> true;
+retryable_cmp_error(_) -> false.
+
+enrollment_failure_label({invalid_certificate_chain, _Reason}) -> invalid_certificate_chain;
+enrollment_failure_label({configured_ca_unavailable, _Reason}) -> configured_ca_unavailable;
+enrollment_failure_label(Reason) -> ias_html:text(Reason).
 
 import_issued_certificate(DeviceId, CsrMetadata, CmpResult) ->
     CertPem = maps:get(certificate_pem, CmpResult, <<>>),

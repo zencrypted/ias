@@ -33,6 +33,8 @@ event({wizard_request_device_csr_certificate, WizardId}) ->
         {ok, Draft, _Certificate} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
         {error, Reason} -> nitro:update(wizard_feedback, wizard_error(device_csr_error_text(Reason)))
     end;
+event({wizard_download_device_csr_script, WizardId}) ->
+    wizard_download_device_csr_script(WizardId);
 event({wizard_apply_relationships, WizardId}) ->
     case ias_provisioning_wizard_store:apply_relationships(WizardId) of
         {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
@@ -1016,16 +1018,11 @@ demo_issued_certificate(_) -> false.
 
 request_certificate_with_device_csr_panel(Draft) ->
     WizardId = maps:get(id, Draft),
-    KeyRef = device_key_ref(Draft),
-    SubjectCN = suggested_certificate_cn(Draft),
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Request Certificate from CA using Device CSR")},
         #p{style = <<"font-size:12px;color:#64748b;line-height:1.45;">>,
-           body = ias_html:text("Generate the CSR on the Device using the device-owned private key. Submit only client.csr to IAS; IAS never receives or stores the private key.")},
-        #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
-           body = ias_html:text("This command runs on the Device. Only client.csr is submitted to IAS.")},
-        #pre{style = <<"margin:8px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;">>,
-             body = ias_html:text(device_csr_command(KeyRef, SubjectCN))},
+           body = ias_html:text("Generate the CSR on the Device using the device-owned private key. IAS never generates, uploads, reads, or stores the private key.")},
+        device_csr_generation_panel(Draft),
         #panel{style = <<"margin:8px 0;">>, body = [
             #label{for = wizard_device_csr_file,
                    style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
@@ -1056,16 +1053,48 @@ request_certificate_with_device_csr_panel(Draft) ->
         ]}
     ]}.
 
-device_key_ref(Draft) ->
+device_csr_generation_panel(Draft) ->
     case ias_provisioning_wizard_store:selected_device(Draft) of
-        {ok, Device} -> maps:get(private_key_ref, Device, <<"client.key">>);
-        _ -> <<"client.key">>
+        {ok, Device} ->
+            case ias_device_csr_command:generate(Device) of
+                {ok, Plan} ->
+                    device_csr_generation_plan_panel(maps:get(id, Draft), Plan);
+                {error, Reason} ->
+                    wizard_error_panel(Reason)
+            end;
+        _ ->
+            wizard_error_panel("Select a Device before generating a Device CSR command.")
     end.
 
-device_csr_command(KeyRef, SubjectCN) ->
-    ias_html:join([<<"openssl req -new \\\n  -key ">>, ias_html:text(KeyRef),
-                   <<" \\\n  -out client.csr \\\n  -subj \"/CN=">>,
-                   ias_html:text(SubjectCN), <<"\"">>]).
+device_csr_generation_plan_panel(WizardId, Plan) ->
+    Command = maps:get(command, Plan),
+    CsrFile = maps:get(csr_filename, Plan),
+    KeyRef = maps:get(private_key_ref, Plan),
+    #panel{style = <<"margin:10px 0;padding:10px;border:1px solid rgba(15,23,42,0.12);border-radius:6px;background:#f8fafc;">>,
+           body = [
+               #h3{style = <<"margin-top:0;">>, body = ias_html:text("Generate CSR on Device")},
+               #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
+                  body = ias_html:text("Run this command on the selected Device. The private key remains on the Device. Upload only the generated .csr file to IAS.")},
+               key_value_table([
+                   {"Private Key Reference", KeyRef},
+                   {"CSR File", CsrFile}
+               ]),
+               #pre{id = wizard_device_csr_command,
+                    style = <<"margin:8px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;">>,
+                    body = ias_html:text(Command)},
+               #panel{style = <<"display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">>,
+                      body = [
+                          #link{class = [button, sgreen],
+                                url = copy_device_csr_command_js(),
+                                body = ias_html:text("Copy Command")},
+                          #link{class = [button, sgreen],
+                                body = ias_html:text("Download CSR Generation Script"),
+                                postback = {wizard_download_device_csr_script, WizardId}}
+                      ]}
+           ]}.
+
+copy_device_csr_command_js() ->
+    <<"javascript:(function(){var e=document.getElementById('wizard_device_csr_command');if(e&&navigator.clipboard){navigator.clipboard.writeText(e.textContent||'');}})();">>.
 
 device_csr_upload_js() ->
     <<
@@ -1403,8 +1432,22 @@ device_csr_error_text({configured_ca_unavailable, Reason}) ->
                    configured_ca_error_text(Reason)]);
 device_csr_error_text({cmp_failed, ca_unavailable}) ->
     <<"CA/CMP service is unavailable.">>;
+device_csr_error_text({duplicate_csr, _Record}) ->
+    <<"This CSR has already been submitted. Generate a new CSR on the Device and try again. Do not resubmit the same CSR.">>;
+device_csr_error_text({cmp_failed, cmp_unexpected_certificate_response}) ->
+    <<"CMP did not return the expected certificate response. The CSR may already have been used, or the CA rejected the request. Generate a new Device CSR and try again.">>;
+device_csr_error_text({cmp_failed, cmp_connection_failed}) ->
+    <<"CMP connection failed. Check that the CA/CMP service is running and reachable.">>;
+device_csr_error_text({cmp_failed, cmp_timeout}) ->
+    <<"CMP enrollment timed out. Check CA/CMP availability and retry only if the previous request did not reach the CA.">>;
+device_csr_error_text({cmp_failed, cmp_malformed_response}) ->
+    <<"CMP returned a malformed response. Generate a new Device CSR and try again after checking the CA/CMP service.">>;
+device_csr_error_text({cmp_failed, cmp_ca_rejection}) ->
+    <<"CA rejected the CMP request. Generate a new Device CSR or check CA enrollment policy.">>;
+device_csr_error_text({cmp_failed, cmp_failed}) ->
+    <<"CA/CMP enrollment failed. Generate a new Device CSR and try again.">>;
 device_csr_error_text({cmp_failed, Reason}) ->
-    ias_html:join([<<"CA/CMP enrollment failed: ">>, ias_html:text(Reason)]);
+    device_csr_error_text({cmp_failed, ias_device_csr_enrollment:normalize_cmp_error(Reason)});
 device_csr_error_text(device_required) ->
     <<"Select a Device before requesting a certificate with a Device CSR.">>;
 device_csr_error_text(Reason) ->
@@ -1988,6 +2031,27 @@ wizard_download_device_bound_ovpn({error, Reason}) ->
     nitro:update(wizard_ovpn_download_result,
                  wizard_device_bound_ovpn_error(Reason)).
 
+wizard_download_device_csr_script(WizardId) ->
+    case ias_provisioning_wizard_store:get(WizardId) of
+        {ok, Draft} ->
+            case ias_provisioning_wizard_store:selected_device(Draft) of
+                {ok, Device} ->
+                    case ias_device_csr_command:generate(Device) of
+                        {ok, Plan} ->
+                            Script = ias_device_csr_command:script(Plan),
+                            Filename = maps:get(script_filename, Plan),
+                            nitro:wire(wizard_download_js(
+                                Filename, Script, <<"text/x-shellscript">>));
+                        {error, Reason} ->
+                            nitro:update(wizard_feedback, wizard_error(Reason))
+                    end;
+                _ ->
+                    nitro:update(wizard_feedback, wizard_error(device_required))
+            end;
+        not_found ->
+            nitro:update(wizard_feedback, wizard_error(not_found))
+    end.
+
 wizard_device_bound_ovpn_ready(Filename, Content, KeyRef) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
@@ -2011,11 +2075,15 @@ wizard_device_bound_ovpn_error(Reason) ->
            ]}.
 
 wizard_ovpn_download_js(Filename, Content) ->
+    wizard_download_js(Filename, Content, <<"application/x-openvpn-profile">>).
+
+wizard_download_js(Filename, Content, ContentType) ->
     Encoded = base64:encode(Content),
     SafeFilename = js_string(Filename),
+    SafeContentType = js_string(ContentType),
     [
         <<"var data=atob('">>, Encoded, <<"');">>,
-        <<"var blob=new Blob([data],{type:'application/x-openvpn-profile'});">>,
+        <<"var blob=new Blob([data],{type:'">>, SafeContentType, <<"'});">>,
         <<"var url=URL.createObjectURL(blob);">>,
         <<"var a=document.createElement('a');">>,
         <<"a.href=url;">>,

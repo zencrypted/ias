@@ -322,7 +322,9 @@ demo_device(Id) ->
                                         type => <<"vpn-client">>,
                                         tunnel_device => <<"tun">>,
                                         transport => <<"udp">>,
-                                        endpoint => <<"vpn.example.com">>}).
+                                        endpoint => <<"vpn.example.com">>,
+                                        private_key_provider => <<"device_file">>,
+                                        private_key_ref => <<"client.key">>}).
 
 render(Doc) ->
     iolist_to_binary(nitro:render(Doc)).
@@ -707,12 +709,17 @@ client_certificate_step_renders_selection_and_issue_test() ->
     _Certificate = ias_demo_store:add_certificate(
         #{id => <<"wizard_render_client">>, source => certificate_issue_demo,
           certificate_role => client_certificate, subject_cn => <<"wizard-client">>}),
+    Device = demo_device(<<"wizard_render_client_step_device">>),
     {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
     {ok, Step} = ias_provisioning_wizard_store:update(
-        maps:get(id, Draft0), #{current_step => client_certificate}),
+        maps:get(id, Draft0), #{current_step => client_certificate,
+                                device_id => maps:get(id, Device)}),
     Html = render(ias_provisioning_wizard:content_for({draft, Step})),
     ?assertMatch({_, _}, binary:match(Html, <<"Use Existing Client Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Request Certificate from CA using Device CSR">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Generate CSR on Device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Copy Command">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Download CSR Generation Script">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"CSR PEM">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"openssl req -new">>)).
 
@@ -747,9 +754,10 @@ client_certificate_step_shows_device_csr_command_with_key_ref_test() ->
 
     Html = render(ias_provisioning_wizard:content_for({draft, Step})),
 
-    ?assertMatch({_, _}, binary:match(Html, <<"This command runs on the Device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Run this command on the selected Device">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"keys/client.key">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"client.csr">>)).
+    ?assertMatch({_, _}, binary:match(Html, <<"Upload only the generated .csr file to IAS">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<".csr">>)).
 
 certificate_enrollment_page_renders_wizard_return_context_test() ->
     Context = #{wizard_id => <<"wizard_return_context">>,
