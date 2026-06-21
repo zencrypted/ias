@@ -47,6 +47,32 @@ This is not production device enrollment. It does not generate private keys,
 create CSRs, call CA/CMP, create certificates automatically, persist device
 records, start VPN connections or create relationships automatically.
 
+Operational Relationship Constraints
+------------------------------------
+
+Stage 23E makes the operational graph explicit and non-ambiguous for OVPN
+provisioning. New runtime relationship creation enforces:
+
+- one active `Device -> uses_certificate -> Certificate`;
+- one active `Device -> uses_service -> VPN Service`;
+- one active `VPN Service -> uses_ca_certificate -> Certificate`.
+
+Existing exact duplicate relationship creation remains idempotent, but a second
+active target is rejected with the already-linked object id. Certificate role
+metadata is checked before linking:
+
+- `uses_certificate` accepts client certificates and rejects explicit CA
+  certificates;
+- `uses_ca_certificate` accepts CA certificates and rejects explicit client
+  certificates;
+- unclassified certificates may still be linked, but the UI surfaces a warning
+  so the operator can review the material role.
+
+Legacy snapshots may still contain ambiguous operational relationships. IAS does
+not delete those relationships automatically. Instead Graph Analysis and Device
+Operational Readiness surface the conflict, and OVPN provisioning remains
+blocked until the operator manually unlinks the extra operational relationship.
+
 Material Contract
 -----------------
 

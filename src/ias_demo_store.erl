@@ -124,6 +124,7 @@ add_relationship(Relationship) when is_map(Relationship) ->
                target_kind => maps:get(target_kind, Relationship, undefined),
                target_id => maps:get(target_id, Relationship, undefined),
                score => maps:get(score, Relationship, 0),
+               warnings => maps:get(warnings, Relationship, []),
                created_at => maps:get(created_at, Relationship, CreatedAt)},
     ets:insert(?TABLE, {{relationship, Id}, Stored}),
     Stored.

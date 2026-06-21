@@ -80,9 +80,13 @@ multiple_device_certificate_links_do_not_override_replacement_current_test() ->
     verify_candidate(Candidate),
 
     {ok, _Replacement} = ias_certificate_replacement:replace(maps:get(id, Device)),
-    {ok, _StaleManualLink} = ias_relationship_link:create(uses_certificate,
-                                                          maps:get(id, Device),
-                                                          maps:get(id, Current)),
+    _StaleLegacyLink = ias_demo_store:add_relationship(#{
+        relation_type => uses_certificate,
+        source_kind => device,
+        source_id => maps:get(id, Device),
+        target_kind => certificate,
+        target_id => maps:get(id, Current)
+    }),
     Status = ias_certificate_role:device_status(Device),
 
     ?assertEqual(lists:sort([maps:get(id, Current), maps:get(id, Candidate)]),

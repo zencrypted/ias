@@ -83,12 +83,16 @@ default_user_certificate_denies_issue_and_revoke_test() ->
 
 certificate_without_profile_is_denied_test() ->
     ias_demo_store:clear(),
-    #{device := Device, certificate := Certificate} = setup_ready_device(true),
+    #{certificate := Certificate} = setup_ready_device(true),
     CertificateWithoutProfile = Certificate#{id => <<"auth_no_profile_certificate">>},
     Stored = ias_demo_store:add_certificate(maps:without([profile, profile_id],
                                                          CertificateWithoutProfile)),
+    DeviceWithoutProfileCertificate = ias_demo_store:add_device(#{
+        id => <<"authorization_no_profile_device">>,
+        source => manual_device
+    }),
     {ok, _DeviceLink} = ias_relationship_link:create(uses_certificate,
-                                                     maps:get(id, Device),
+                                                     maps:get(id, DeviceWithoutProfileCertificate),
                                                      maps:get(id, Stored)),
     {ok, _Policy} = ias_relationship_link:create(uses_security_policy,
                                                  maps:get(id, Stored),

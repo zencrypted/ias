@@ -97,7 +97,8 @@ service_export_reasons(Service, CaCertificate) ->
         not_found -> [<<"no CA certificate">>];
         _ -> []
     end,
-    unique_reasons(EndpointReasons ++ CaReasons).
+    ConflictReasons = service_conflict_reasons(Service),
+    unique_reasons(EndpointReasons ++ CaReasons ++ ConflictReasons).
 
 
 device_provisioning_preview(DeviceId) ->
@@ -161,7 +162,9 @@ device_provisioning_reasons(Certificate, Service, Preview) ->
         missing -> [<<"no CA certificate">>];
         _ -> []
     end,
-    unique_reasons(AuthReasons ++ CertificateReasons ++ ServiceReasons ++ EndpointReasons ++ CaReasons).
+    ConflictReasons = provisioning_conflict_reasons(Preview, Service),
+    unique_reasons(AuthReasons ++ CertificateReasons ++ ServiceReasons ++ EndpointReasons ++
+                   CaReasons ++ ConflictReasons).
 
 device_provisioning_reason(allow, _Reasons) ->
     <<"device is ready for device-bound OVPN provisioning">>;
@@ -496,6 +499,22 @@ service_relation(uses_vpn_service) ->
     true;
 service_relation(_RelationType) ->
     false.
+
+provisioning_conflict_reasons(Preview, Service) ->
+    DeviceId = maps:get(device_id, Preview, not_found),
+    DeviceReasons = case DeviceId of
+        not_found -> [];
+        _ -> ias_relationship_constraints:conflict_reasons(
+               ias_relationship_constraints:device_conflicts(DeviceId))
+    end,
+    ServiceReasons = service_conflict_reasons(Service),
+    DeviceReasons ++ ServiceReasons.
+
+service_conflict_reasons(not_found) ->
+    [];
+service_conflict_reasons(Service) ->
+    ias_relationship_constraints:conflict_reasons(
+      ias_relationship_constraints:service_conflicts(maps:get(id, Service, not_found))).
 
 remote_endpoint(not_found) ->
     {<<"not found">>, <<"not found">>};

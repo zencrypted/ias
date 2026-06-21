@@ -11,9 +11,13 @@ event(init) ->
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
 event({link_relationship, RelationType, SourceId, TargetId}) ->
-    _ = ias_relationship_link:create(RelationType, SourceId, TargetId),
-    nitro:clear(stand),
-    nitro:insert_bottom(stand, content());
+    case ias_relationship_link:create(RelationType, SourceId, TargetId) of
+        {ok, _Relationship} ->
+            nitro:clear(stand),
+            nitro:insert_bottom(stand, content());
+        {error, Reason} ->
+            nitro:update(relationship_action_result, relationship_error_panel(Reason))
+    end;
 event({unlink_relationship, RelationshipId}) ->
     _ = ias_relationship_link:unlink(RelationshipId),
     nitro:clear(stand),
@@ -391,6 +395,7 @@ relationship_preview(Object) ->
             Relationships = ias_relationship_link:relationships_for(Object),
             #panel{class = <<"ias-status-card">>, body = [
                 #h3{body = ias_html:text("Relationship Preview")},
+                #panel{id = relationship_action_result},
                 relationships_table(Object),
                 key_value_table([
                     {"Related Certificate", linked_targets(uses_certificate, Relationships)},
@@ -421,6 +426,7 @@ relationship_preview(Object) ->
             Relationships = ias_relationship_link:relationships_for(Object),
             #panel{class = <<"ias-status-card">>, body = [
                 #h3{body = ias_html:text("Relationship Preview")},
+                #panel{id = relationship_action_result},
                 relationships_table(Object),
                 key_value_table([
                     {"Used By Device", linked_sources(uses_certificate, Relationships)},
@@ -451,6 +457,7 @@ relationship_preview(Object) ->
             Relationships = ias_relationship_link:relationships_for(Object),
             #panel{class = <<"ias-status-card">>, body = [
                 #h3{body = ias_html:text("Relationship Preview")},
+                #panel{id = relationship_action_result},
                 relationships_table(Object),
                 key_value_table([
                     {"Used By Device", linked_sources(uses_service, Relationships)},
@@ -480,6 +487,7 @@ relationship_preview(Object) ->
         #{kind := security_policy} ->
             #panel{class = <<"ias-status-card">>, body = [
                 #h3{body = ias_html:text("Relationship Preview")},
+                #panel{id = relationship_action_result},
                 relationships_table(Object)
             ]};
         _ ->
@@ -487,16 +495,19 @@ relationship_preview(Object) ->
                 cmp_enrollment_result ->
                     #panel{class = <<"ias-status-card">>, body = [
                         #h3{body = ias_html:text("Relationship Preview")},
+                        #panel{id = relationship_action_result},
                         relationships_table(Object)
                     ]};
                 certificate_replacement ->
                     #panel{class = <<"ias-status-card">>, body = [
                         #h3{body = ias_html:text("Relationship Preview")},
+                        #panel{id = relationship_action_result},
                         relationships_table(Object)
                     ]};
                 certificate_revocation ->
                     #panel{class = <<"ias-status-card">>, body = [
                         #h3{body = ias_html:text("Relationship Preview")},
+                        #panel{id = relationship_action_result},
                         relationships_table(Object)
                     ]};
                 _ ->
@@ -1417,10 +1428,16 @@ candidate_action(Candidate, RelationType, SourceId) ->
             #link{class = [button, sgreen],
                   body = ias_html:text("Link"),
                   postback = {link_relationship, RelationType, SourceId, TargetId}};
+        {link_warning, _Warnings} ->
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Link"),
+                  postback = {link_relationship, RelationType, SourceId, TargetId}};
         {linked, _Relationship} ->
             linked_action(_Relationship);
         {already_has_policy, PolicyId, _Relationship} ->
             ias_html:join([<<"Already has policy: ">>, ias_html:text(PolicyId)]);
+        {blocked, Reason} ->
+            blocked_relationship_action(Reason);
         _ ->
             ias_html:text("not found")
     end.
@@ -1434,11 +1451,24 @@ candidate_link(Candidate) ->
                                 <<")">>])}.
 
 candidate_body(Candidate, RelationType, SourceId) ->
-    case candidate_policy_warning(Candidate, RelationType, SourceId) of
+    Lines = candidate_policy_warning(Candidate, RelationType, SourceId) ++
+        candidate_constraint_lines(Candidate, RelationType, SourceId),
+    case Lines of
         [] ->
             candidate_link(Candidate);
-        Warning ->
-            #panel{body = [candidate_link(Candidate), #br{} | Warning]}
+        _ ->
+            #panel{body = [candidate_link(Candidate), #br{} | Lines]}
+    end.
+
+candidate_constraint_lines(Candidate, RelationType, SourceId) ->
+    TargetId = maps:get(id, Candidate, undefined),
+    case ias_relationship_link:status(RelationType, SourceId, TargetId) of
+        {link_warning, Warnings} ->
+            warning_lines(Warnings);
+        {blocked, Reason} ->
+            blocked_reason_lines(Reason);
+        _ ->
+            []
     end.
 
 candidate_policy_warning(#{kind := certificate} = Candidate, uses_certificate, SourceId) ->
@@ -1489,6 +1519,64 @@ linked_action(Relationship) ->
         false ->
             ias_html:text("Linked")
     end.
+
+blocked_relationship_action(#{reason := already_has_operational_relationship} = Reason) ->
+    ExistingId = maps:get(existing_target_id, Reason, not_found),
+    case maps:get(relation_type, Reason, undefined) of
+        uses_certificate ->
+            #panel{body = [
+                ias_html:join([<<"Already linked: ">>, ias_html:text(ExistingId)]),
+                #br{},
+                ias_html:text("Unlink existing certificate or use certificate replacement flow.")
+            ]};
+        _ ->
+            #panel{body = [
+                ias_html:join([<<"Already linked: ">>, ias_html:text(ExistingId)]),
+                #br{},
+                ias_html:text("Unlink existing object first.")
+            ]}
+    end;
+blocked_relationship_action(#{message := Message}) ->
+    #span{style = <<"color:#991b1b;font-size:12px;">>, body = ias_html:text(Message)};
+blocked_relationship_action(Reason) ->
+    #span{style = <<"color:#991b1b;font-size:12px;">>, body = ias_html:text(Reason)}.
+
+warning_lines(Warnings) ->
+    [#span{style = <<"color:#b45309;font-size:12px;">>,
+           body = ias_html:text(maps:get(message, Warning, undefined))}
+     || Warning <- Warnings].
+
+blocked_reason_lines(#{message := Message}) ->
+    [#span{style = <<"color:#991b1b;font-size:12px;">>,
+           body = ias_html:text(Message)}];
+blocked_reason_lines(Reason) ->
+    [#span{style = <<"color:#991b1b;font-size:12px;">>,
+           body = ias_html:text(Reason)}].
+
+relationship_error_panel(#{message := Message} = Reason) ->
+    #panel{style = <<"margin:8px 0;padding:10px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;">>,
+           body = [
+               #span{style = <<"font-weight:600;">>,
+                     body = ias_html:text("Relationship was not created")},
+               #br{},
+               ias_html:text(Message),
+               relationship_error_existing(Reason)
+           ]};
+relationship_error_panel(Reason) ->
+    #panel{style = <<"margin:8px 0;padding:10px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;">>,
+           body = [
+               #span{style = <<"font-weight:600;">>,
+                     body = ias_html:text("Relationship was not created")},
+               #br{},
+               ias_html:text(Reason)
+           ]}.
+
+relationship_error_existing(#{existing_target_id := not_found}) ->
+    [];
+relationship_error_existing(#{existing_target_id := ExistingId}) ->
+    [#br{}, ias_html:join([<<"Existing object: ">>, ias_html:text(ExistingId)])];
+relationship_error_existing(_Reason) ->
+    [].
 
 relationship_detail_action(Relationship) ->
     case ias_relationship_link:unlinkable(Relationship) of

@@ -147,6 +147,18 @@ warning_specs(Analysis) ->
          maps:get(devices_without_vpn_service, Analysis, []),
          <<"Devices without VPN service">>,
          fun object_list_detail/1},
+        {<<"Devices with multiple certificates">>,
+         maps:get(devices_with_multiple_certificates, Analysis, []),
+         <<"Ambiguous device certificates">>,
+         fun multiple_certificate_detail/1},
+        {<<"Devices with multiple VPN services">>,
+         maps:get(devices_with_multiple_vpn_services, Analysis, []),
+         <<"Ambiguous device VPN services">>,
+         fun multiple_service_detail/1},
+        {<<"VPN services with multiple CA certificates">>,
+         maps:get(vpn_services_with_multiple_ca_certificates, Analysis, []),
+         <<"Ambiguous VPN service CA certificates">>,
+         fun multiple_ca_certificate_detail/1},
         {<<"Enrollment certificates without issued certificate">>,
          maps:get(enrollment_certificates_without_issued_certificate, Analysis, []),
          <<"Pending enrollment certificates">>,
@@ -249,6 +261,33 @@ multiple_device_detail(Warning) ->
         ias_html:text("Devices:"),
         #ul{body = [#li{body = [object_link(device, DeviceId)]}
                     || DeviceId <- maps:get(device_ids, Warning, [])]}
+    ]}.
+
+multiple_certificate_detail(Warning) ->
+    #li{body = [
+        object_link(device, maps:get(device_id, Warning, undefined)),
+        #br{},
+        ias_html:text("Certificates:"),
+        #ul{body = [#li{body = [object_link(certificate, CertificateId)]}
+                    || CertificateId <- maps:get(certificate_ids, Warning, [])]}
+    ]}.
+
+multiple_service_detail(Warning) ->
+    #li{body = [
+        object_link(device, maps:get(device_id, Warning, undefined)),
+        #br{},
+        ias_html:text("VPN Services:"),
+        #ul{body = [#li{body = [object_link(vpn_service, ServiceId)]}
+                    || ServiceId <- maps:get(vpn_service_ids, Warning, [])]}
+    ]}.
+
+multiple_ca_certificate_detail(Warning) ->
+    #li{body = [
+        object_link(vpn_service, maps:get(vpn_service_id, Warning, undefined)),
+        #br{},
+        ias_html:text("CA Certificates:"),
+        #ul{body = [#li{body = [object_link(certificate, CertificateId)]}
+                    || CertificateId <- maps:get(certificate_ids, Warning, [])]}
     ]}.
 
 replacement_detail(Warning) ->

@@ -150,6 +150,18 @@ create_relationship(uses_security_policy, Source,
         {already_has_policy, PolicyId, _Relationship} ->
             {error, {already_has_policy, PolicyId}}
     end;
+create_relationship(RelationType, Source, Target)
+  when RelationType =:= uses_certificate;
+       RelationType =:= uses_service;
+       RelationType =:= uses_ca_certificate ->
+    case ias_relationship_constraints:check_create(RelationType, Source, Target) of
+        {ok, Warnings} ->
+            add_relationship(RelationType, Source, Target, Warnings);
+        {linked, Relationship} ->
+            {ok, Relationship};
+        {blocked, Reason} ->
+            {error, Reason}
+    end;
 create_relationship(RelationType, Source, Target) ->
     case existing_relationship(RelationType, Source, Target) of
         not_found ->
@@ -159,6 +171,9 @@ create_relationship(RelationType, Source, Target) ->
     end.
 
 add_relationship(RelationType, Source, Target) ->
+    add_relationship(RelationType, Source, Target, []).
+
+add_relationship(RelationType, Source, Target, Warnings) ->
     Score = candidate_score(Source, Target),
     {ok, ias_demo_store:add_relationship(#{
         relation_type => RelationType,
@@ -166,7 +181,8 @@ add_relationship(RelationType, Source, Target) ->
         source_id => maps:get(id, Source, undefined),
         target_kind => maps:get(kind, Target, undefined),
         target_id => maps:get(id, Target, undefined),
-        score => Score
+        score => Score,
+        warnings => Warnings
     })}.
 
 canonical(RelationType, SourceId, TargetId) ->
@@ -286,6 +302,16 @@ relationship_status(uses_security_policy, Source,
                 true -> {linked, Relationship};
                 false -> {already_has_policy, PolicyId, Relationship}
             end
+    end;
+relationship_status(RelationType, Source, Target)
+  when RelationType =:= uses_certificate;
+       RelationType =:= uses_service;
+       RelationType =:= uses_ca_certificate ->
+    case ias_relationship_constraints:status(RelationType, Source, Target) of
+        {ok, []} -> link;
+        {ok, Warnings} -> {link_warning, Warnings};
+        {linked, Relationship} -> {linked, Relationship};
+        {blocked, Reason} -> {blocked, Reason}
     end;
 relationship_status(RelationType, Source, Target) ->
     case existing_relationship(RelationType, Source, Target) of

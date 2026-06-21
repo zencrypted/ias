@@ -32,6 +32,9 @@ report() ->
       devices_without_security_policy => devices_without_security_policy(),
       certificates_without_security_policy => certificates_without_security_policy(),
       devices_without_vpn_service => devices_without_vpn_service(),
+      devices_with_multiple_certificates => devices_with_multiple_certificates(),
+      devices_with_multiple_vpn_services => devices_with_multiple_vpn_services(),
+      vpn_services_with_multiple_ca_certificates => vpn_services_with_multiple_ca_certificates(),
       enrollment_certificates_without_issued_certificate =>
           enrollment_certificates_without_issued_certificate(),
       certificates_linked_to_multiple_devices => certificates_linked_to_multiple_devices(),
@@ -222,19 +225,30 @@ devices_operational_readiness() ->
 
 device_readiness(Device) ->
     DeviceId = maps:get(id, Device, undefined),
-    VpnServiceId = linked_vpn_service_id(Device),
+    Conflicts = ias_relationship_constraints:device_conflicts(DeviceId),
+    AmbiguousCertificates = has_conflict(certificate_ids, Conflicts),
+    AmbiguousServices = has_conflict(vpn_service_ids, Conflicts),
+    VpnServiceId = case AmbiguousServices of
+        true -> not_found;
+        false -> linked_vpn_service_id(Device)
+    end,
     DevicePolicyId = security_policy_id(Device),
-    CurrentCertificate = maps:get(current_certificate,
-                                  ias_certificate_role:device_status(Device),
-                                  not_found),
+    CurrentCertificate = case AmbiguousCertificates of
+        true -> not_found;
+        false ->
+            maps:get(current_certificate,
+                     ias_certificate_role:device_status(Device),
+                     not_found)
+    end,
     CurrentCertificateId = certificate_id(CurrentCertificate),
     CertificatePolicyId = certificate_security_policy_id(CurrentCertificate),
     VerificationStatus = certificate_verification_status(CurrentCertificate),
     RevocationStatus = certificate_revocation_status(CurrentCertificate),
     PolicyConsistency = policy_consistency(DeviceId, CurrentCertificateId),
-    Missing = missing_requirements(VpnServiceId, DevicePolicyId, CurrentCertificate,
+    Missing0 = missing_requirements(VpnServiceId, DevicePolicyId, CurrentCertificate,
                                    CertificatePolicyId, VerificationStatus, RevocationStatus,
                                    PolicyConsistency),
+    Missing = add_conflict_requirements(Conflicts, Missing0),
     Status = readiness_status(Missing),
     #{device_id => DeviceId,
       kind => device,
@@ -246,8 +260,21 @@ device_readiness(Device) ->
       certificate_verification => VerificationStatus,
       certificate_revocation => RevocationStatus,
       policy_match => maps:get(match, PolicyConsistency, false),
+      operational_conflicts => Conflicts,
       missing => Missing,
       suggested_actions => suggested_actions(Missing)}.
+
+devices_with_multiple_certificates() ->
+    maps:get(devices_with_multiple_certificates,
+             ias_relationship_constraints:operational_conflicts(), []).
+
+devices_with_multiple_vpn_services() ->
+    maps:get(devices_with_multiple_vpn_services,
+             ias_relationship_constraints:operational_conflicts(), []).
+
+vpn_services_with_multiple_ca_certificates() ->
+    maps:get(vpn_services_with_multiple_ca_certificates,
+             ias_relationship_constraints:operational_conflicts(), []).
 
 device_certificate_links() ->
     [{maps:get(source_id, Relationship, undefined),
@@ -416,7 +443,18 @@ suggested_action_specs() ->
      {<<"Verified Certificate">>, <<"Verify Current Certificate">>},
      {<<"Current Certificate Revoked">>, <<"Replace Certificate">>},
      {<<"Current Certificate Revoked">>, <<"Link New Certificate">>},
-     {<<"Policy Match">>, <<"Resolve Security Policy mismatch">>}].
+     {<<"Policy Match">>, <<"Resolve Security Policy mismatch">>},
+     {<<"Ambiguous Current Certificate">>, <<"Unlink extra Certificate">>},
+     {<<"Ambiguous VPN Service">>, <<"Unlink extra VPN Service">>}].
+
+has_conflict(Key, Conflicts) ->
+    lists:any(fun(Conflict) -> maps:is_key(Key, Conflict) end, Conflicts).
+
+add_conflict_requirements(Conflicts, Missing) ->
+    Missing1 = missing_if(has_conflict(certificate_ids, Conflicts),
+                          <<"Ambiguous Current Certificate">>, Missing),
+    missing_if(has_conflict(vpn_service_ids, Conflicts),
+               <<"Ambiguous VPN Service">>, Missing1).
 
 has_vpn_service(Device) ->
     DeviceId = maps:get(id, Device, undefined),
