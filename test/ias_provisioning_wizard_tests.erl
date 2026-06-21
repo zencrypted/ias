@@ -83,5 +83,13 @@ ovpn_import_scheme_links_existing_route_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Import Existing OVPN">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"/app/ovpn.htm">>)).
 
+bootstrap_page_is_packaged_test() ->
+    Path = filename:join(["priv", "static", "provisioning-wizard.htm"]),
+    ?assert(filelib:is_regular(Path)),
+    {ok, Html} = file:read_file(Path),
+    ?assertMatch({_, _}, binary:match(Html, <<"<title>Provisioning Wizard</title>">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"id=\"stand\"">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"N2O_start()">>)).
+
 render(Doc) ->
     iolist_to_binary(nitro:render(Doc)).
