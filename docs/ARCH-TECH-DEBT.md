@@ -410,3 +410,105 @@ The production UI should reserve terms such as `Generate`, `Deliver`, and `Downl
 ### Priority
 
 Medium
+
+---
+
+## TD-009: Demo CA Role Is Operator-Asserted
+
+**Status:** Open
+
+**Area:** Certificate Registration / X.509 Validation
+
+### Problem
+
+Manual Demo CA Certificate registration validates that the submitted material contains exactly one public X.509 certificate PEM block, but it does not yet verify that the decoded certificate is actually permitted to act as a certification authority.
+
+The runtime metadata currently trusts the operator-selected role:
+
+```text
+certificate_role: ca_certificate
+material_type: ca_certificate
+```
+
+A syntactically valid leaf certificate can therefore be registered as a demo CA certificate even when its X.509 extensions do not contain an affirmative CA constraint.
+
+### Current Impact
+
+Medium.
+
+Relationship constraints prevent explicitly classified client certificates from being linked as VPN service CA certificates. However, manual CA registration can still introduce incorrectly classified trust material because the role is asserted by the operator rather than derived from the certificate.
+
+This is acceptable for the current demo workflow, but it must not be treated as production-grade trust-anchor validation.
+
+### Desired Direction
+
+Decode the certificate and validate its X.509 extensions before accepting the CA role.
+
+At minimum:
+
+- require `basicConstraints` with `CA = TRUE`;
+- reject certificates with `CA = FALSE` or without an acceptable CA constraint under the selected policy;
+- validate `keyUsage` when present, including `keyCertSign`;
+- preserve a clear distinction between PEM syntax validation and CA-role validation;
+- return an actionable UI error without creating an orphan metadata object or material entry.
+
+If policy-specific exceptions are ever supported, they must be explicit and auditable rather than inferred from names or subjects.
+
+### Priority
+
+High before production use
+
+---
+
+## TD-010: Provisioning Status Is Not Derived From Current Readiness
+
+**Status:** Open
+
+**Area:** OVPN Provisioning Transaction
+
+### Problem
+
+OVPN provisioning transactions refresh their material and assembly readiness when rendered, but the top-level transaction `status` remains the value captured when the transaction was created.
+
+For example, a transaction may display:
+
+```text
+Status: awaiting_material
+Material: public_material_available
+Assembly: ready_for_device_assembly
+```
+
+The detailed readiness fields are correct, but the aggregate status is stale and contradicts them.
+
+### Current Impact
+
+Medium.
+
+The current UI and provisioning logic use the detailed material and assembly states, so the workflow is not blocked. However, operators and future API consumers can misinterpret the transaction state when relying on the top-level `status` field.
+
+The stale value is also exported as transaction metadata in Demo State, which preserves historical creation state rather than current derived readiness.
+
+### Desired Direction
+
+Define a single state-transition function that derives the aggregate provisioning status from current authorization, expiration, material readiness, assembly readiness, delivery state, and download state.
+
+Example progression:
+
+```text
+awaiting_material
+-> ready_for_device_assembly
+-> ready_for_delivery
+-> delivered
+```
+
+The implementation should:
+
+- avoid maintaining contradictory status fields independently;
+- clearly separate immutable transaction history from current derived state;
+- define how expired, denied, conflicted, and downloaded transactions override normal readiness;
+- use the same derived semantics in detail pages, lists, exports, tests, and future APIs;
+- preserve backward compatibility for previously exported Demo State where practical.
+
+### Priority
+
+Medium
