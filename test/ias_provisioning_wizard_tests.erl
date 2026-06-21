@@ -1,5 +1,6 @@
 -module(ias_provisioning_wizard_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("n2o/include/n2o.hrl").
 
 draft_creation_test() ->
     ias_provisioning_wizard_store:clear(),
@@ -283,6 +284,20 @@ bootstrap_page_is_packaged_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"<title>Provisioning Wizard</title>">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"id=\"stand\"">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"N2O_start()">>)).
+
+certificate_enrollment_alias_bootstrap_page_is_packaged_test() ->
+    Path = filename:join(["priv", "static", "certificate-enrollment.htm"]),
+    ?assert(filelib:is_regular(Path)),
+    {ok, Html} = file:read_file(Path),
+    ?assertMatch({_, _}, binary:match(Html, <<"<title>Certificate Enrollment Preview</title>">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"id=\"stand\"">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"N2O_start()">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"http-equiv=\"refresh\"">>)).
+
+certificate_enrollment_alias_resolves_to_enrollment_page_test() ->
+    Ctx = #cx{req = #{path => <<"/app/certificate-enrollment.htm">>}},
+    {ok, state, Routed} = ias_route:init(state, Ctx),
+    ?assertEqual(ias_enroll, Routed#cx.module).
 
 start_page_lists_existing_drafts_test() ->
     ias_provisioning_wizard_store:clear(),
