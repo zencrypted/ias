@@ -1007,7 +1007,8 @@ portable_export_preview(Preview, Provisioning) ->
 
 ovpn_export_card(Preview, SubjectKind, SubjectId) ->
     #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("OVPN EXPORT PREVIEW")},
+        #h3{body = ias_html:text("DIRECT OVPN EXPORT PREVIEW")},
+        direct_ovpn_export_intro(SubjectKind),
         key_value_table([
             {"OVPN Provisioning", maps:get(authorization, Preview, deny)},
             {"Provisioning Status", ovpn_provisioning_status(Preview)},
@@ -1026,6 +1027,13 @@ ovpn_export_card(Preview, SubjectKind, SubjectId) ->
         ovpn_configuration_section(Preview, SubjectKind, SubjectId),
         #panel{id = ovpn_export_result_id(SubjectKind, SubjectId)}
     ]}.
+
+direct_ovpn_export_intro(certificate) ->
+    #p{body = ias_html:text("Checks direct portable OVPN export from this certificate. Device-bound profiles must use Device-bound Provisioning instead.")};
+direct_ovpn_export_intro(device) ->
+    #p{body = ias_html:text("Checks direct OVPN export for this device. Device-bound provisioning readiness is shown separately above.")};
+direct_ovpn_export_intro(_SubjectKind) ->
+    #p{body = ias_html:text("Checks whether a direct OVPN export preview is available.")}.
 
 ovpn_service_export_card(Preview) ->
     #panel{class = <<"ias-status-card">>, body = [
@@ -1151,15 +1159,31 @@ ovpn_configuration_section(#{authorization := allow} = Preview, SubjectKind, Sub
             ovpn_provisioning_action(SubjectKind, SubjectId)
         ]}
     ]};
-ovpn_configuration_section(Preview, _SubjectKind, _SubjectId) ->
+ovpn_configuration_section(Preview, SubjectKind, SubjectId) ->
     #panel{body = [
-        #h3{body = ias_html:text("Profile Generation Blocked")},
+        #h3{body = ias_html:text("Direct Export Blocked")},
         #p{style = <<"color:#b45309;font-weight:600;">>,
-           body = ias_html:text("OVPN profile would not be provisioned because OVPN provisioning is denied.")},
+           body = ias_html:text("A direct OVPN profile cannot be exported for this subject under the current policy.")},
         key_value_table([
             {"Blocking Reason", ovpn_authorization_reason(Preview)}
-        ])
+        ]),
+        direct_export_guidance(Preview, SubjectKind, SubjectId)
     ]}.
+
+direct_export_guidance(Preview, certificate, _SubjectId) ->
+    case ovpn_authorization_reason(Preview) of
+        <<"device-bound security profile requires device-bound provisioning">> ->
+            #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(59,130,246,0.25);border-radius:6px;background:#eff6ff;">>,
+                   body = [
+                       #h3{body = ias_html:text("Use Device-bound Provisioning")},
+                       #p{body = ias_html:text("This certificate uses a device-locked security profile. Direct portable export is intentionally denied because the private key must remain owned by the linked device.")},
+                       #p{body = ias_html:text("Open the linked Device and use Create Device-bound Provisioning. The resulting transaction records CA and client certificate readiness while keeping the private key on the device.")}
+                   ]};
+        _ ->
+            []
+    end;
+direct_export_guidance(_Preview, _SubjectKind, _SubjectId) ->
+    [].
 
 ovpn_provisioning_action(certificate, SubjectId) ->
     #link{class = [button, sgreen],

@@ -103,9 +103,9 @@ demo_pages_render_ovpn_export_preview_test() ->
     CertificateHtml = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Certificate))),
 
     ?assertMatch({_, _}, binary:match(DeviceHtml, <<"DEVICE OVPN PROVISIONING">>)),
-    ?assertMatch({_, _}, binary:match(DeviceHtml, <<"OVPN EXPORT PREVIEW">>)),
+    ?assertMatch({_, _}, binary:match(DeviceHtml, <<"DIRECT OVPN EXPORT PREVIEW">>)),
     ?assertMatch({_, _}, binary:match(DeviceHtml, <<"remote vpn.example.com 1194">>)),
-    ?assertMatch({_, _}, binary:match(CertificateHtml, <<"OVPN EXPORT PREVIEW">>)),
+    ?assertMatch({_, _}, binary:match(CertificateHtml, <<"DIRECT OVPN EXPORT PREVIEW">>)),
     ?assertMatch({_, _}, binary:match(CertificateHtml, <<"# not exported by IAS">>)),
     ?assertMatch({_, _}, binary:match(CertificateHtml, <<"Download OVPN Skeleton">>)),
     ?assertMatch({_, _}, binary:match(CertificateHtml, <<"Create Portable Provisioning">>)),
@@ -119,8 +119,8 @@ denied_ovpn_export_preview_renders_warning_test() ->
     Html = iolist_to_binary(nitro:render(ias_demo:ovpn_export_preview(Device))),
 
     ?assertMatch({_, _}, binary:match(Html,
-        <<"OVPN profile would not be provisioned because OVPN provisioning is denied.">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Profile Generation Blocked">>)),
+        <<"A direct OVPN profile cannot be exported for this subject under the current policy.">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Direct Export Blocked">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"remote vpn.example.com 1194">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Download OVPN Skeleton">>)).
 
@@ -247,6 +247,9 @@ portable_ovpn_provisioning_rejects_device_bound_profile_test() ->
     ?assertEqual(Reason, ArtifactReason),
     ?assertMatch({_, _}, binary:match(Html,
         <<"device-bound security profile requires device-bound provisioning">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Use Device-bound Provisioning">>)),
+    ?assertMatch({_, _}, binary:match(Html,
+        <<"Open the linked Device and use Create Device-bound Provisioning">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Create Portable Provisioning">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Download OVPN Skeleton">>)),
     ?assertEqual([], [Object || Object <- ias_demo_store:runtime_objects(),
