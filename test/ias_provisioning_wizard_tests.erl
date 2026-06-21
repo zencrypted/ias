@@ -54,6 +54,30 @@ existing_device_can_be_selected_test() ->
     ?assertEqual(maps:get(id, Device), maps:get(device_id, Selected)),
     ?assertMatch({ok, _}, ias_provisioning_wizard_store:selected_device(Selected)).
 
+selecting_valid_existing_device_advances_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_auto_device">>),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Advanced} = ias_provisioning_wizard_store:select_existing_device(
+        maps:get(id, Draft), maps:get(id, Device)),
+    ?assertEqual(maps:get(id, Device), maps:get(device_id, Advanced)),
+    ?assertEqual(security_profile, maps:get(current_step, Advanced)).
+
+newly_created_device_selection_does_not_auto_advance_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Device} = ias_manual_device:create(#{name => <<"Wizard Created Laptop">>,
+                                               type => <<"vpn-client">>,
+                                               tunnel_device => <<"tun">>,
+                                               transport => <<"udp">>,
+                                               endpoint => <<"vpn.example.com">>}),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Selected} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft), maps:get(id, Device)),
+    ?assertEqual(maps:get(id, Device), maps:get(device_id, Selected)),
+    ?assertEqual(device, maps:get(current_step, Selected)).
+
 created_device_can_be_selected_test() ->
     ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
@@ -470,6 +494,33 @@ ca_certificate_step_renders_selection_and_registration_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Register New Demo CA Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Register and Select CA Certificate">>)).
 
+selecting_valid_existing_ca_certificate_advances_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Certificate} = ias_demo_ca_certificate:register(valid_ca_fields()),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+    {ok, Advanced} = ias_provisioning_wizard_store:select_existing_ca_certificate(
+        maps:get(id, Step), maps:get(id, Certificate)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(ca_certificate_id, Advanced)),
+    ?assertEqual(client_certificate, maps:get(current_step, Advanced)).
+
+ca_certificate_missing_pem_does_not_auto_advance_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Certificate = ias_demo_store:put_runtime_object(
+        #{id => <<"wizard_auto_ca_missing_pem">>, kind => certificate,
+          source => ca_certificate, material_type => ca_certificate,
+          certificate_role => ca_certificate}),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_existing_ca_certificate(
+        maps:get(id, Step), maps:get(id, Certificate)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(ca_certificate_id, Selected)),
+    ?assertEqual(ca_certificate, maps:get(current_step, Selected)).
+
 ca_certificate_next_is_disabled_without_material_test() ->
     ias_demo_state:clear(),
     ias_provisioning_wizard_store:clear(),
@@ -640,6 +691,21 @@ client_certificate_cmp_material_renders_recommended_badges_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Recommended">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Issued by CA">>)).
 
+selecting_valid_existing_cmp_client_certificate_auto_commits_relationships_test() ->
+    Draft = auto_client_certificate_draft(),
+    ClientId = maps:get(client_certificate_id, Draft),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft), #{current_step => client_certificate,
+                               client_certificate_id => undefined,
+                               relationships_applied => false}),
+    {ok, Advanced} = ias_provisioning_wizard_store:select_existing_client_certificate(
+        maps:get(id, Step), ClientId),
+
+    ?assertEqual(ClientId, maps:get(client_certificate_id, Advanced)),
+    ?assertEqual(material_readiness, maps:get(current_step, Advanced)),
+    ?assertEqual(true, maps:get(relationships_applied, Advanced)),
+    ?assertEqual(true, ias_provisioning_wizard_store:relationships_ready(Advanced)).
+
 client_certificate_step_displays_pem_helper_text_test() ->
     ias_demo_state:clear(),
     ias_provisioning_wizard_store:clear(),
@@ -659,3 +725,30 @@ client_certificate_step_displays_pem_helper_text_test() ->
 valid_ca_fields() ->
     Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
     #{name => <<"Wizard Demo CA">>, subject => <<"CN=Wizard Demo CA">>, pem => Pem}.
+
+auto_client_certificate_draft() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_auto_client_device">>),
+    Service = demo_vpn_service(<<"wizard_auto_client_service">>),
+    {ok, CaCertificate} = ias_demo_ca_certificate:register(valid_ca_fields()),
+    ClientCertificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_auto_cmp_client">>, source => cmp_demo_enrollment,
+          certificate_role => client_certificate, certificate_status => trusted,
+          profile_id => administrator, profile => administrator,
+          subject_cn => <<"auto-cmp-client">>, private_key_stored => false,
+          certificate_body_stored => false}),
+    Pem = public_key:pem_encode([{'Certificate', <<5,6,7,8>>, not_encrypted}]),
+    {ok, _} = ias_certificate_material:put(maps:get(id, ClientCertificate),
+                                           client_certificate, Pem, cmp_response),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0),
+        #{current_step => client_certificate,
+          device_id => maps:get(id, Device),
+          security_profile_id => administrator,
+          vpn_service_id => maps:get(id, Service),
+          ca_certificate_id => maps:get(id, CaCertificate),
+          client_certificate_id => maps:get(id, ClientCertificate),
+          relationships_applied => false}),
+    Draft.

@@ -10,15 +10,20 @@
          next/1,
          back/1,
          select_device/2,
+         select_existing_device/2,
          selected_device/1,
          select_security_profile/2,
+         select_existing_security_profile/2,
          selected_security_profile/1,
          security_profile_compatibility/1,
          select_vpn_service/2,
+         select_existing_vpn_service/2,
          selected_vpn_service/1,
          select_ca_certificate/2,
+         select_existing_ca_certificate/2,
          selected_ca_certificate/1,
          select_client_certificate/2,
+         select_existing_client_certificate/2,
          selected_client_certificate/1,
          relationship_review/1,
          apply_relationships/1,
@@ -147,6 +152,9 @@ select_device(Id, DeviceId) ->
             {error, Reason}
     end.
 
+select_existing_device(Id, DeviceId) ->
+    auto_advance_after_selection(Id, device, select_device(Id, DeviceId)).
+
 selected_device(Draft) when is_map(Draft) ->
     case maps:get(device_id, Draft, undefined) of
         undefined -> not_selected;
@@ -160,6 +168,25 @@ select_security_profile(Id, ProfileId) ->
                 {blocked, Reason} -> {error, Reason};
                 _ -> update(Id, reset_completion(#{security_profile_id => maps:get(id, Profile),
                                            relationships_applied => false}))
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+select_existing_security_profile(Id, ProfileId) ->
+    case valid_security_profile(ProfileId) of
+        {ok, Profile} ->
+            case security_profile_compatibility(Profile) of
+                compatible ->
+                    auto_advance_after_selection(
+                        Id, security_profile, select_security_profile(Id, ProfileId));
+                {warning, Reason} ->
+                    case select_security_profile(Id, ProfileId) of
+                        {ok, Draft} -> {ok, Draft};
+                        {error, _} -> {error, Reason}
+                    end;
+                {blocked, Reason} ->
+                    {error, Reason}
             end;
         {error, Reason} ->
             {error, Reason}
@@ -185,6 +212,9 @@ select_vpn_service(Id, ServiceId) ->
         {error, Reason} -> {error, Reason}
     end.
 
+select_existing_vpn_service(Id, ServiceId) ->
+    auto_advance_after_selection(Id, vpn_service, select_vpn_service(Id, ServiceId)).
+
 selected_vpn_service(Draft) when is_map(Draft) ->
     case maps:get(vpn_service_id, Draft, undefined) of
         undefined -> not_selected;
@@ -196,6 +226,17 @@ select_ca_certificate(Id, CertificateId) ->
         {ok, Certificate} -> update(Id, reset_completion(#{ca_certificate_id => maps:get(id, Certificate),
                                            relationships_applied => false}));
         {error, Reason} -> {error, Reason}
+    end.
+
+select_existing_ca_certificate(Id, CertificateId) ->
+    case select_ca_certificate(Id, CertificateId) of
+        {ok, Draft} ->
+            case movement_allowed(next_step, ca_certificate, Draft) of
+                ok -> auto_advance_after_selection(Id, ca_certificate, {ok, Draft});
+                {error, _Reason} -> {ok, Draft}
+            end;
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 selected_ca_certificate(Draft) when is_map(Draft) ->
@@ -218,6 +259,17 @@ select_client_certificate(Id, CertificateId) ->
             end;
         not_found ->
             {error, not_found}
+    end.
+
+select_existing_client_certificate(Id, CertificateId) ->
+    case select_client_certificate(Id, CertificateId) of
+        {ok, Draft} ->
+            case movement_allowed(next_step, client_certificate, Draft) of
+                ok -> commit_relationships_or_review(Id, Draft);
+                {error, _Reason} -> {ok, Draft}
+            end;
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 selected_client_certificate(Draft) when is_map(Draft) ->
@@ -418,6 +470,13 @@ move(Id, Direction) ->
         not_found ->
             {error, not_found}
     end.
+
+auto_advance_after_selection(Id, ExpectedStep, {ok, #{current_step := ExpectedStep}}) ->
+    move(Id, next_step);
+auto_advance_after_selection(_Id, _ExpectedStep, {ok, Draft}) ->
+    {ok, Draft};
+auto_advance_after_selection(_Id, _ExpectedStep, {error, Reason}) ->
+    {error, Reason}.
 
 advance_from_client_certificate(Id, Draft) ->
     case movement_allowed(next_step, client_certificate, Draft) of

@@ -18,15 +18,15 @@ event({wizard_next, WizardId}) ->
         {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
     end;
 event({wizard_select_device, WizardId, DeviceId}) ->
-    redirect_after(ias_provisioning_wizard_store:select_device(WizardId, DeviceId));
+    redirect_after(ias_provisioning_wizard_store:select_existing_device(WizardId, DeviceId));
 event({wizard_select_security_profile, WizardId, ProfileId}) ->
-    redirect_after(ias_provisioning_wizard_store:select_security_profile(WizardId, ProfileId));
+    redirect_after(ias_provisioning_wizard_store:select_existing_security_profile(WizardId, ProfileId));
 event({wizard_select_vpn_service, WizardId, ServiceId}) ->
-    redirect_after(ias_provisioning_wizard_store:select_vpn_service(WizardId, ServiceId));
+    redirect_after(ias_provisioning_wizard_store:select_existing_vpn_service(WizardId, ServiceId));
 event({wizard_select_ca_certificate, WizardId, CertificateId}) ->
-    redirect_after(ias_provisioning_wizard_store:select_ca_certificate(WizardId, CertificateId));
+    redirect_after(ias_provisioning_wizard_store:select_existing_ca_certificate(WizardId, CertificateId));
 event({wizard_select_client_certificate, WizardId, CertificateId}) ->
-    redirect_after(ias_provisioning_wizard_store:select_client_certificate(WizardId, CertificateId));
+    redirect_after(ias_provisioning_wizard_store:select_existing_client_certificate(WizardId, CertificateId));
 event({wizard_apply_relationships, WizardId}) ->
     case ias_provisioning_wizard_store:apply_relationships(WizardId) of
         {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
