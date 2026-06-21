@@ -296,7 +296,7 @@ certificate_material_status(not_found) ->
     key_value_table([{"Status", missing_body}]).
 
 certificate_material_delete_button(CertificateId, {ok, _}) ->
-    #link{class = [button], body = ias_html:text("Delete Public PEM"),
+    #link{class = [button, more], body = ias_html:text("Delete Public PEM"),
           postback = {delete_certificate_material, CertificateId}};
 certificate_material_delete_button(_CertificateId, not_found) ->
     #span{body = <<>>}.
