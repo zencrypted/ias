@@ -165,9 +165,20 @@ require_current_validity(Decoded) ->
     end.
 
 metadata(Role, Mode, Decoded) ->
+    #'OTPCertificate'{tbsCertificate = Tbs} = maps:get(cert, Decoded),
+    #'OTPTBSCertificate'{serialNumber = Serial,
+                         issuer = Issuer,
+                         subject = Subject,
+                         validity = #'Validity'{notBefore = NotBefore,
+                                                notAfter = NotAfter}} = Tbs,
     #{role => Role,
       validation_mode => Mode,
       fingerprint_sha256 => maps:get(fingerprint_sha256, Decoded),
+      subject => certificate_name(Subject),
+      issuer => certificate_name(Issuer),
+      serial => integer_to_binary(Serial),
+      not_before => certificate_time(NotBefore),
+      not_after => certificate_time(NotAfter),
       der => maps:get(der, Decoded)}.
 
 basic_constraints(Decoded) ->
@@ -310,6 +321,44 @@ cert_time({utcTime, Value}) ->
     parse_utc_time(ias_html:text(Value));
 cert_time({generalTime, Value}) ->
     parse_general_time(ias_html:text(Value)).
+
+certificate_time({utcTime, Value}) ->
+    ias_html:text(Value);
+certificate_time({generalTime, Value}) ->
+    ias_html:text(Value);
+certificate_time(Value) ->
+    ias_html:text(io_lib:format("~p", [Value])).
+
+certificate_name({rdnSequence, Rdns}) ->
+    case common_name(Rdns) of
+        undefined -> ias_html:text(io_lib:format("~p", [{rdnSequence, Rdns}]));
+        Cn -> ias_html:join([<<"CN=">>, Cn])
+    end;
+certificate_name(Name) ->
+    ias_html:text(io_lib:format("~p", [Name])).
+
+common_name(Rdns) ->
+    Values = [Value || Rdn <- Rdns,
+                       Attribute <- Rdn,
+                       Value <- [common_name_value(Attribute)],
+                       Value =/= undefined],
+    case Values of
+        [Value | _] -> Value;
+        [] -> undefined
+    end.
+
+common_name_value(#'AttributeTypeAndValue'{type = ?'id-at-commonName',
+                                           value = Value}) ->
+    directory_string(Value);
+common_name_value(_) ->
+    undefined.
+
+directory_string({utf8String, Value}) -> ias_html:text(Value);
+directory_string({printableString, Value}) -> ias_html:text(Value);
+directory_string({teletexString, Value}) -> ias_html:text(Value);
+directory_string({bmpString, Value}) -> ias_html:text(Value);
+directory_string({universalString, Value}) -> ias_html:text(Value);
+directory_string(Value) -> ias_html:text(io_lib:format("~p", [Value])).
 
 parse_utc_time(<<Y1:2/binary, M:2/binary, D:2/binary,
                  H:2/binary, Min:2/binary, S:2/binary, "Z">>) ->

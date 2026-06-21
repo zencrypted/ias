@@ -534,7 +534,8 @@ ca_certificate_step_renders_selection_and_registration_test() ->
         maps:get(id, Draft0), #{current_step => ca_certificate}),
     Html = render(ias_provisioning_wizard:content_for({draft, Step})),
     ?assertMatch({_, _}, binary:match(Html, <<"Use Existing CA Trust Anchor">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Register New Demo CA Trust Anchor">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Load Configured CA Trust Anchor">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Manual / Demo Override">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Register and Select CA Trust Anchor">>)).
 
 ca_trust_anchor_step_renders_development_guidance_test() ->

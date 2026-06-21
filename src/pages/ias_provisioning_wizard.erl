@@ -85,6 +85,15 @@ event({wizard_register_ca_certificate, WizardId}) ->
         {error, Reason} ->
             nitro:update(wizard_feedback, wizard_error(Reason))
     end;
+event({wizard_load_configured_ca_trust_anchor, WizardId}) ->
+    case ias_configured_ca_trust_anchor:load() of
+        {ok, Certificate} ->
+            redirect_after(ias_provisioning_wizard_store:select_existing_ca_certificate(
+                WizardId, maps:get(id, Certificate)));
+        {error, Reason} ->
+            nitro:update(wizard_ca_configured_result,
+                         wizard_error_panel(configured_ca_error_text(Reason)))
+    end;
 event({wizard_create_vpn_service, WizardId}) ->
     Fields = #{name => nitro:q(wizard_vpn_service_name),
                endpoint => nitro:q(wizard_vpn_service_endpoint),
@@ -1079,6 +1088,7 @@ client_binding_label({other_device, DeviceId}) -> ias_html:join([<<"other Device
 ca_certificate_step(Draft) ->
     #panel{body = [
         ca_trust_anchor_guidance_panel(),
+        configured_ca_trust_anchor_panel(maps:get(id, Draft)),
         selected_ca_certificate_panel(Draft),
         existing_ca_certificates_panel(Draft),
         register_ca_certificate_panel(maps:get(id, Draft))
@@ -1099,6 +1109,33 @@ ca_trust_anchor_guidance_panel() ->
                       body = ias_html:text("Upload the public CA certificate only. Never upload ca.key or a client .cer certificate. This path is a SYNRC development-layout hint, not a universal production path.")}
                ]}
     ]}.
+
+configured_ca_trust_anchor_panel(WizardId) ->
+    Status = ias_configured_ca_trust_anchor:status(),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Load Configured CA Trust Anchor")},
+        #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
+           body = ias_html:text("The configured trust anchor is read server-side from IAS application configuration. The resolved filesystem path and PEM body are not displayed or exported.")},
+        key_value_table([
+            {"Configuration", configured_ca_status_label(Status)},
+            {"Configured File", maps:get(display_path, Status, <<"not configured">>)}
+        ]),
+        configured_ca_action(Status, WizardId),
+        #panel{id = wizard_ca_configured_result}
+    ]}.
+
+configured_ca_status_label(#{configured := true}) -> <<"configured">>;
+configured_ca_status_label(_) -> <<"not configured">>.
+
+configured_ca_action(#{configured := true}, WizardId) ->
+    #panel{style = <<"margin-top:12px;">>, body = [
+        #link{class = [button, sgreen],
+              body = ias_html:text("Load Configured CA Trust Anchor"),
+              postback = {wizard_load_configured_ca_trust_anchor, WizardId}}
+    ]};
+configured_ca_action(_, _WizardId) ->
+    #p{style = <<"margin-top:12px;color:#64748b;font-size:12px;">>,
+       body = ias_html:text("No configured CA trust anchor is available in sys.config.")}.
 
 selected_ca_certificate_panel(Draft) ->
     case ias_provisioning_wizard_store:selected_ca_certificate(Draft) of
@@ -1169,7 +1206,7 @@ ca_certificate_select_action(false, _Material, WizardId, CertificateId) ->
 
 register_ca_certificate_panel(WizardId) ->
     #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("Register New Demo CA Trust Anchor")},
+        #h3{body = ias_html:text("Manual / Demo Override")},
         wizard_input_row("Name", wizard_ca_certificate_name, <<>>),
         wizard_input_row("Subject", wizard_ca_certificate_subject, <<"CN=Demo CA">>),
         #panel{style = <<"margin:8px 0;">>, body = [
@@ -1218,6 +1255,29 @@ ca_material_notice({ok, #{material_type := ca_certificate}}) ->
     wizard_notice("CA trust anchor material available", "The public CA certificate PEM is ready for the generated OVPN <ca> block.");
 ca_material_notice(_) ->
     wizard_error_panel("Public CA trust anchor PEM is unavailable. Load material on the certificate detail page or register a new CA trust anchor below.").
+
+configured_ca_error_text(not_configured) ->
+    <<"Configured CA trust anchor is not configured.">>;
+configured_ca_error_text(file_not_found) ->
+    <<"Configured CA trust anchor file was not found.">>;
+configured_ca_error_text(permission_denied) ->
+    <<"Configured CA trust anchor file is not readable.">>;
+configured_ca_error_text(invalid_pem) ->
+    <<"Configured CA trust anchor is not a valid certificate PEM.">>;
+configured_ca_error_text(private_key_supplied) ->
+    <<"Configured CA trust anchor points to private key material. Upload the public CA certificate only.">>;
+configured_ca_error_text(certificate_is_not_ca) ->
+    <<"Configured certificate is not a CA trust anchor.">>;
+configured_ca_error_text(certificate_expired) ->
+    <<"Configured CA trust anchor certificate is expired.">>;
+configured_ca_error_text({read_failed, Reason}) ->
+    ias_html:join([<<"Configured CA trust anchor could not be read: ">>,
+                   ias_html:text(Reason)]);
+configured_ca_error_text({material_store_failed, Reason}) ->
+    ias_html:join([<<"Configured CA trust anchor material could not be stored: ">>,
+                   ias_html:text(Reason)]);
+configured_ca_error_text(Reason) ->
+    ias_html:text(Reason).
 
 certificate_link(undefined) -> undefined;
 certificate_link(CertificateId) ->
