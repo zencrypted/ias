@@ -18,6 +18,20 @@ event({wizard_select_device, WizardId, DeviceId}) ->
     redirect_after(ias_provisioning_wizard_store:select_device(WizardId, DeviceId));
 event({wizard_select_security_profile, WizardId, ProfileId}) ->
     redirect_after(ias_provisioning_wizard_store:select_security_profile(WizardId, ProfileId));
+event({wizard_select_vpn_service, WizardId, ServiceId}) ->
+    redirect_after(ias_provisioning_wizard_store:select_vpn_service(WizardId, ServiceId));
+event({wizard_create_vpn_service, WizardId}) ->
+    Fields = #{name => nitro:q(wizard_vpn_service_name),
+               endpoint => nitro:q(wizard_vpn_service_endpoint),
+               port => nitro:q(wizard_vpn_service_port),
+               protocol => nitro:q(wizard_vpn_service_protocol)},
+    case ias_manual_vpn_service:create(Fields) of
+        {ok, Service} ->
+            redirect_after(ias_provisioning_wizard_store:select_vpn_service(
+                WizardId, maps:get(id, Service)));
+        {error, Reason} ->
+            nitro:update(wizard_feedback, wizard_error(Reason))
+    end;
 event({wizard_create_device, WizardId}) ->
     Fields = #{name => nitro:q(wizard_device_name),
                type => nitro:q(wizard_device_type),
@@ -60,7 +74,7 @@ content_for({draft, Draft}) ->
     CurrentStep = maps:get(current_step, Draft, scheme),
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24C can select a Device and Security Profile; later objects and relationships are not created yet.")},
+        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24D can select or create a Device and VPN Service and select a Security Profile; relationships are not created yet.")},
         draft_summary(Draft),
         progress_panel(CurrentStep),
         step_panel(Draft)
@@ -165,9 +179,128 @@ step_content(device, Draft) ->
     device_step(Draft);
 step_content(security_profile, Draft) ->
     security_profile_step(Draft);
+step_content(vpn_service, Draft) ->
+    vpn_service_step(Draft);
 step_content(_Step, _Draft) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px dashed rgba(15,23,42,0.2);border-radius:6px;background:#f8fafc;">>,
            body = ias_html:text("Placeholder only. Selection and validation for this step will be implemented in a later stage.")}.
+
+
+vpn_service_step(Draft) ->
+    #panel{body = [
+        selected_vpn_service_panel(Draft),
+        existing_vpn_services_panel(Draft),
+        create_vpn_service_panel(maps:get(id, Draft))
+    ]}.
+
+selected_vpn_service_panel(Draft) ->
+    case ias_provisioning_wizard_store:selected_vpn_service(Draft) of
+        {ok, Service} ->
+            #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+                   body = [
+                       #h3{body = ias_html:text("Selected VPN Service")},
+                       key_value_table([
+                           {"Service", service_link(maps:get(id, Service, undefined))},
+                           {"Name", maps:get(name, Service, maps:get(service, Service, undefined))},
+                           {"Endpoint", service_endpoint(Service)},
+                           {"Port", service_port(Service)},
+                           {"Protocol", maps:get(protocol, Service, undefined)},
+                           {"TLS Auth / TLS Crypt", maps:get(tls_auth, Service, not_configured)}
+                       ])
+                   ]};
+        not_selected ->
+            wizard_notice("No VPN Service selected", "Select an existing VPN Service or create a new demo VPN Service before continuing.");
+        {error, selected_vpn_service_missing} ->
+            wizard_error_panel("The VPN Service stored in this wizard draft no longer exists. Select another service.");
+        {error, _Reason} ->
+            wizard_error_panel("The selected VPN Service is invalid.")
+    end.
+
+existing_vpn_services_panel(Draft) ->
+    Services = ias_demo_store:services(),
+    WizardId = maps:get(id, Draft),
+    SelectedId = maps:get(vpn_service_id, Draft, undefined),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Use Existing VPN Service")},
+        existing_vpn_services(Services, WizardId, SelectedId)
+    ]}.
+
+existing_vpn_services([], _WizardId, _SelectedId) ->
+    #p{body = ias_html:text("No runtime VPN Services exist yet. Create one below.")};
+existing_vpn_services(Services, WizardId, SelectedId) ->
+    #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;">>,
+           body = [vpn_service_choice(Service, WizardId, SelectedId) || Service <- Services]}.
+
+vpn_service_choice(Service, WizardId, SelectedId) ->
+    ServiceId = maps:get(id, Service, undefined),
+    IsSelected = ias_html:text(ServiceId) =:= ias_html:text(SelectedId),
+    #panel{style = device_choice_style(IsSelected), body = [
+        #h3{style = <<"margin:0 0 6px;font-size:14px;">>,
+            body = ias_html:text(maps:get(name, Service, maps:get(service, Service, ServiceId)))},
+        #p{style = <<"margin:0 0 8px;font-size:12px;color:#64748b;">>,
+           body = service_remote_label(Service)},
+        vpn_service_select_action(IsSelected, WizardId, ServiceId)
+    ]}.
+
+vpn_service_select_action(true, _WizardId, _ServiceId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Selected")};
+vpn_service_select_action(false, WizardId, ServiceId) ->
+    #link{class = [button, sgreen], body = ias_html:text("Select"),
+          postback = {wizard_select_vpn_service, WizardId, ServiceId}}.
+
+create_vpn_service_panel(WizardId) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Create New Demo VPN Service")},
+        wizard_input_row("Service Name", wizard_vpn_service_name, <<"OpenVPN">>),
+        wizard_input_row("Endpoint", wizard_vpn_service_endpoint, <<"vpn.example.com">>),
+        wizard_input_row("Port", wizard_vpn_service_port, <<"1194">>),
+        wizard_vpn_protocol_row(),
+        #panel{style = <<"margin-top:12px;">>, body = [
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Create and Select VPN Service"),
+                  source = [wizard_vpn_service_name, wizard_vpn_service_endpoint,
+                            wizard_vpn_service_port, wizard_vpn_service_protocol],
+                  postback = {wizard_create_vpn_service, WizardId}}
+        ]}
+    ]}.
+
+wizard_vpn_protocol_row() ->
+    #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0;">>,
+           body = [
+               #label{for = wizard_vpn_service_protocol,
+                      style = <<"min-width:130px;font-weight:600;color:#334155;">>,
+                      body = ias_html:text("Protocol")},
+               #select{id = wizard_vpn_service_protocol,
+                       style = <<"min-width:260px;max-width:420px;width:100%;">>,
+                       body = [
+                           #option{value = <<"udp">>, selected = true, body = ias_html:text("udp")},
+                           #option{value = <<"tcp">>, body = ias_html:text("tcp")}
+                       ]}
+           ]}.
+
+service_endpoint(Service) ->
+    case maps:get(remote_host, Service, undefined) of
+        undefined -> maps:get(endpoint, Service, maps:get(remote, Service, not_configured));
+        Host -> Host
+    end.
+
+service_port(Service) ->
+    maps:get(remote_port, Service, not_configured).
+
+service_remote_label(Service) ->
+    case maps:get(remote_host, Service, undefined) of
+        undefined ->
+            ias_html:join([ias_html:text(maps:get(remote, Service, not_configured)), <<" / ">>,
+                           ias_html:text(maps:get(protocol, Service, not_configured))]);
+        Host ->
+            ias_html:join([ias_html:text(Host), <<":">>, ias_html:text(service_port(Service)),
+                           <<" / ">>, ias_html:text(maps:get(protocol, Service, not_configured))])
+    end.
+
+service_link(undefined) -> undefined;
+service_link(ServiceId) ->
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(ServiceId)]),
+          body = ias_html:text(ServiceId)}.
 
 
 security_profile_step(Draft) ->
@@ -384,6 +517,10 @@ wizard_error(selected_security_profile_missing) ->
     wizard_error_panel("The selected Security Profile no longer exists. Select another profile.");
 wizard_error(incompatible_security_profile) ->
     wizard_error_panel("The selected Security Profile is incompatible with device-bound provisioning.");
+wizard_error(vpn_service_required) ->
+    wizard_error_panel("Select or create a VPN Service before continuing.");
+wizard_error(selected_vpn_service_missing) ->
+    wizard_error_panel("The selected VPN Service no longer exists. Select another service.");
 wizard_error(Reason) ->
     wizard_error_panel(Reason).
 
@@ -431,6 +568,11 @@ next_action(#{current_step := security_profile} = Draft, WizardId) ->
                 {blocked, _Reason} -> #span{style = disabled_action_style(), body = ias_html:text("Next")};
                 _ -> nav_action("Next", {wizard_next, WizardId})
             end;
+        _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
+    end;
+next_action(#{current_step := vpn_service} = Draft, WizardId) ->
+    case ias_provisioning_wizard_store:selected_vpn_service(Draft) of
+        {ok, _Service} -> nav_action("Next", {wizard_next, WizardId});
         _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
     end;
 next_action(_Draft, WizardId) ->

@@ -12,6 +12,8 @@
          select_security_profile/2,
          selected_security_profile/1,
          security_profile_compatibility/1,
+         select_vpn_service/2,
+         selected_vpn_service/1,
          steps/0,
          step_title/1,
          step_description/1,
@@ -128,6 +130,18 @@ security_profile_compatibility(#{device_lock := disabled}) ->
 security_profile_compatibility(_Profile) ->
     {blocked, incompatible_security_profile}.
 
+select_vpn_service(Id, ServiceId) ->
+    case valid_vpn_service(ServiceId) of
+        {ok, Service} -> update(Id, #{vpn_service_id => maps:get(id, Service)});
+        {error, Reason} -> {error, Reason}
+    end.
+
+selected_vpn_service(Draft) when is_map(Draft) ->
+    case maps:get(vpn_service_id, Draft, undefined) of
+        undefined -> not_selected;
+        ServiceId -> valid_vpn_service(ServiceId)
+    end.
+
 steps() ->
     [scheme,
      device,
@@ -214,6 +228,12 @@ movement_allowed(next_step, security_profile, Draft) ->
         not_selected -> {error, security_profile_required};
         {error, _Reason} -> {error, selected_security_profile_missing}
     end;
+movement_allowed(next_step, vpn_service, Draft) ->
+    case selected_vpn_service(Draft) of
+        {ok, _Service} -> ok;
+        not_selected -> {error, vpn_service_required};
+        {error, _Reason} -> {error, selected_vpn_service_missing}
+    end;
 movement_allowed(_Direction, _Current, _Draft) ->
     ok.
 
@@ -236,6 +256,17 @@ valid_security_profile(ProfileId) ->
     case ias_security_profile:profile(normalize_id(ProfileId)) of
         {ok, Profile} -> {ok, Profile};
         not_found -> {error, selected_security_profile_missing}
+    end.
+
+valid_vpn_service(undefined) ->
+    {error, vpn_service_required};
+valid_vpn_service(<<>>) ->
+    {error, vpn_service_required};
+valid_vpn_service(ServiceId) ->
+    case ias_demo_store:get(normalize_id(ServiceId)) of
+        {ok, #{kind := vpn_service} = Service} -> {ok, Service};
+        {ok, _Other} -> {error, invalid_vpn_service};
+        not_found -> {error, selected_vpn_service_missing}
     end.
 
 adjacent_step(Current, Delta) ->

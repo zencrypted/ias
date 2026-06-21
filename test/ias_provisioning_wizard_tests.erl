@@ -265,3 +265,112 @@ demo_device(Id) ->
 
 render(Doc) ->
     iolist_to_binary(nitro:render(Doc)).
+
+vpn_service_step_requires_selection_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, VpnStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => vpn_service}),
+    ?assertEqual({error, vpn_service_required},
+                 ias_provisioning_wizard_store:next(maps:get(id, VpnStep))).
+
+vpn_service_can_be_selected_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Service = demo_vpn_service(<<"wizard_selected_vpn_service">>),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, VpnStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => vpn_service}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_vpn_service(
+        maps:get(id, VpnStep), maps:get(id, Service)),
+    ?assertEqual(maps:get(id, Service), maps:get(vpn_service_id, Selected)),
+    ?assertMatch({ok, _}, ias_provisioning_wizard_store:selected_vpn_service(Selected)),
+    {ok, CaStep} = ias_provisioning_wizard_store:next(maps:get(id, Selected)),
+    ?assertEqual(ca_certificate, maps:get(current_step, CaStep)).
+
+stale_vpn_service_blocks_next_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Stale} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => vpn_service,
+                               vpn_service_id => <<"missing_vpn_service">>}),
+    ?assertEqual({error, selected_vpn_service_missing},
+                 ias_provisioning_wizard_store:next(maps:get(id, Stale))).
+
+manual_vpn_service_validation_test() ->
+    ias_demo_store:clear(),
+    ?assertEqual({error, <<"Service Name is required">>},
+                 ias_manual_vpn_service:create(#{name => <<>>, endpoint => <<"vpn.example.com">>,
+                                                 port => <<"1194">>, protocol => <<"udp">>})),
+    ?assertEqual({error, <<"Endpoint is required">>},
+                 ias_manual_vpn_service:create(#{name => <<"VPN">>, endpoint => <<>>,
+                                                 port => <<"1194">>, protocol => <<"udp">>})),
+    ?assertEqual({error, <<"Port must be an integer from 1 to 65535">>},
+                 ias_manual_vpn_service:create(#{name => <<"VPN">>, endpoint => <<"vpn.example.com">>,
+                                                 port => <<"70000">>, protocol => <<"udp">>})),
+    ?assertEqual({error, <<"Protocol must be udp or tcp">>},
+                 ias_manual_vpn_service:create(#{name => <<"VPN">>, endpoint => <<"vpn.example.com">>,
+                                                 port => <<"1194">>, protocol => <<"sctp">>})).
+
+manual_vpn_service_creation_uses_binary_input_test() ->
+    ias_demo_store:clear(),
+    {ok, Service} = ias_manual_vpn_service:create(
+        #{name => <<"Wizard VPN">>, endpoint => <<"vpn.example.com">>,
+          port => <<"443">>, protocol => <<"tcp">>}),
+    ?assertEqual(vpn_service, maps:get(kind, Service)),
+    ?assertEqual(manual_vpn_service, maps:get(source, Service)),
+    ?assertEqual(<<"tcp">>, maps:get(protocol, Service)),
+    ?assertEqual(<<"443">>, maps:get(remote_port, Service)),
+    ?assertMatch({ok, _}, ias_demo_store:get(maps:get(id, Service))).
+
+vpn_service_step_renders_selection_and_creation_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    _Service = demo_vpn_service(<<"wizard_render_vpn_service">>),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, VpnStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => vpn_service}),
+    Html = render(ias_provisioning_wizard:content_for({draft, VpnStep})),
+    ?assertMatch({_, _}, binary:match(Html, <<"Use Existing VPN Service">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Create New Demo VPN Service">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Create and Select VPN Service">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<">Next</span>">>)).
+
+vpn_service_back_preserves_selection_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Service = demo_vpn_service(<<"wizard_preserved_vpn_service">>),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, VpnStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => vpn_service}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_vpn_service(
+        maps:get(id, VpnStep), maps:get(id, Service)),
+    {ok, CaStep} = ias_provisioning_wizard_store:next(maps:get(id, Selected)),
+    {ok, Back} = ias_provisioning_wizard_store:back(maps:get(id, CaStep)),
+    ?assertEqual(maps:get(id, Service), maps:get(vpn_service_id, Back)).
+
+cancel_does_not_delete_created_vpn_service_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Service} = ias_manual_vpn_service:create(
+        #{name => <<"Persistent Wizard VPN">>, endpoint => <<"vpn.example.com">>,
+          port => <<"1194">>, protocol => <<"udp">>}),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, _Selected} = ias_provisioning_wizard_store:select_vpn_service(
+        maps:get(id, Draft), maps:get(id, Service)),
+    ok = ias_provisioning_wizard_store:delete(maps:get(id, Draft)),
+    ?assertMatch({ok, _}, ias_demo_store:get(maps:get(id, Service))).
+
+demo_vpn_service(Id) ->
+    ias_demo_store:put_runtime_object(#{id => Id,
+                                        kind => vpn_service,
+                                        source => manual_vpn_service,
+                                        name => <<"Wizard VPN">>,
+                                        service => openvpn,
+                                        remote => <<"vpn.example.com:1194">>,
+                                        remote_host => <<"vpn.example.com">>,
+                                        remote_port => <<"1194">>,
+                                        protocol => <<"udp">>,
+                                        tls_auth => not_configured}).
