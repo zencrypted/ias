@@ -28,6 +28,7 @@ route(<<"app/ovpn",         _/binary>>) -> ias_ovpn;
 route(<<"app/provisioning-wizard", _/binary>>) -> ias_provisioning_wizard;
 route(<<"app/demo",         _/binary>>) -> ias_demo;
 route(<<"app/enroll",       _/binary>>) -> ias_enroll;
+route(<<"app/certificate-enrollment", _/binary>>) -> ias_enroll;
 route(<<"app/issue",        _/binary>>) -> ias_issue_cert;
 route(<<"app/verify",       _/binary>>) -> ias_verify_cert;
 route(_)                                 -> ias_index.

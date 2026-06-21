@@ -1,5 +1,6 @@
 -module(ias_enroll).
--export([event/1]).
+-export([event/1, content_for/1, enrollment_context/0]).
+-include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
@@ -9,11 +10,14 @@ event(preview) ->
     CommonName = field_value(nitro:q(enroll_common_name), <<"vpn-client">>),
     Profile = field_value(nitro:q(enroll_profile), <<"secp384r1">>),
     CmpServer = field_value(nitro:q(enroll_cmp_server), <<"127.0.0.1:8829">>),
-    nitro:update(enroll_preview_result, preview_panel(CommonName, Profile, CmpServer));
+    Context = context_from_form(),
+    nitro:update(enroll_preview_result, preview_panel(CommonName, Profile, CmpServer,
+                                                      Context));
 event(enroll) ->
     CommonName = field_value(nitro:q(enroll_common_name), <<"vpn-client">>),
     Profile = field_value(nitro:q(enroll_profile), <<"secp384r1">>),
     CmpServer = field_value(nitro:q(enroll_cmp_server), <<"127.0.0.1:8829">>),
+    Context = context_from_form(),
     EnrollmentCN = ias_cmp_enrollment:enrollment_cn(CommonName),
     Result = ias_cmp_enrollment:enroll(#{
         common_name => CommonName,
@@ -21,12 +25,15 @@ event(enroll) ->
         profile => Profile,
         server => CmpServer
     }),
-    nitro:update(enroll_preview_result, preview_panel(CommonName, EnrollmentCN, Profile, CmpServer, Result));
+    nitro:update(enroll_preview_result,
+                 preview_panel(CommonName, EnrollmentCN, Profile, CmpServer, Result,
+                               Context));
 event(import_cert_demo) ->
     EnrollmentId = field_value(nitro:q(enroll_import_enrollment_id), <<"not found">>),
+    Context = context_from_form(),
     case ias_cert_enrollment_import:import(EnrollmentId) of
         {ok, Stored} ->
-            nitro:update(enroll_import_result, certificate_import_result(Stored));
+            certificate_import_done(Stored, Context);
         not_found ->
             nitro:update(enroll_import_result, certificate_import_not_found())
     end;
@@ -39,38 +46,44 @@ event(_) ->
     ok.
 
 content() ->
-    CommonName = <<"vpn-client">>,
+    content_for(enrollment_context()).
+
+content_for(Context) ->
+    CommonName = maps:get(suggested_cn, Context, <<"vpn-client">>),
     Profile = <<"secp384r1">>,
     CmpServer = <<"127.0.0.1:8829">>,
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Certificate Enrollment Preview")},
         #p{body = ias_html:text("Preview how IAS will prepare a certificate enrollment request before calling the external CA/CMP service.")},
-        form_panel(CommonName, Profile, CmpServer),
-        preview_panel(CommonName, Profile, CmpServer)
+        return_context_panel(Context),
+        form_panel(CommonName, Profile, CmpServer, Context),
+        preview_panel(CommonName, Profile, CmpServer, Context)
     ]}.
 
-form_panel(CommonName, Profile, CmpServer) ->
-    #panel{class = <<"ias-status-card">>, body = [
+form_panel(CommonName, Profile, CmpServer, Context) ->
+    Body = [
         #h3{body = ias_html:text("Enrollment Input")},
         input_row("Common Name", enroll_common_name, CommonName),
         input_row("Profile", enroll_profile, Profile),
-        input_row("CMP Server", enroll_cmp_server, CmpServer),
+        input_row("CMP Server", enroll_cmp_server, CmpServer)
+    ] ++ hidden_context_fields(Context) ++ [
         #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
                body = [
                    #link{id = enroll_preview_button,
                          class = [button, sgreen],
                          body = ias_html:text("Preview Enrollment"),
-                         source = [enroll_common_name, enroll_profile, enroll_cmp_server],
+                         source = enroll_form_sources(),
                          postback = preview},
                    #link{id = enroll_ca_button,
                          class = [button, sgreen],
                          body = ias_html:text("Enroll via CA"),
-                         source = [enroll_common_name, enroll_profile, enroll_cmp_server],
+                         source = enroll_form_sources(),
                          postback = enroll},
                    #span{style = <<"font-size:12px;color:#64748b;">>,
                          body = ias_html:text("Development mode only. No certificate or key material is stored by IAS.")}
                ]}
-    ]}.
+    ],
+    #panel{class = <<"ias-status-card">>, body = Body}.
 
 input_row(Label, Id, Value) ->
     #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0;">>,
@@ -84,10 +97,37 @@ input_row(Label, Id, Value) ->
                       style = <<"min-width:260px;max-width:420px;width:100%;">>}
            ]}.
 
-preview_panel(CommonName, Profile, CmpServer) ->
-    preview_panel(CommonName, CommonName, Profile, CmpServer, preview).
+return_context_panel(#{return_to := <<"provisioning_wizard">>} = Context) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Return to Provisioning Wizard")},
+        key_value_table([
+            {"Wizard", maps:get(wizard_id, Context, <<>>)},
+            {"Device", maps:get(device_id, Context, <<>>)},
+            {"Suggested CN", maps:get(suggested_cn, Context, <<"vpn-client">>)}
+        ]),
+        #link{url = wizard_url(maps:get(wizard_id, Context, <<>>)),
+              class = [button, sgreen],
+              body = ias_html:text("Return to Provisioning Wizard")}
+    ]};
+return_context_panel(_Context) ->
+    #panel{body = []}.
 
-preview_panel(CommonName, EnrollmentCN, Profile, CmpServer, Enrollment) ->
+hidden_context_fields(Context) ->
+    [hidden(enroll_wizard_id, maps:get(wizard_id, Context, <<>>)),
+     hidden(enroll_return_to, maps:get(return_to, Context, <<>>)),
+     hidden(enroll_device_id, maps:get(device_id, Context, <<>>)),
+     hidden(enroll_suggested_cn, maps:get(suggested_cn, Context, <<"vpn-client">>))].
+
+enroll_form_sources() ->
+    [enroll_common_name, enroll_profile, enroll_cmp_server | context_source_ids()].
+
+context_source_ids() ->
+    [enroll_wizard_id, enroll_return_to, enroll_device_id, enroll_suggested_cn].
+
+preview_panel(CommonName, Profile, CmpServer, Context) ->
+    preview_panel(CommonName, CommonName, Profile, CmpServer, preview, Context).
+
+preview_panel(CommonName, EnrollmentCN, Profile, CmpServer, Enrollment, Context) ->
     #panel{id = enroll_preview_result,
            class = <<"ias-status-card">>,
            body = [
@@ -109,16 +149,16 @@ preview_panel(CommonName, EnrollmentCN, Profile, CmpServer, Enrollment) ->
                    {"Runtime", <<"CA OTP 28 service">>}
                ]),
                #h3{body = ias_html:text("Issued Certificate Preview")},
-               issued_certificate_table(Enrollment)
+               issued_certificate_table(Enrollment, Context)
            ]}.
 
-issued_certificate_table(preview) ->
+issued_certificate_table(preview, _Context) ->
     key_value_table([
         {"Status", <<"not issued yet">>},
         {"Reason", <<"preview only">>},
         {"Future Result", <<"X.509 certificate">>}
     ]);
-issued_certificate_table({ok, Certificate}) ->
+issued_certificate_table({ok, Certificate}, Context) ->
     EnrollmentId = ias_demo_store:add_enrollment_result(Certificate),
     _ = maybe_stage_cmp_material(EnrollmentId, Certificate),
     #panel{body = [
@@ -129,14 +169,14 @@ issued_certificate_table({ok, Certificate}) ->
             {"Not Before", maps:get(not_before, Certificate, <<"not found">>)},
             {"Not After", maps:get(not_after, Certificate, <<"not found">>)}
         ]),
-        certificate_import_controls(EnrollmentId)
+        certificate_import_controls(EnrollmentId, Context)
     ]};
-issued_certificate_table({error, ca_unavailable}) ->
+issued_certificate_table({error, ca_unavailable}, _Context) ->
     key_value_table([
         {"Status", <<"failed">>},
         {"Reason", <<"CA service unavailable">>}
     ]);
-issued_certificate_table({error, Reason}) ->
+issued_certificate_table({error, Reason}, _Context) ->
     key_value_table([
         {"Status", <<"failed">>},
         {"Reason", Reason}
@@ -156,17 +196,19 @@ csr_status({error, _Reason}) ->
 csr_status(preview) ->
     <<"planned">>.
 
-certificate_import_controls(EnrollmentId) ->
-    #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
-           body = [
-               hidden(enroll_import_enrollment_id, EnrollmentId),
+certificate_import_controls(EnrollmentId, Context) ->
+    Body = [
+               hidden(enroll_import_enrollment_id, EnrollmentId)
+           ] ++ hidden_context_fields(Context) ++ [
                #link{id = enroll_import_cert_button,
                      class = [button, sgreen],
                      body = ias_html:text("Import Certificate as Demo"),
-                     source = [enroll_import_enrollment_id],
+                     source = [enroll_import_enrollment_id | context_source_ids()],
                      postback = import_cert_demo},
                #panel{id = enroll_import_result}
-           ]}.
+           ],
+    #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
+           body = Body}.
 
 hidden(Id, Value) ->
     #input{id = Id,
@@ -189,6 +231,32 @@ certificate_import_result(Stored) ->
                      style = <<"display:inline-block;margin-top:8px;padding:7px 10px;border:1px solid #93c5fd;border-radius:5px;background:#ffffff;color:#1d4ed8;text-decoration:none;font-size:12px;font-weight:600;">>,
                      body = ias_html:text("View Demo Object")},
                enrollment_lifecycle_panel(Stored)
+           ]}.
+
+certificate_import_done(Stored, #{return_to := <<"provisioning_wizard">>,
+                                  wizard_id := WizardId}) when WizardId =/= <<>> ->
+    case ias_provisioning_wizard_store:select_existing_client_certificate(
+           WizardId, maps:get(id, Stored, undefined)) of
+        {ok, _Draft} ->
+            nitro:redirect(wizard_url(WizardId));
+        {error, Reason} ->
+            nitro:update(enroll_import_result,
+                         wizard_return_error(Stored, WizardId, Reason))
+    end;
+certificate_import_done(Stored, _Context) ->
+    nitro:update(enroll_import_result, certificate_import_result(Stored)).
+
+wizard_return_error(Stored, WizardId, Reason) ->
+    #panel{style = <<"padding:12px;border:1px solid rgba(217,119,6,0.25);border-radius:6px;background:#fffbeb;">>,
+           body = [
+               #h3{body = ias_html:text("Certificate imported; wizard return needs review")},
+               key_value_table([
+                   {"Issued Certificate", maps:get(id, Stored, undefined)},
+                   {"Reason", Reason}
+               ]),
+               #link{url = wizard_url(WizardId),
+                     class = [button, sgreen],
+                     body = ias_html:text("Return to Wizard with This Certificate")}
            ]}.
 
 certificate_import_not_found() ->
@@ -224,6 +292,49 @@ field_value(Value, Default) ->
     case Text of
         <<>> -> Default;
         _ -> Text
+    end.
+
+context_from_form() ->
+    normalize_context(#{
+        wizard_id => field_value(nitro:q(enroll_wizard_id), <<>>),
+        return_to => field_value(nitro:q(enroll_return_to), <<>>),
+        device_id => field_value(nitro:q(enroll_device_id), <<>>),
+        suggested_cn => field_value(nitro:q(enroll_suggested_cn), <<"vpn-client">>)
+    }).
+
+enrollment_context() ->
+    normalize_context(#{
+        wizard_id => query_param(<<"wizard_id">>, <<>>),
+        return_to => query_param(<<"return_to">>, <<>>),
+        device_id => query_param(<<"device_id">>, <<>>),
+        suggested_cn => query_param(<<"suggested_cn">>, <<"vpn-client">>)
+    }).
+
+normalize_context(Context) ->
+    #{wizard_id => ias_html:text(maps:get(wizard_id, Context, <<>>)),
+      return_to => ias_html:text(maps:get(return_to, Context, <<>>)),
+      device_id => ias_html:text(maps:get(device_id, Context, <<>>)),
+      suggested_cn => field_value(maps:get(suggested_cn, Context, <<"vpn-client">>),
+                                  <<"vpn-client">>)}.
+
+query_param(Key, Default) ->
+    Cx = get(context),
+    Req = Cx#cx.req,
+    Query = case Req of
+        #{qs := QS} -> uri_string:dissect_query(nitro:to_binary(QS));
+        #{query_string := QS} -> uri_string:dissect_query(nitro:to_binary(QS));
+        _ -> []
+    end,
+    case proplists:get_value(Key, Query) of
+        undefined ->
+            case Key of
+                <<"wizard_id">> -> field_value(nitro:qc(wizard_id), Default);
+                <<"return_to">> -> field_value(nitro:qc(return_to), Default);
+                <<"device_id">> -> field_value(nitro:qc(device_id), Default);
+                <<"suggested_cn">> -> field_value(nitro:qc(suggested_cn), Default)
+            end;
+        Value ->
+            field_value(Value, Default)
     end.
 
 enrollment_lifecycle_panel(Certificate) ->
@@ -340,6 +451,9 @@ certificate_link(Certificate) ->
     Id = maps:get(id, Certificate, undefined),
     #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(Id)]),
           body = ias_html:join([<<"Certificate #">>, Id])}.
+
+wizard_url(WizardId) ->
+    ias_html:join([<<"/app/provisioning-wizard.htm?id=">>, ias_html:text(WizardId)]).
 
 lifecycle_error_panel(Reason) ->
     #panel{style = <<"padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,

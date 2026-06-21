@@ -680,6 +680,61 @@ client_certificate_step_renders_selection_and_issue_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Issue New Demo Client Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Issue and Select Client Certificate">>)).
 
+client_certificate_step_links_to_ca_enrollment_with_wizard_context_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_enroll_context_device">>),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft1} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate,
+                                device_id => maps:get(id, Device)}),
+
+    Html = render(ias_provisioning_wizard:content_for({draft, Draft1})),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Request Certificate from CA">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"/app/certificate-enrollment.htm?">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"return_to=provisioning_wizard">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"wizard_id=", (maps:get(id, Draft1))/binary>>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"device_id=wizard_enroll_context_device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"suggested_cn=Wizard%20Device">>)).
+
+certificate_enrollment_page_renders_wizard_return_context_test() ->
+    Context = #{wizard_id => <<"wizard_return_context">>,
+                return_to => <<"provisioning_wizard">>,
+                device_id => <<"wizard_return_device">>,
+                suggested_cn => <<"wizard-client">>},
+
+    Html = render(ias_enroll:content_for(Context)),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Return to Provisioning Wizard">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"wizard_return_device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"wizard-client">>)),
+    ?assertMatch({_, _}, binary:match(
+        Html, <<"/app/provisioning-wizard.htm?id=wizard_return_context">>)).
+
+imported_cmp_certificate_can_be_selected_by_wizard_context_test() ->
+    Draft = client_issue_ready_draft(),
+    Pem = public_key:pem_encode([{'Certificate', <<4,3,2,1>>, not_encrypted}]),
+    EnrollmentId = ias_demo_store:add_enrollment_result(
+        #{subject => <<"CN=wizard-imported-client">>,
+          issuer => <<"CN=Wizard CA">>,
+          not_before => <<"Jun 21 00:00:00 2026 GMT">>,
+          not_after => <<"Jun 21 00:00:00 2027 GMT">>,
+          requested_cn => <<"wizard-imported-client">>,
+          enrollment_cn => <<"wizard-imported-client-20260621">>,
+          profile => <<"secp384r1">>,
+          cmp_server => <<"127.0.0.1:8829">>}),
+    {ok, _} = ias_certificate_material:stage_cmp(EnrollmentId, Pem),
+    {ok, Certificate} = ias_cert_enrollment_import:import(EnrollmentId),
+
+    {ok, Advanced} = ias_provisioning_wizard_store:select_existing_client_certificate(
+        maps:get(id, Draft), maps:get(id, Certificate)),
+
+    ?assertEqual(maps:get(id, Certificate), maps:get(client_certificate_id, Advanced)),
+    ?assertEqual(material_readiness, maps:get(current_step, Advanced)),
+    ?assertEqual(true, maps:get(relationships_applied, Advanced)),
+    ?assertEqual(true, ias_provisioning_wizard_store:relationships_ready(Advanced)).
+
 client_certificate_missing_body_renders_disabled_selection_test() ->
     ias_demo_state:clear(),
     ias_provisioning_wizard_store:clear(),

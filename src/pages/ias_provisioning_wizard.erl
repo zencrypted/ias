@@ -790,8 +790,51 @@ client_certificate_step(Draft) ->
     #panel{body = [
         selected_client_certificate_panel(Draft),
         existing_client_certificates_panel(Draft),
+        request_certificate_from_ca_panel(Draft),
         issue_client_certificate_panel(maps:get(id, Draft))
     ]}.
+
+request_certificate_from_ca_panel(Draft) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Request Certificate from CA")},
+        #p{style = <<"font-size:12px;color:#64748b;line-height:1.45;">>,
+           body = ias_html:text("Open the CMP enrollment flow with this wizard context. After importing the issued certificate, IAS can return here with the certificate selected.")},
+        #link{class = [button, sgreen],
+              url = certificate_enrollment_url(Draft),
+              body = ias_html:text("Request Certificate from CA")}
+    ]}.
+
+certificate_enrollment_url(Draft) ->
+    Query = [
+        {<<"wizard_id">>, maps:get(id, Draft, <<>>)},
+        {<<"return_to">>, <<"provisioning_wizard">>},
+        {<<"device_id">>, maps:get(device_id, Draft, <<>>)},
+        {<<"suggested_cn">>, suggested_certificate_cn(Draft)}
+    ],
+    ias_html:join([<<"/app/certificate-enrollment.htm?">>, query_string(Query)]).
+
+query_string(Pairs) ->
+    ias_html:join(lists:join(<<"&">>,
+                             [ias_html:join([Key, <<"=">>, uri_encode(Value)])
+                              || {Key, Value} <- Pairs])).
+
+uri_encode(Value) ->
+    uri_string:quote(ias_html:text(Value)).
+
+suggested_certificate_cn(Draft) ->
+    case ias_provisioning_wizard_store:selected_device(Draft) of
+        {ok, Device} ->
+            first_defined([maps:get(name, Device, undefined),
+                           maps:get(id, Device, undefined),
+                           <<"vpn-client">>]);
+        _ ->
+            <<"vpn-client">>
+    end.
+
+first_defined([]) -> undefined;
+first_defined([undefined | Rest]) -> first_defined(Rest);
+first_defined([<<>> | Rest]) -> first_defined(Rest);
+first_defined([Value | _Rest]) -> Value.
 
 selected_client_certificate_panel(Draft) ->
     case ias_provisioning_wizard_store:selected_client_certificate(Draft) of
