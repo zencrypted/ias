@@ -15,7 +15,9 @@ normalize_fields(Fields) ->
       type => trim(maps:get(type, Fields, <<"vpn-client">>)),
       tunnel_device => trim(maps:get(tunnel_device, Fields, <<"tun">>)),
       transport => trim(maps:get(transport, Fields, <<"udp">>)),
-      endpoint => trim(maps:get(endpoint, Fields, <<>>))}.
+      endpoint => trim(maps:get(endpoint, Fields, <<>>)),
+      private_key_provider => trim(maps:get(private_key_provider, Fields, <<"device_file">>)),
+      private_key_ref => trim(maps:get(private_key_ref, Fields, <<"client.key">>))}.
 
 validate(#{name := <<>>}) ->
     {error, <<"Device Name is required">>};
@@ -25,10 +27,16 @@ validate(#{tunnel_device := <<>>}) ->
     {error, <<"Tunnel Device is required">>};
 validate(#{transport := <<>>}) ->
     {error, <<"Transport is required">>};
-validate(#{transport := Transport}) ->
+validate(#{transport := Transport} = Values) ->
     case allowed_transport(Transport) of
-        true -> ok;
+        true -> validate_private_key_ref(Values);
         false -> {error, <<"Transport must be udp or tcp">>}
+    end.
+
+validate_private_key_ref(Values) ->
+    case ias_device_key_ref:validate(Values) of
+        {ok, _Safe} -> ok;
+        {error, Reason} -> {error, Reason}
     end.
 
 allowed_transport(<<"udp">>) ->
@@ -50,6 +58,8 @@ store_device(Values) ->
         tunnel_device => maps:get(tunnel_device, Values),
         transport => maps:get(transport, Values),
         endpoint => endpoint_value(maps:get(endpoint, Values)),
+        private_key_provider => maps:get(private_key_provider, Values),
+        private_key_ref => maps:get(private_key_ref, Values),
         created_at => created_at(),
         private_key_stored => false,
         certificate_body_stored => false,

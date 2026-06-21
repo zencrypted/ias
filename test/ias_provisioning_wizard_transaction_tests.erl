@@ -120,7 +120,8 @@ setup_ready_wizard() ->
     ias_demo_state:clear(),
     Device = ias_demo_store:put_runtime_object(
         #{id => <<"wizard_transaction_device">>, kind => device,
-          source => manual_device, name => <<"Laptop">>, type => <<"vpn-client">>}),
+          source => manual_device, name => <<"Laptop">>, type => <<"vpn-client">>,
+          private_key_provider => <<"device_file">>, private_key_ref => <<"client.key">>}),
     Service = ias_demo_store:put_runtime_object(
         #{id => <<"wizard_transaction_service">>, kind => vpn_service,
           source => manual_vpn_service, name => <<"OpenVPN">>, service => openvpn,

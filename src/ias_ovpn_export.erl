@@ -265,6 +265,8 @@ build_preview(Device, Certificate, Service, Policy, Enforcement) ->
       vpn_service_id => object_id(Service),
       ca_certificate_id => object_id(CaCertificate),
       ca_certificate_status => ca_certificate_status(CaCertificate),
+      private_key_provider => device_private_key_provider(Device),
+      private_key_ref => device_private_key_ref(Device),
       device_lock => policy_device_lock(Policy),
       two_factor => policy_two_factor(Policy),
       remote_host => RemoteHost,
@@ -574,6 +576,16 @@ object_id(not_found) ->
     not_found;
 object_id(Object) ->
     maps:get(id, Object, not_found).
+
+device_private_key_provider(not_found) ->
+    undefined;
+device_private_key_provider(Device) ->
+    maps:get(private_key_provider, Device, undefined).
+
+device_private_key_ref(not_found) ->
+    undefined;
+device_private_key_ref(Device) ->
+    maps:get(private_key_ref, Device, undefined).
 
 ovpn_skeleton(RemoteHost, RemotePort, Protocol) ->
     ias_html:join([

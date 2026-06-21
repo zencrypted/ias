@@ -188,7 +188,9 @@ import_records(ImportMap, ImportId, CreatedAt) ->
                 type => maps:get(type, Device, <<"vpn-client">>),
                 endpoint => maps:get(endpoint, Device, not_found),
                 transport => maps:get(transport, Device, not_found),
-                tunnel_device => maps:get(tunnel_device, Device, not_found)},
+                tunnel_device => maps:get(tunnel_device, Device, not_found),
+                private_key_provider => maps:get(private_key_provider, Device, <<"device_file">>),
+                private_key_ref => maps:get(private_key_ref, Device, <<"client.key">>)},
         Common#{id => record_id(certificate, ImportId),
                 kind => certificate,
                 ca_present => maps:get(ca_present, Certificate, false),
@@ -211,13 +213,20 @@ add_legacy(Kind, Object) ->
     CreatedAt = created_at(),
     ImportId = maps:get(import_id, Object, legacy_import),
     Id = maps:get(id, Object, record_id(Kind, ImportId)),
-    Stored = Object#{id => Id,
-                     kind => Kind,
-                     source => maps:get(source, Object, ovpn_demo_import),
-                     import_id => ImportId,
-                     created_at => maps:get(created_at, Object, CreatedAt)},
+    Stored0 = Object#{id => Id,
+                      kind => Kind,
+                      source => maps:get(source, Object, ovpn_demo_import),
+                      import_id => ImportId,
+                      created_at => maps:get(created_at, Object, CreatedAt)},
+    Stored = with_kind_defaults(Kind, Stored0),
     ets:insert(?TABLE, {{Kind, Id}, Stored}),
     Stored.
+
+with_kind_defaults(device, Object) ->
+    Defaults = ias_device_key_ref:defaults(),
+    maps:merge(Defaults, Object);
+with_kind_defaults(_Kind, Object) ->
+    Object.
 
 list(Kind) ->
     [Object || Object <- all(), maps:get(kind, Object, undefined) =:= Kind].

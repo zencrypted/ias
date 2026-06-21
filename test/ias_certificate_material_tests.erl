@@ -71,6 +71,10 @@ cmp_material_is_attached_after_certificate_import_test() ->
 
 provisioning_refresh_uses_public_material_store_test() ->
     ias_demo_state:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"material_device">>,
+                                         source => manual_device,
+                                         private_key_provider => <<"device_file">>,
+                                         private_key_ref => <<"client.key">>}),
     Certificate = ias_demo_store:add_certificate(#{id => <<"material_device_certificate">>,
                                                    source => certificate_issue_demo}),
     Ca = ias_demo_store:add_certificate(#{id => <<"material_ca_certificate">>,
@@ -78,6 +82,7 @@ provisioning_refresh_uses_public_material_store_test() ->
     Transaction0 = #{kind => ovpn_provisioning,
                      mode => device_bound,
                      authorization => allow,
+                     device_id => maps:get(id, Device),
                      certificate_id => maps:get(id, Certificate),
                      ca_certificate_id => maps:get(id, Ca),
                      material_components => #{tls_auth => not_configured}},

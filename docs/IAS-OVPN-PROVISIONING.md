@@ -185,6 +185,21 @@ The progress indicator derives the Relationships and Material Readiness states
 from the current graph and readiness preview; a previously visited step is shown
 as `blocked` if its runtime prerequisites later become stale or conflicting.
 
+Stage 25A replaces the old implicit key assumption with an explicit
+device-owned private-key reference. A device-bound private key is considered
+available only when the Device has validated metadata:
+
+```erlang
+private_key_provider = <<"device_file">>
+private_key_ref = <<"client.key">>
+```
+
+The reference is a safe relative path on the approved device. IAS does not
+generate, read, store or export the private key body. Material Readiness blocks
+device-bound provisioning when the reference is missing, invalid or uses an
+unsupported provider, and the wizard links the operator back to the Device detail
+page to configure it.
+
 Material Contract
 -----------------
 
@@ -195,7 +210,7 @@ Every Stage 23B transaction records the following sanitized metadata:
 | CA certificate PEM | required | CA certificate store | `missing_body` when referenced |
 | Client certificate PEM | required | certificate store | `missing_body` when referenced |
 | Private key, portable | required later | provisioning transaction | `pending_one_time_generation` |
-| Private key, device-bound | device-owned | approved device | `available_on_device` |
+| Private key, device-bound | validated reference | approved device | `available_on_device` only with `device_file` reference |
 | TLS-auth | optional | VPN service | `not_configured` |
 
 Assembly Readiness

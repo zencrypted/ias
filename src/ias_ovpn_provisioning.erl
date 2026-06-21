@@ -137,6 +137,8 @@ export_plan(Mode, SubjectKind, SubjectId, Preview) ->
       artifact_status => artifact_status(Authorization),
       delivery_status => not_ready,
       private_key_policy => private_key_policy(Mode),
+      private_key_provider => maps:get(private_key_provider, Preview, undefined),
+      private_key_ref => maps:get(private_key_ref, Preview, undefined),
       downloaded => false,
       private_key_stored => false,
       certificate_body_stored => false,
@@ -163,6 +165,8 @@ blocked_plan(Mode, SubjectKind, SubjectId, Reason) ->
       artifact_status => unavailable,
       delivery_status => not_ready,
       private_key_policy => private_key_policy(Mode),
+      private_key_provider => undefined,
+      private_key_ref => undefined,
       downloaded => false,
       private_key_stored => false,
       certificate_body_stored => false,
@@ -200,7 +204,7 @@ material_components(Mode, Preview, allow) ->
           maps:get(ca_certificate_id, Preview, not_found)),
       client_certificate => referenced_material_status(
           maps:get(certificate_id, Preview, not_found)),
-      private_key => private_key_component_status(Mode),
+      private_key => private_key_component_status(Mode, Preview),
       tls_auth => not_configured};
 material_components(Mode, _Preview, _Authorization) ->
     blocked_material_components(Mode).
@@ -234,7 +238,7 @@ material_components_from_transaction(Mode, Transaction, allow) ->
           maps:get(ca_certificate_id, Transaction, not_found)),
       client_certificate => referenced_material_status(
           maps:get(certificate_id, Transaction, not_found)),
-      private_key => private_key_component_status(Mode),
+      private_key => private_key_component_status(Mode, Transaction),
       tls_auth => maps:get(tls_auth, maps:get(material_components, Transaction, #{}),
                            not_configured)};
 material_components_from_transaction(Mode, _Transaction, _Authorization) ->
@@ -258,7 +262,7 @@ refreshed_material_status(Components, allow) ->
 
 assembly_status_for(_Mode, _Components, Authorization) when Authorization =/= allow -> blocked;
 assembly_status_for(device_bound, Components, allow) ->
-    case public_material_available(Components) of
+    case public_material_available(Components) andalso private_key_available(Components) of
         true -> ready_for_device_assembly;
         false -> blocked
     end;
@@ -272,7 +276,7 @@ assembly_status_for(_, _, _) -> blocked.
 assembly_reason_for(_Mode, _Components, Authorization) when Authorization =/= allow ->
     <<"OVPN provisioning authorization is denied">>;
 assembly_reason_for(device_bound, Components, allow) ->
-    case missing_public_material_reasons(Components) of
+    case missing_public_material_reasons(Components) ++ missing_private_key_reasons(Components) of
         [] -> <<"public certificate material is available; assembly remains on the device">>;
         Reasons -> reason_text(Reasons)
     end;
@@ -286,9 +290,9 @@ assembly_reason_for(_, Components, allow) -> reason_text(missing_public_material
 assembly_next_step_for(_Mode, _Components, Authorization) when Authorization =/= allow ->
     <<"Resolve OVPN provisioning authorization before material assembly.">>;
 assembly_next_step_for(device_bound, Components, allow) ->
-    case public_material_available(Components) of
+    case public_material_available(Components) andalso private_key_available(Components) of
         true -> <<"Send the public OVPN bundle to the device for local private-key assembly.">>;
-        false -> <<"Load public certificate material from the CA/CMP response or certificate store.">>
+        false -> <<"Load public certificate material and configure the device-owned private-key reference.">>
     end;
 assembly_next_step_for(portable, Components, allow) ->
     case public_material_available(Components) of
@@ -300,6 +304,9 @@ assembly_next_step_for(_, _, _) -> <<"Load required OVPN material.">>.
 public_material_available(Components) ->
     maps:get(ca_certificate, Components, missing_body) =:= available andalso
     maps:get(client_certificate, Components, missing_body) =:= available.
+
+private_key_available(Components) ->
+    maps:get(private_key, Components, unavailable) =:= available_on_device.
 
 missing_public_material_reasons(Components) ->
     Ca = case maps:get(ca_certificate, Components, missing_body) of
@@ -314,6 +321,15 @@ missing_public_material_reasons(Components) ->
     end,
     Ca ++ Cert.
 
+missing_private_key_reasons(Components) ->
+    case maps:get(private_key, Components, unavailable) of
+        available_on_device -> [];
+        missing_private_key_ref -> [<<"Device-owned private key reference is missing.">>];
+        unsupported_private_key_provider -> [<<"Device-owned private key provider is unsupported.">>];
+        invalid_private_key_ref -> [<<"Device-owned private key reference is invalid.">>];
+        _ -> [<<"Device-owned private key reference is missing.">>]
+    end.
+
 private_key_requirement(portable) -> pending_one_time_generation;
 private_key_requirement(device_bound) -> device_owned;
 private_key_requirement(_Mode) -> undefined.
@@ -322,9 +338,21 @@ private_key_source(portable) -> provisioning_transaction;
 private_key_source(device_bound) -> device;
 private_key_source(_Mode) -> undefined.
 
-private_key_component_status(portable) -> pending_one_time_generation;
-private_key_component_status(device_bound) -> available_on_device;
-private_key_component_status(_Mode) -> unavailable.
+private_key_component_status(portable, _Context) -> pending_one_time_generation;
+private_key_component_status(device_bound, Context) ->
+    DeviceId = maps:get(device_id, Context, undefined),
+    case ias_device_key_ref:status(DeviceId) of
+        {ok, Safe} ->
+            case maps:get(private_key_provider, Safe, undefined) of
+                <<"device_file">> -> available_on_device;
+                _ -> unsupported_private_key_provider
+            end;
+        {error, missing_private_key_ref} -> missing_private_key_ref;
+        {error, <<"Private Key Provider must be device_file">>} -> unsupported_private_key_provider;
+        {error, <<"Private Key Provider is required">>} -> unsupported_private_key_provider;
+        {error, _Reason} -> invalid_private_key_ref
+    end;
+private_key_component_status(_Mode, _Context) -> unavailable.
 
 blocked_private_key_status(portable) -> pending_one_time_generation;
 blocked_private_key_status(device_bound) -> device_owned;

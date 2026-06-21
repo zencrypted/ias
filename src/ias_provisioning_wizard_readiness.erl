@@ -192,7 +192,16 @@ private_key_item(Components) ->
     Status = maps:get(private_key, Components, unavailable),
     item(private_key, <<"Private Key">>, Status,
          case Status of
-             available_on_device -> <<"The private key remains owned by the selected Device.">>;
+             available_on_device ->
+                 Ref = maps:get(private_key_ref, Components, undefined),
+                 ias_html:join([<<"The private key remains owned by the selected Device: ">>,
+                                ias_html:text(Ref)]);
+             missing_private_key_ref ->
+                 <<"Device-owned private key reference is missing.">>;
+             unsupported_private_key_provider ->
+                 <<"Device-owned private key provider is unsupported.">>;
+             invalid_private_key_ref ->
+                 <<"Device-owned private key reference is invalid.">>;
              _ -> <<"The device-owned private-key requirement is not satisfied.">>
          end).
 
@@ -238,11 +247,14 @@ material_detail(incompatible_material, _AvailableText) ->
 material_detail(_Status, _AvailableText) -> <<"Public certificate PEM is unavailable.">>.
 
 observed_material_components(Draft) ->
+    PrivateKey = observed_private_key(Draft),
     #{ca_certificate => observed_certificate_material_status(
           maps:get(ca_certificate_id, Draft, undefined), ca_certificate),
       client_certificate => observed_certificate_material_status(
           maps:get(client_certificate_id, Draft, undefined), client_certificate),
-      private_key => observed_private_key_status(Draft),
+      private_key => maps:get(status, PrivateKey),
+      private_key_provider => maps:get(provider, PrivateKey, undefined),
+      private_key_ref => maps:get(ref, PrivateKey, undefined),
       tls_auth => observed_tls_auth_status(Draft)}.
 
 observed_certificate_material_status(undefined, _ExpectedType) ->
@@ -254,11 +266,26 @@ observed_certificate_material_status(CertificateId, ExpectedType) ->
         not_found -> missing_body
     end.
 
-observed_private_key_status(Draft) ->
+observed_private_key(Draft) ->
     case {maps:get(scenario, Draft, undefined),
           ias_provisioning_wizard_store:selected_device(Draft)} of
-        {device_bound, {ok, _Device}} -> available_on_device;
-        _ -> unavailable
+        {device_bound, {ok, Device}} ->
+            case ias_device_key_ref:status(Device) of
+                {ok, Safe} ->
+                    #{status => available_on_device,
+                      provider => maps:get(private_key_provider, Safe),
+                      ref => maps:get(private_key_ref, Safe)};
+                {error, missing_private_key_ref} ->
+                    #{status => missing_private_key_ref};
+                {error, <<"Private Key Provider must be device_file">>} ->
+                    #{status => unsupported_private_key_provider};
+                {error, <<"Private Key Provider is required">>} ->
+                    #{status => unsupported_private_key_provider};
+                {error, _Reason} ->
+                    #{status => invalid_private_key_ref}
+            end;
+        _ ->
+            #{status => unavailable}
     end.
 
 observed_tls_auth_status(Draft) ->

@@ -99,7 +99,9 @@ event({wizard_create_device, WizardId}) ->
                type => nitro:q(wizard_device_type),
                tunnel_device => nitro:q(wizard_device_tunnel_device),
                transport => nitro:q(wizard_device_transport),
-               endpoint => nitro:q(wizard_device_endpoint)},
+               endpoint => nitro:q(wizard_device_endpoint),
+               private_key_provider => nitro:q(wizard_device_private_key_provider),
+               private_key_ref => nitro:q(wizard_device_private_key_ref)},
     case ias_manual_device:create(Fields) of
         {ok, Device} ->
             redirect_after(ias_provisioning_wizard_store:select_device(
@@ -540,6 +542,7 @@ material_readiness_actions(Draft, Readiness) ->
     Actions0 = [
         relationship_remediation_action(Draft, Review),
         device_remediation_action(Readiness, DeviceId),
+        private_key_remediation_action(Readiness, DeviceId),
         object_remediation_action(readiness_status(vpn_endpoint, Readiness),
                                   available, "Open VPN Service", ServiceId),
         ca_certificate_action(Readiness, CaId),
@@ -576,6 +579,12 @@ device_remediation_action(Readiness, DeviceId) ->
          ]) of
         true -> undefined;
         false -> object_link_action("Open Device", DeviceId)
+    end.
+
+private_key_remediation_action(Readiness, DeviceId) ->
+    case readiness_status(private_key, Readiness) of
+        available_on_device -> undefined;
+        _ -> object_link_action("Configure Device Key Reference", DeviceId)
     end.
 
 ca_certificate_action(Readiness, CaId) ->
@@ -1309,7 +1318,9 @@ selected_device_panel(Draft) ->
                            {"Name", maps:get(name, Device, undefined)},
                            {"Type", maps:get(type, Device, undefined)},
                            {"Transport", maps:get(transport, Device, undefined)},
-                           {"Endpoint", maps:get(endpoint, Device, undefined)}
+                           {"Endpoint", maps:get(endpoint, Device, undefined)},
+                           {"Private Key Provider", maps:get(private_key_provider, Device, undefined)},
+                           {"Private Key Reference", maps:get(private_key_ref, Device, undefined)}
                        ])
                    ]};
         not_selected ->
@@ -1347,7 +1358,8 @@ device_choice(Device, WizardId, SelectedId) ->
         #p{style = <<"margin:0 0 8px;font-size:12px;color:#64748b;overflow-wrap:anywhere;">>,
            body = ias_html:join([maps:get(type, Device, <<"device">>), <<" / ">>,
                                  maps:get(transport, Device, <<"-">>), <<" / ">>,
-                                 maps:get(endpoint, Device, <<"">>)])},
+                                 maps:get(endpoint, Device, <<"">>), <<" / key ">>,
+                                 maps:get(private_key_ref, Device, <<"missing">>)])},
         #link{class = [button, sgreen],
               body = ias_html:text(case IsSelected of true -> "Selected"; false -> "Select" end),
               postback = {wizard_select_device, WizardId, DeviceId}}
@@ -1361,12 +1373,15 @@ create_device_panel(WizardId) ->
         wizard_input_row("Tunnel Device", wizard_device_tunnel_device, <<"tun">>),
         wizard_transport_row(),
         wizard_input_row("Endpoint", wizard_device_endpoint, <<>>),
+        wizard_input_row("Private Key Provider", wizard_device_private_key_provider, <<"device_file">>),
+        wizard_input_row("Private Key Reference", wizard_device_private_key_ref, <<"client.key">>),
         #panel{style = <<"margin-top:12px;">>, body = [
             #link{class = [button, sgreen],
                   body = ias_html:text("Create and Select Device"),
                   source = [wizard_device_name, wizard_device_type,
                             wizard_device_tunnel_device, wizard_device_transport,
-                            wizard_device_endpoint],
+                            wizard_device_endpoint, wizard_device_private_key_provider,
+                            wizard_device_private_key_ref],
                   postback = {wizard_create_device, WizardId}}
         ]}
     ]}.

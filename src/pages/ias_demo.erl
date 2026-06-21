@@ -50,6 +50,17 @@ event({delete_certificate_material, CertificateId}) ->
     ok = ias_certificate_material:delete(CertificateId),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event({update_device_key_reference, DeviceId}) ->
+    Fields = #{private_key_provider => nitro:q(device_private_key_provider),
+               private_key_ref => nitro:q(device_private_key_ref)},
+    case ias_device_key_ref:update(DeviceId, Fields) of
+        {ok, _Device} ->
+            nitro:clear(stand),
+            nitro:insert_bottom(stand, content());
+        {error, Reason} ->
+            nitro:update(device_key_reference_feedback,
+                         device_key_reference_error(Reason))
+    end;
 event(_) ->
     ok.
 
@@ -82,6 +93,7 @@ detail(Object0) ->
         #p{body = ias_html:text("Read-only metadata stored in ETS demo runtime state.")},
         #h3{body = title(Object)},
         key_value_table(rows(Object)),
+        device_key_reference_preview(Object),
         certificate_material_preview(Object),
         ovpn_material_preview(Object),
         certificate_lifecycle_preview(Object),
@@ -137,7 +149,9 @@ rows(#{kind := device} = Object) ->
         {"Type", maps:get(type, Object, undefined)},
         {"Endpoint", maps:get(endpoint, Object, undefined)},
         {"Transport", maps:get(transport, Object, undefined)},
-        {"Tunnel Device", maps:get(tunnel_device, Object, undefined)}
+        {"Tunnel Device", maps:get(tunnel_device, Object, undefined)},
+        {"Private Key Provider", maps:get(private_key_provider, Object, undefined)},
+        {"Private Key Reference", maps:get(private_key_ref, Object, undefined)}
     ] ++ created_row(Object);
 rows(#{kind := certificate} = Object) ->
     Metadata = ias_certificate_detail:metadata(Object),
@@ -287,6 +301,62 @@ certificate_material_preview(#{kind := certificate} = Certificate) ->
     ]};
 certificate_material_preview(_Object) ->
     #panel{body = []}.
+
+device_key_reference_preview(#{kind := device} = Device) ->
+    DeviceId = maps:get(id, Device, undefined),
+    Provider = maps:get(private_key_provider, Device, <<"device_file">>),
+    Ref = maps:get(private_key_ref, Device, <<"client.key">>),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Device-owned Private Key Reference")},
+        #p{body = ias_html:text("IAS stores only a reference to the private key already owned by the device. It never reads, stores or exports private key body material.")},
+        device_key_reference_status(ias_device_key_ref:status(Device)),
+        #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0;">>,
+               body = [
+                   #label{for = device_private_key_provider,
+                          style = <<"min-width:150px;font-weight:600;color:#334155;">>,
+                          body = ias_html:text("Private Key Provider")},
+                   #input{id = device_private_key_provider,
+                          type = <<"text">>,
+                          value = ias_html:text(Provider),
+                          style = <<"min-width:260px;max-width:420px;width:100%;">>}
+               ]},
+        #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:8px 0;">>,
+               body = [
+                   #label{for = device_private_key_ref,
+                          style = <<"min-width:150px;font-weight:600;color:#334155;">>,
+                          body = ias_html:text("Private Key Reference")},
+                   #input{id = device_private_key_ref,
+                          type = <<"text">>,
+                          value = ias_html:text(Ref),
+                          style = <<"min-width:260px;max-width:420px;width:100%;">>}
+               ]},
+        #panel{style = <<"margin-top:10px;display:flex;gap:10px;flex-wrap:wrap;">>, body = [
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Save Device Key Reference"),
+                  source = [device_private_key_provider, device_private_key_ref],
+                  postback = {update_device_key_reference, DeviceId}}
+        ]},
+        #panel{id = device_key_reference_feedback}
+    ]};
+device_key_reference_preview(_Object) ->
+    #panel{body = []}.
+
+device_key_reference_status({ok, Safe}) ->
+    key_value_table([
+        {"Status", available_on_device},
+        {"Provider", maps:get(private_key_provider, Safe, undefined)},
+        {"Reference", maps:get(private_key_ref, Safe, undefined)}
+    ]);
+device_key_reference_status({error, Reason}) ->
+    key_value_table([
+        {"Status", blocked},
+        {"Reason", Reason}
+    ]).
+
+device_key_reference_error(Reason) ->
+    #panel{style = <<"margin-top:10px;padding:10px;border:1px solid #fecaca;background:#fef2f2;">>,
+           body = ias_html:join([<<"Device key reference was rejected: ">>,
+                                 ias_html:text(Reason)])}.
 
 certificate_material_status({ok, Status}) ->
     key_value_table([

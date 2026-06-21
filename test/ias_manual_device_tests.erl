@@ -12,6 +12,8 @@ manual_device_creation_success_test() ->
     ?assertEqual(<<"tun">>, maps:get(tunnel_device, Device)),
     ?assertEqual(<<"udp">>, maps:get(transport, Device)),
     ?assertEqual(<<"10.0.0.10">>, maps:get(endpoint, Device)),
+    ?assertEqual(<<"device_file">>, maps:get(private_key_provider, Device)),
+    ?assertEqual(<<"client.key">>, maps:get(private_key_ref, Device)),
     ?assertMatch(<<"manual_device_", _/binary>>, maps:get(id, Device)).
 
 manual_device_source_is_manual_device_test() ->
@@ -66,7 +68,30 @@ manual_device_user_input_stays_binary_test() ->
     ?assert(is_binary(maps:get(type, Device))),
     ?assert(is_binary(maps:get(tunnel_device, Device))),
     ?assert(is_binary(maps:get(transport, Device))),
-    ?assert(is_binary(maps:get(endpoint, Device))).
+    ?assert(is_binary(maps:get(endpoint, Device))),
+    ?assert(is_binary(maps:get(private_key_provider, Device))),
+    ?assert(is_binary(maps:get(private_key_ref, Device))).
+
+manual_device_valid_relative_private_key_reference_test() ->
+    ias_demo_store:clear(),
+
+    {ok, Device} = ias_manual_device:create((valid_fields())#{
+        private_key_ref => <<" keys/client.key ">>
+    }),
+
+    ?assertEqual(<<"keys/client.key">>, maps:get(private_key_ref, Device)).
+
+manual_device_invalid_private_key_reference_is_rejected_test() ->
+    ias_demo_store:clear(),
+
+    InvalidRefs = [<<>>, <<"/client.key">>, <<"../client.key">>,
+                   <<"keys/../client.key">>, <<"C:/client.key">>,
+                   <<"keys\\client.key">>, <<"keys/client\n.key">>,
+                   <<"keys/\"client.key">>],
+    [?assertMatch({error, _},
+                  ias_manual_device:create((valid_fields())#{private_key_ref => Ref}))
+     || Ref <- InvalidRefs],
+    ?assertEqual([], ias_demo_store:devices()).
 
 manual_device_demo_state_roundtrip_test() ->
     ias_demo_store:clear(),

@@ -10,7 +10,9 @@ event(create_demo_device) ->
                type => nitro:q(device_type),
                tunnel_device => nitro:q(device_tunnel_device),
                transport => nitro:q(device_transport),
-               endpoint => nitro:q(device_endpoint)},
+               endpoint => nitro:q(device_endpoint),
+               private_key_provider => nitro:q(device_private_key_provider),
+               private_key_ref => nitro:q(device_private_key_ref)},
     Result = ias_manual_device:create(Fields),
     nitro:update(device_create_result, create_device_result(Result)),
     nitro:update(device_runtime_objects, imported_demo_objects());
@@ -46,13 +48,16 @@ create_demo_device_panel() ->
         input_row("Tunnel Device", device_tunnel_device, <<"tun">>),
         transport_row(),
         input_row("Endpoint", device_endpoint, <<"">>),
+        input_row("Private Key Provider", device_private_key_provider, <<"device_file">>),
+        input_row("Private Key Reference", device_private_key_ref, <<"client.key">>),
         #panel{style = <<"margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
                body = [
                    #link{id = device_create_button,
                          class = [button, sgreen],
                          body = ias_html:text("Create Device"),
                          source = [device_name, device_type, device_tunnel_device,
-                                   device_transport, device_endpoint],
+                                   device_transport, device_endpoint,
+                                   device_private_key_provider, device_private_key_ref],
                          postback = create_demo_device},
                    #span{style = <<"font-size:12px;color:#64748b;">>,
                          body = ias_html:text("Demo runtime object only. No enrollment, keys, CSR or VPN connection is created.")}
@@ -94,7 +99,9 @@ create_device_result({ok, Device}) ->
                key_value_table([
                    {"Device", demo_link(Id)},
                    {"Source", maps:get(source, Device, undefined)},
-                   {"Type", maps:get(type, Device, undefined)}
+                   {"Type", maps:get(type, Device, undefined)},
+                   {"Private Key Provider", maps:get(private_key_provider, Device, undefined)},
+                   {"Private Key Reference", maps:get(private_key_ref, Device, undefined)}
                ])
            ]};
 create_device_result({error, Reason}) ->
@@ -157,7 +164,7 @@ imported_devices(Records) ->
     table([
         #table{class = <<"ias-table">>,
                header = header(["ID", "Type", "Endpoint", "Transport", "Tunnel Device",
-                                "Source", "Import ID"]),
+                                "Private Key Ref", "Source", "Import ID"]),
                body = #tbody{body = [imported_device_row(Record) || Record <- Records]}}
     ]).
 
@@ -167,6 +174,7 @@ imported_device_row(Record) ->
          maps:get(endpoint, Record, undefined),
          maps:get(transport, Record, undefined),
          maps:get(tunnel_device, Record, undefined),
+         maps:get(private_key_ref, Record, undefined),
          maps:get(source, Record, undefined),
          maps:get(import_id, Record, undefined)]).
 
