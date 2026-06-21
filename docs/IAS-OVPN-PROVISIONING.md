@@ -73,6 +73,33 @@ not delete those relationships automatically. Instead Graph Analysis and Device
 Operational Readiness surface the conflict, and OVPN provisioning remains
 blocked until the operator manually unlinks the extra operational relationship.
 
+Device-bound Provisioning Wizard Skeleton
+-----------------------------------------
+
+Stage 24A introduces a live-runtime-only Provisioning Wizard entry point for the
+future forward device-bound VPN provisioning flow. The wizard stores only a
+volatile ETS draft outside Demo State and does not create IAS objects,
+relationships, provisioning transactions or export artifacts.
+
+The current skeleton defines the orchestration path:
+
+```text
+Scheme
+-> Device
+-> Security Profile
+-> VPN Service
+-> CA Certificate
+-> Client Certificate
+-> Relationships
+-> Material Readiness
+-> Provisioning
+```
+
+Only the Device-bound VPN Profile scheme is active in this stage. Import Existing
+OVPN remains a link to the existing OVPN onboarding flow, and Portable VPN
+Profile remains disabled until one-time private-key generation and delivery are
+implemented.
+
 Material Contract
 -----------------
 

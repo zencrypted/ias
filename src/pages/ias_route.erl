@@ -25,6 +25,7 @@ route(<<"app/relationships", _/binary>>) -> ias_relationships;
 route(<<"app/state",        _/binary>>) -> ias_state;
 route(<<"app/vpn",          _/binary>>) -> ias_vpn;
 route(<<"app/ovpn",         _/binary>>) -> ias_ovpn;
+route(<<"app/provisioning-wizard", _/binary>>) -> ias_provisioning_wizard;
 route(<<"app/demo",         _/binary>>) -> ias_demo;
 route(<<"app/enroll",       _/binary>>) -> ias_enroll;
 route(<<"app/issue",        _/binary>>) -> ias_issue_cert;

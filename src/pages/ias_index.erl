@@ -9,8 +9,14 @@ event(_) ->
     ok.
 
 content() ->
-    #panel{class = "ias-placeholder", body = [
-        #h2{body = "IAS"},
-        #p{body = "Identity, Access and Security Administration bootstrap."},
-        #panel{class = "empty-state", body = "Select an IAS area from the navigation."}
+    #panel{class = <<"ias-placeholder">>, body = [
+        #h2{body = ias_html:text("IAS")},
+        #p{body = ias_html:text("Identity, Access and Security Administration bootstrap.")},
+        #panel{class = <<"empty-state">>, body = [
+            #p{body = ias_html:text("Select an IAS area from the navigation.")},
+            #p{body = [
+                #link{url = <<"/app/provisioning-wizard.htm">>,
+                      body = ias_html:text("Provisioning Wizard")}
+            ]}
+        ]}
     ]}.
