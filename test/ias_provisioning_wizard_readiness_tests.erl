@@ -124,7 +124,7 @@ material_readiness_actions_are_contextual_test() ->
 
     ?assertMatch({_, _}, binary:match(Html0, <<"Repair Relationships">>)),
     ?assertMatch({_, _}, binary:match(Html0, <<"Open Device">>)),
-    ?assertMatch({_, _}, binary:match(Html0, <<"Open Client Certificate">>)),
+    ?assertEqual(nomatch, binary:match(Html0, <<"Open Client Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html0, <<"Verify Client Certificate">>)),
     ?assertEqual(nomatch, binary:match(Html0, <<"Open VPN Service">>)),
     ?assertEqual(nomatch, binary:match(Html0, <<"Open CA Certificate">>)),
