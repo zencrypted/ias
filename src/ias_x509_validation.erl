@@ -169,6 +169,7 @@ metadata(Role, Mode, Decoded) ->
     #'OTPTBSCertificate'{serialNumber = Serial,
                          issuer = Issuer,
                          subject = Subject,
+                         subjectPublicKeyInfo = PublicKeyInfo,
                          validity = #'Validity'{notBefore = NotBefore,
                                                 notAfter = NotAfter}} = Tbs,
     #{role => Role,
@@ -179,6 +180,7 @@ metadata(Role, Mode, Decoded) ->
       serial => integer_to_binary(Serial),
       not_before => certificate_time(NotBefore),
       not_after => certificate_time(NotAfter),
+      public_key_fingerprint => public_key_fingerprint(PublicKeyInfo),
       der => maps:get(der, Decoded)}.
 
 basic_constraints(Decoded) ->
@@ -359,6 +361,11 @@ directory_string({teletexString, Value}) -> ias_html:text(Value);
 directory_string({bmpString, Value}) -> ias_html:text(Value);
 directory_string({universalString, Value}) -> ias_html:text(Value);
 directory_string(Value) -> ias_html:text(io_lib:format("~p", [Value])).
+
+public_key_fingerprint({'OTPSubjectPublicKeyInfo', _Algorithm, {'ECPoint', Point}}) ->
+    fingerprint(Point);
+public_key_fingerprint(PublicKeyInfo) ->
+    fingerprint(term_to_binary(PublicKeyInfo)).
 
 parse_utc_time(<<Y1:2/binary, M:2/binary, D:2/binary,
                  H:2/binary, Min:2/binary, S:2/binary, "Z">>) ->

@@ -27,6 +27,12 @@ event({wizard_select_ca_certificate, WizardId, CertificateId}) ->
     redirect_after(ias_provisioning_wizard_store:select_existing_ca_certificate(WizardId, CertificateId));
 event({wizard_select_client_certificate, WizardId, CertificateId}) ->
     redirect_after(ias_provisioning_wizard_store:select_existing_client_certificate(WizardId, CertificateId));
+event({wizard_request_device_csr_certificate, WizardId}) ->
+    CsrPem = nitro:q(wizard_device_csr_pem),
+    case ias_device_csr_enrollment:enroll_for_wizard(WizardId, CsrPem) of
+        {ok, Draft, _Certificate} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
+        {error, Reason} -> nitro:update(wizard_feedback, wizard_error(device_csr_error_text(Reason)))
+    end;
 event({wizard_apply_relationships, WizardId}) ->
     case ias_provisioning_wizard_store:apply_relationships(WizardId) of
         {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
@@ -808,7 +814,7 @@ client_certificate_step(Draft) ->
         selected_client_certificate_panel(Draft),
         existing_client_certificates_panel(Draft),
         request_certificate_from_ca_panel(Draft),
-        issue_client_certificate_panel(maps:get(id, Draft))
+        request_certificate_with_device_csr_panel(Draft)
     ]}.
 
 request_certificate_from_ca_panel(Draft) ->
@@ -897,9 +903,17 @@ existing_client_certificates_panel(Draft) ->
 existing_client_certificates([], _Draft, _WizardId, _SelectedId) ->
     #p{body = ias_html:text("No client certificates exist yet. Issue one below.")};
 existing_client_certificates(Certificates, Draft, WizardId, SelectedId) ->
+    Ordered = prioritized_client_certificates(Certificates, Draft),
     #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;">>,
            body = [client_certificate_choice(Certificate, Draft, WizardId, SelectedId)
-                   || Certificate <- Certificates]}.
+                   || Certificate <- Ordered]}.
+
+prioritized_client_certificates(Certificates, Draft) ->
+    DeviceId = maps:get(device_id, Draft, undefined),
+    {ForDevice, Other} = lists:partition(
+        fun(Certificate) -> issued_for_selected_device(Certificate, DeviceId) end,
+        Certificates),
+    ForDevice ++ Other.
 
 client_certificate_choice(Certificate, Draft, WizardId, SelectedId) ->
     CertificateId = maps:get(id, Certificate, undefined),
@@ -959,8 +973,15 @@ missing_pem_client_badges(Certificate) ->
 recommended_client_badges(Certificate, Binding) ->
     case compatible_client_binding(Binding) of
         true ->
-            Base = [relationship_badge("Recommended",
-                                       <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>)],
+            Base0 = [relationship_badge("Recommended",
+                                        <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>)],
+            Base = case issued_for_binding(Certificate, Binding) of
+                true ->
+                    Base0 ++ [relationship_badge("Issued for selected Device",
+                                                 <<"background:#ecfdf5;color:#047857;border-color:#6ee7b7;">>)];
+                false ->
+                    Base0
+            end,
             case cmp_issued_certificate(Certificate) of
                 true ->
                     Base ++ [relationship_badge("Issued by CA",
@@ -980,8 +1001,92 @@ cmp_issued_certificate(#{source := cmp_demo_enrollment}) -> true;
 cmp_issued_certificate(#{source := cmp_response}) -> true;
 cmp_issued_certificate(_) -> false.
 
+issued_for_selected_device(_Certificate, undefined) ->
+    false;
+issued_for_selected_device(Certificate, DeviceId) ->
+    ias_html:text(maps:get(device_id, Certificate, undefined)) =:= ias_html:text(DeviceId).
+
+issued_for_binding(Certificate, {selected_device, DeviceId}) ->
+    issued_for_selected_device(Certificate, DeviceId);
+issued_for_binding(_Certificate, _Binding) ->
+    false.
+
 demo_issued_certificate(#{source := certificate_issue_demo}) -> true;
 demo_issued_certificate(_) -> false.
+
+request_certificate_with_device_csr_panel(Draft) ->
+    WizardId = maps:get(id, Draft),
+    KeyRef = device_key_ref(Draft),
+    SubjectCN = suggested_certificate_cn(Draft),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Request Certificate from CA using Device CSR")},
+        #p{style = <<"font-size:12px;color:#64748b;line-height:1.45;">>,
+           body = ias_html:text("Generate the CSR on the Device using the device-owned private key. Submit only client.csr to IAS; IAS never receives or stores the private key.")},
+        #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
+           body = ias_html:text("This command runs on the Device. Only client.csr is submitted to IAS.")},
+        #pre{style = <<"margin:8px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;">>,
+             body = ias_html:text(device_csr_command(KeyRef, SubjectCN))},
+        #panel{style = <<"margin:8px 0;">>, body = [
+            #label{for = wizard_device_csr_file,
+                   style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
+                   body = ias_html:text("Upload .csr / .pem")},
+            #input{id = wizard_device_csr_file,
+                   type = <<"file">>,
+                   accept = <<".csr,.pem,application/pkcs10">>,
+                   onchange = device_csr_upload_js()},
+            #span{id = wizard_device_csr_file_name,
+                  style = <<"display:block;margin-top:4px;font-size:12px;color:#64748b;">>,
+                  body = ias_html:text("No file selected")}
+        ]},
+        #panel{style = <<"margin:8px 0;">>, body = [
+            #label{for = wizard_device_csr_pem,
+                   style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
+                   body = ias_html:text("CSR PEM")},
+            #textarea{id = wizard_device_csr_pem, rows = 8,
+                      placeholder = <<"-----BEGIN CERTIFICATE REQUEST-----
+...
+-----END CERTIFICATE REQUEST-----">>,
+                      style = <<"width:100%;font-family:monospace;box-sizing:border-box;">>}
+        ]},
+        #panel{style = <<"margin-top:12px;">>, body = [
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Request Certificate from CA using Device CSR"),
+                  source = [wizard_device_csr_pem],
+                  postback = {wizard_request_device_csr_certificate, WizardId}}
+        ]}
+    ]}.
+
+device_key_ref(Draft) ->
+    case ias_provisioning_wizard_store:selected_device(Draft) of
+        {ok, Device} -> maps:get(private_key_ref, Device, <<"client.key">>);
+        _ -> <<"client.key">>
+    end.
+
+device_csr_command(KeyRef, SubjectCN) ->
+    ias_html:join([<<"openssl req -new \\\n  -key ">>, ias_html:text(KeyRef),
+                   <<" \\\n  -out client.csr \\\n  -subj \"/CN=">>,
+                   ias_html:text(SubjectCN), <<"\"">>]).
+
+device_csr_upload_js() ->
+    <<
+        "var file=this.files && this.files[0];",
+        "if (!file) { return false; }",
+        "var lower=(file.name || '').toLowerCase();",
+        "if (!lower.endsWith('.csr') && !lower.endsWith('.pem')) {",
+        "alert('Please select a .csr or .pem file.');",
+        "this.value='';",
+        "return false;",
+        "}",
+        "var fileName=document.getElementById('wizard_device_csr_file_name');",
+        "if (fileName) { fileName.textContent=file.name; }",
+        "var reader=new FileReader();",
+        "reader.onload=function(e) {",
+        "var target=document.getElementById('wizard_device_csr_pem');",
+        "if (target) { target.value=e.target.result || ''; }",
+        "};",
+        "reader.readAsText(file);",
+        "return false;"
+    >>.
 
 issue_client_certificate_panel(WizardId) ->
     Users = ias_demo_store:users(),
@@ -1277,6 +1382,32 @@ configured_ca_error_text({material_store_failed, Reason}) ->
     ias_html:join([<<"Configured CA trust anchor material could not be stored: ">>,
                    ias_html:text(Reason)]);
 configured_ca_error_text(Reason) ->
+    ias_html:text(Reason).
+
+device_csr_error_text(malformed_csr) ->
+    <<"Malformed PKCS#10 CSR PEM.">>;
+device_csr_error_text(exactly_one_csr_required) ->
+    <<"Exactly one PKCS#10 CSR PEM is required.">>;
+device_csr_error_text(private_key_supplied) ->
+    <<"Private key material was supplied. Submit only client.csr.">>;
+device_csr_error_text(csr_signature_invalid) ->
+    <<"CSR signature verification failed. Regenerate the CSR on the Device.">>;
+device_csr_error_text(unsafe_subject) ->
+    <<"CSR subject is missing or contains unsafe characters.">>;
+device_csr_error_text(certificate_csr_public_key_mismatch) ->
+    <<"Issued certificate public key does not match the submitted CSR.">>;
+device_csr_error_text({invalid_certificate_chain, _Reason}) ->
+    <<"Issued certificate does not validate against the configured CA trust anchor.">>;
+device_csr_error_text({configured_ca_unavailable, Reason}) ->
+    ias_html:join([<<"Configured CA trust anchor is unavailable: ">>,
+                   configured_ca_error_text(Reason)]);
+device_csr_error_text({cmp_failed, ca_unavailable}) ->
+    <<"CA/CMP service is unavailable.">>;
+device_csr_error_text({cmp_failed, Reason}) ->
+    ias_html:join([<<"CA/CMP enrollment failed: ">>, ias_html:text(Reason)]);
+device_csr_error_text(device_required) ->
+    <<"Select a Device before requesting a certificate with a Device CSR.">>;
+device_csr_error_text(Reason) ->
     ias_html:text(Reason).
 
 certificate_link(undefined) -> undefined;

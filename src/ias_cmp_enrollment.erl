@@ -1,5 +1,6 @@
 -module(ias_cmp_enrollment).
--export([enroll/1, enrollment_cn/1]).
+-export([enroll/1, enroll_external_csr/1, external_csr_cmp_args/3,
+         enrollment_cn/1]).
 -include_lib("kernel/include/file.hrl").
 
 -define(DEFAULT_OPENSSL, "opt/openssl-3/bin/openssl").
@@ -17,6 +18,73 @@ enroll(#{common_name := CommonName,
             {error, ca_unavailable} -> {error, ca_unavailable}
         end
     end).
+
+enroll_external_csr(#{csr_pem := CsrPem,
+                      common_name := CommonName,
+                      profile := Profile,
+                      server := Server}) ->
+    case ias_csr_validation:validate(CsrPem) of
+        {ok, CsrMetadata} ->
+            with_temp_dir(fun(Dir) ->
+                case ca_available(Server) of
+                    ok -> enroll_external_csr_with_openssl(Dir, CommonName, Profile,
+                                                           Server, CsrMetadata);
+                    {error, ca_unavailable} -> {error, ca_unavailable}
+                end
+            end);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+enroll_external_csr_with_openssl(Dir, CommonName, Profile, Server, CsrMetadata) ->
+    OpenSSL = openssl_path(),
+    CaOpenSSLDir = ca_openssl_dir(),
+    Name = enrollment_name(CommonName),
+    Csr = filename:join(Dir, ias_html:join([Name, <<".csr">>])),
+    Cert = filename:join(Dir, ias_html:join([Name, <<".pem">>])),
+    case executable(OpenSSL) of
+        true ->
+            case filelib:is_dir(CaOpenSSLDir) of
+                true ->
+                    ok = file:write_file(Csr, maps:get(pem, CsrMetadata)),
+                    run_external_csr_steps(OpenSSL, CaOpenSSLDir, Dir, Csr, Cert,
+                                           CommonName, Profile, Server, CsrMetadata);
+                false ->
+                    {error, ias_html:join([<<"CA OpenSSL directory not found: ">>,
+                                           ias_html:text(CaOpenSSLDir)])}
+            end;
+        false ->
+            {error, ias_html:join([<<"OpenSSL 3 binary not executable: ">>,
+                                   ias_html:text(OpenSSL)])}
+    end.
+
+run_external_csr_steps(OpenSSL, CaOpenSSLDir, Dir, Csr, Cert,
+                       CommonName, Profile, Server, CsrMetadata) ->
+    Steps = [
+        {cmp, CaOpenSSLDir, external_csr_cmp_args(Server, Csr, Cert)},
+        {metadata, Dir, [<<"x509">>, <<"-in">>, Cert,
+                         <<"-noout">>, <<"-subject">>, <<"-issuer">>, <<"-dates">>]}
+    ],
+    run_steps(OpenSSL, Steps, #{
+        certificate_path => Cert,
+        requested_cn => maps:get(subject_cn, CsrMetadata, ias_html:text(CommonName)),
+        enrollment_cn => maps:get(subject_cn, CsrMetadata, ias_html:text(CommonName)),
+        profile => ias_html:text(Profile),
+        cmp_server => ias_html:text(Server),
+        csr_fingerprint => maps:get(csr_fingerprint, CsrMetadata),
+        csr_public_key_fingerprint => maps:get(public_key_fingerprint, CsrMetadata)
+    }).
+
+external_csr_cmp_args(Server, Csr, Cert) ->
+    [<<"cmp">>,
+     <<"-cmd">>, <<"p10cr">>,
+     <<"-server">>, Server,
+     <<"-secret">>, <<"pass:", ?DEFAULT_SECRET>>,
+     <<"-ref">>, ?DEFAULT_REF,
+     <<"-path">>, <<".">>,
+     <<"-srvcert">>, <<"synrc.pem">>,
+     <<"-certout">>, Cert,
+     <<"-csr">>, Csr].
 
 enroll_with_openssl(Dir, CommonName, EnrollmentCN, Curve, Server) ->
     OpenSSL = openssl_path(),

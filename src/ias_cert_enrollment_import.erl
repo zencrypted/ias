@@ -27,6 +27,12 @@ certificate_demo_object(Enrollment) ->
       enrollment_cn => maps:get(enrollment_cn, Enrollment, <<"not found">>),
       profile => maps:get(profile, Enrollment, <<"secp384r1">>),
       cmp_server => maps:get(cmp_server, Enrollment, <<"127.0.0.1:8829">>),
+      device_id => maps:get(device_id, Enrollment, undefined),
+      enrollment_id => maps:get(enrollment_id, Enrollment, undefined),
+      csr_fingerprint => maps:get(csr_fingerprint, Enrollment, undefined),
+      csr_public_key_fingerprint => maps:get(csr_public_key_fingerprint, Enrollment, undefined),
+      public_key_fingerprint => maps:get(public_key_fingerprint, Enrollment, undefined),
+      issued_via => maps:get(issued_via, Enrollment, undefined),
       private_key_stored => false,
       certificate_body_stored => false}.
 

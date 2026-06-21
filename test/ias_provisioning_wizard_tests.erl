@@ -712,8 +712,9 @@ client_certificate_step_renders_selection_and_issue_test() ->
         maps:get(id, Draft0), #{current_step => client_certificate}),
     Html = render(ias_provisioning_wizard:content_for({draft, Step})),
     ?assertMatch({_, _}, binary:match(Html, <<"Use Existing Client Certificate">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Issue New Demo Client Certificate">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Issue and Select Client Certificate">>)).
+    ?assertMatch({_, _}, binary:match(Html, <<"Request Certificate from CA using Device CSR">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"CSR PEM">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"openssl req -new">>)).
 
 client_certificate_step_links_to_ca_enrollment_with_wizard_context_test() ->
     ias_demo_state:clear(),
@@ -732,6 +733,23 @@ client_certificate_step_links_to_ca_enrollment_with_wizard_context_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"wizard_id=", (maps:get(id, Draft1))/binary>>)),
     ?assertMatch({_, _}, binary:match(Html, <<"device_id=wizard_enroll_context_device">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"suggested_cn=Wizard%20Device">>)).
+
+client_certificate_step_shows_device_csr_command_with_key_ref_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_device_csr_command_device">>),
+    UpdatedDevice = maps:merge(Device, #{private_key_ref => <<"keys/client.key">>}),
+    ias_demo_store:put_runtime_object(UpdatedDevice),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate,
+                                device_id => maps:get(id, UpdatedDevice)}),
+
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"This command runs on the Device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"keys/client.key">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"client.csr">>)).
 
 certificate_enrollment_page_renders_wizard_return_context_test() ->
     Context = #{wizard_id => <<"wizard_return_context">>,
