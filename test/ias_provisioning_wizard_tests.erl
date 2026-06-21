@@ -589,6 +589,57 @@ client_certificate_step_renders_selection_and_issue_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Issue New Demo Client Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Issue and Select Client Certificate">>)).
 
+client_certificate_missing_body_renders_disabled_selection_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    _Certificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_missing_pem_client">>, source => certificate_issue_demo,
+          certificate_role => client_certificate, subject_cn => <<"missing-pem-client">>}),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate}),
+
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Demo Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"PEM Missing">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"PEM Required">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Select — PEM required">>)).
+
+client_certificate_cmp_material_renders_recommended_badges_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Certificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_cmp_client">>, source => cmp_demo_enrollment,
+          certificate_role => client_certificate, subject_cn => <<"cmp-client">>}),
+    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
+    {ok, _} = ias_certificate_material:put(maps:get(id, Certificate),
+                                           client_certificate, Pem, cmp_response),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate}),
+
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Recommended">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Issued by CA">>)).
+
+client_certificate_step_displays_pem_helper_text_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate}),
+
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+
+    ?assertMatch({_, _}, binary:match(
+        Html,
+        <<"Only certificates with public PEM material can be used for OVPN provisioning.">>)),
+    ?assertMatch({_, _}, binary:match(
+        Html,
+        <<"CMP-issued certificates are recommended">>)).
+
 valid_ca_fields() ->
     Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
     #{name => <<"Wizard Demo CA">>, subject => <<"CN=Wizard Demo CA">>, pem => Pem}.

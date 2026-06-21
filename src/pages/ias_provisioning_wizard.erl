@@ -829,6 +829,8 @@ existing_client_certificates_panel(Draft) ->
     SelectedId = maps:get(client_certificate_id, Draft, undefined),
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Use Existing Client Certificate")},
+        #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
+           body = ias_html:text("Only certificates with public PEM material can be used for OVPN provisioning. CMP-issued certificates are recommended because they already contain CA-issued public certificate material.")},
         existing_client_certificates(Certificates, Draft, WizardId, SelectedId)
     ]}.
 
@@ -845,8 +847,12 @@ client_certificate_choice(Certificate, Draft, WizardId, SelectedId) ->
     Material = ias_certificate_material:status(CertificateId),
     Binding = client_certificate_binding(CertificateId, maps:get(device_id, Draft, undefined)),
     #panel{style = client_choice_style(IsSelected, Material, Binding), body = [
-        #h3{style = <<"margin:0 0 6px;font-size:14px;overflow-wrap:anywhere;">>,
-            body = ias_html:text(maps:get(subject_cn, Certificate, CertificateId))},
+        #panel{style = <<"display:flex;align-items:flex-start;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:6px;">>,
+               body = [
+                   #h3{style = <<"margin:0;font-size:14px;overflow-wrap:anywhere;">>,
+                       body = ias_html:text(maps:get(subject_cn, Certificate, CertificateId))},
+                   client_certificate_badges(Certificate, Material, Binding)
+               ]},
         #p{style = <<"margin:0 0 6px;font-size:12px;color:#64748b;overflow-wrap:anywhere;">>,
            body = ias_html:text(CertificateId)},
         #p{style = <<"margin:0 0 4px;font-size:11px;">>,
@@ -863,9 +869,47 @@ client_certificate_select_action(false, _Material, {other_device, _}, _WizardId,
 client_certificate_select_action(false, {ok, #{material_type := client_certificate}}, _Binding, WizardId, CertificateId) ->
     #link{class = [button, sgreen], body = ias_html:text("Select"),
           postback = {wizard_select_client_certificate, WizardId, CertificateId}};
-client_certificate_select_action(false, _Material, _Binding, WizardId, CertificateId) ->
-    #link{class = [button, more], body = ias_html:text("Select — PEM required"),
-          postback = {wizard_select_client_certificate, WizardId, CertificateId}}.
+client_certificate_select_action(false, _Material, _Binding, _WizardId, _CertificateId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("PEM Required")}.
+
+client_certificate_badges(Certificate, Material, Binding) ->
+    #panel{style = <<"display:flex;gap:5px;flex-wrap:wrap;justify-content:flex-end;">>,
+           body = client_certificate_badge_items(Certificate, Material, Binding)}.
+
+client_certificate_badge_items(Certificate, Material, Binding) ->
+    case Material of
+        {ok, #{material_type := client_certificate}} ->
+            recommended_client_badges(Certificate, Binding);
+        _ ->
+            [relationship_badge("Demo Certificate",
+                                <<"background:#f8fafc;color:#475569;border-color:#cbd5e1;">>),
+             relationship_badge("PEM Missing",
+                                <<"background:#fff7ed;color:#9a3412;border-color:#fdba74;">>)]
+    end.
+
+recommended_client_badges(Certificate, Binding) ->
+    case compatible_client_binding(Binding) of
+        true ->
+            Base = [relationship_badge("Recommended",
+                                       <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>)],
+            case cmp_issued_certificate(Certificate) of
+                true ->
+                    Base ++ [relationship_badge("Issued by CA",
+                                                <<"background:#eff6ff;color:#1d4ed8;border-color:#93c5fd;">>)];
+                false ->
+                    Base
+            end;
+        false ->
+            []
+    end.
+
+compatible_client_binding(unbound) -> true;
+compatible_client_binding({selected_device, _DeviceId}) -> true;
+compatible_client_binding(_) -> false.
+
+cmp_issued_certificate(#{source := cmp_demo_enrollment}) -> true;
+cmp_issued_certificate(#{source := cmp_response}) -> true;
+cmp_issued_certificate(_) -> false.
 
 issue_client_certificate_panel(WizardId) ->
     Users = ias_demo_store:users(),
