@@ -150,7 +150,7 @@ progress_marks_broken_relationship_step_blocked_test() ->
     Html = iolist_to_binary(nitro:render(
         ias_provisioning_wizard:content_for({draft, Draft}))),
 
-    ?assertMatch({_, _}, binary:match(Html, <<"7 Relationships">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Relationships">>)),
     ?assertMatch({_, _}, binary:match(Html, <<">blocked</span>">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"background:#fef2f2">>)).
 

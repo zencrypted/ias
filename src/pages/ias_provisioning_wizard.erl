@@ -592,11 +592,9 @@ ca_certificate_action(Readiness, CaId) ->
 client_certificate_action(Readiness, ClientId) ->
     CertificateStatus = readiness_status(client_certificate, Readiness),
     MaterialStatus = readiness_status(client_certificate_pem, Readiness),
-    VerificationStatus = readiness_status(client_verification, Readiness),
     case readiness_statuses_positive([
              {CertificateStatus, [trusted]},
-             {MaterialStatus, [available]},
-             {VerificationStatus, [verified]}
+             {MaterialStatus, [available]}
          ]) of
         true -> undefined;
         false -> object_link_action("Open Client Certificate", ClientId)
