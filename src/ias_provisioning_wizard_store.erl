@@ -7,6 +7,8 @@
          clear/0,
          next/1,
          back/1,
+         select_device/2,
+         selected_device/1,
          steps/0,
          step_title/1,
          step_description/1,
@@ -85,6 +87,20 @@ next(Id) ->
 back(Id) ->
     move(Id, previous_step).
 
+select_device(Id, DeviceId) ->
+    case valid_device(DeviceId) of
+        {ok, Device} ->
+            update(Id, #{device_id => maps:get(id, Device)});
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+selected_device(Draft) when is_map(Draft) ->
+    case maps:get(device_id, Draft, undefined) of
+        undefined -> not_selected;
+        DeviceId -> valid_device(DeviceId)
+    end.
+
 steps() ->
     [scheme,
      device,
@@ -110,7 +126,7 @@ step_title(Step) -> ias_html:text(Step).
 step_description(scheme) ->
     <<"Choose the provisioning scenario. Stage 24A enables device-bound VPN profile orchestration only.">>;
 step_description(device) ->
-    <<"Select or create the runtime Device that will own the VPN profile. Selection is added in a later stage.">>;
+    <<"Select an existing runtime Device or create a new demo Device that will own the VPN profile.">>;
 step_description(security_profile) ->
     <<"Bind a Security Profile through the existing relationship flow in a later stage.">>;
 step_description(vpn_service) ->
@@ -141,13 +157,38 @@ move(Id, Direction) ->
     case get(Id) of
         {ok, Draft} ->
             Current = maps:get(current_step, Draft, scheme),
-            Target = case Direction of
-                         next_step -> adjacent_step(Current, 1);
-                         previous_step -> adjacent_step(Current, -1)
-                     end,
-            update(Id, #{current_step => Target});
+            case movement_allowed(Direction, Current, Draft) of
+                ok ->
+                    Target = case Direction of
+                                 next_step -> adjacent_step(Current, 1);
+                                 previous_step -> adjacent_step(Current, -1)
+                             end,
+                    update(Id, #{current_step => Target});
+                {error, Reason} ->
+                    {error, Reason}
+            end;
         not_found ->
             {error, not_found}
+    end.
+
+movement_allowed(next_step, device, Draft) ->
+    case selected_device(Draft) of
+        {ok, _Device} -> ok;
+        not_selected -> {error, device_required};
+        {error, _Reason} -> {error, selected_device_missing}
+    end;
+movement_allowed(_Direction, _Current, _Draft) ->
+    ok.
+
+valid_device(undefined) ->
+    {error, device_required};
+valid_device(<<>>) ->
+    {error, device_required};
+valid_device(DeviceId) ->
+    case ias_demo_store:get(normalize_id(DeviceId)) of
+        {ok, #{kind := device} = Device} -> {ok, Device};
+        {ok, _Other} -> {error, invalid_device};
+        not_found -> {error, selected_device_missing}
     end.
 
 adjacent_step(Current, Delta) ->

@@ -23,12 +23,99 @@ scenario_selection_starts_device_step_test() ->
     ?assertEqual(device, maps:get(current_step, Draft)).
 
 next_and_back_test() ->
+    ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_device_next">>),
     {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
-    {ok, Draft1} = ias_provisioning_wizard_store:next(maps:get(id, Draft0)),
+    {ok, Selected} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft0), maps:get(id, Device)),
+    {ok, Draft1} = ias_provisioning_wizard_store:next(maps:get(id, Selected)),
     ?assertEqual(security_profile, maps:get(current_step, Draft1)),
     {ok, Draft2} = ias_provisioning_wizard_store:back(maps:get(id, Draft1)),
     ?assertEqual(device, maps:get(current_step, Draft2)).
+
+
+device_step_requires_selection_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    ?assertEqual({error, device_required},
+                 ias_provisioning_wizard_store:next(maps:get(id, Draft))),
+    {ok, StillDevice} = ias_provisioning_wizard_store:get(maps:get(id, Draft)),
+    ?assertEqual(device, maps:get(current_step, StillDevice)).
+
+existing_device_can_be_selected_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_existing_device">>),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Selected} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft), maps:get(id, Device)),
+    ?assertEqual(maps:get(id, Device), maps:get(device_id, Selected)),
+    ?assertMatch({ok, _}, ias_provisioning_wizard_store:selected_device(Selected)).
+
+created_device_can_be_selected_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Device} = ias_manual_device:create(#{name => <<"Wizard Laptop">>,
+                                               type => <<"vpn-client">>,
+                                               tunnel_device => <<"tun">>,
+                                               transport => <<"udp">>,
+                                               endpoint => <<"vpn.example.com">>}),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Selected} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft), maps:get(id, Device)),
+    ?assertEqual(maps:get(id, Device), maps:get(device_id, Selected)).
+
+stale_selected_device_blocks_next_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_stale_device">>),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Selected} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft), maps:get(id, Device)),
+    ok = ias_demo_store:delete_runtime_object(device, maps:get(id, Device)),
+    ?assertEqual({error, selected_device_missing},
+                 ias_provisioning_wizard_store:next(maps:get(id, Selected))).
+
+back_preserves_device_selection_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_preserved_device">>),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Selected} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft), maps:get(id, Device)),
+    {ok, ProfileStep} = ias_provisioning_wizard_store:next(maps:get(id, Selected)),
+    {ok, DeviceStep} = ias_provisioning_wizard_store:back(maps:get(id, ProfileStep)),
+    ?assertEqual(maps:get(id, Device), maps:get(device_id, DeviceStep)).
+
+cancel_does_not_delete_created_device_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_cancel_device">>),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, _Selected} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft), maps:get(id, Device)),
+    ok = ias_provisioning_wizard_store:delete(maps:get(id, Draft)),
+    ?assertMatch({ok, _}, ias_demo_store:get(maps:get(id, Device))).
+
+
+device_next_is_disabled_until_selection_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    Html = render(ias_provisioning_wizard:content_for({draft, Draft})),
+    ?assertMatch({_, _}, binary:match(Html, <<">Next</span>">>)).
+
+device_step_renders_selection_and_creation_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    _Device = demo_device(<<"wizard_render_device">>),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    Html = render(ias_provisioning_wizard:content_for({draft, Draft})),
+    ?assertMatch({_, _}, binary:match(Html, <<"Use Existing Device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Create New Demo Device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Create and Select Device">>)).
 
 step_boundaries_test() ->
     ias_provisioning_wizard_store:clear(),
@@ -50,9 +137,13 @@ cancel_deletes_draft_test() ->
     ?assertEqual(not_found, ias_provisioning_wizard_store:get(Id)).
 
 refresh_get_restores_current_step_test() ->
+    ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_refresh_device">>),
     {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
-    {ok, Draft1} = ias_provisioning_wizard_store:next(maps:get(id, Draft0)),
+    {ok, Selected} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft0), maps:get(id, Device)),
+    {ok, Draft1} = ias_provisioning_wizard_store:next(maps:get(id, Selected)),
     {ok, Restored} = ias_provisioning_wizard_store:get(maps:get(id, Draft1)),
     ?assertEqual(security_profile, maps:get(current_step, Restored)).
 
@@ -90,6 +181,16 @@ bootstrap_page_is_packaged_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"<title>Provisioning Wizard</title>">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"id=\"stand\"">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"N2O_start()">>)).
+
+demo_device(Id) ->
+    ias_demo_store:put_runtime_object(#{id => Id,
+                                        kind => device,
+                                        source => manual_device,
+                                        name => <<"Wizard Device">>,
+                                        type => <<"vpn-client">>,
+                                        tunnel_device => <<"tun">>,
+                                        transport => <<"udp">>,
+                                        endpoint => <<"vpn.example.com">>}).
 
 render(Doc) ->
     iolist_to_binary(nitro:render(Doc)).
