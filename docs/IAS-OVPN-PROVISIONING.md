@@ -297,3 +297,27 @@ Demo State export/import does not include the material table or any PEM body.
 Clearing or importing Demo State clears the volatile public material store so a
 restored metadata snapshot cannot accidentally retain unrelated certificate
 bodies.
+
+### X.509 and Assembly Validation
+
+Device-bound OVPN assembly validates certificate material at the delivery
+boundary before any `.ovpn` body is generated.
+
+The selected CA trust anchor must decode as X.509, contain
+`basicConstraints CA=TRUE`, include `keyCertSign` when Key Usage is present, and
+be currently valid in strict mode. The selected client certificate must decode as
+X.509, must not be a CA certificate, must be currently valid in strict mode, and
+must include `clientAuth` when Extended Key Usage is present.
+
+Assembly also requires distinct CA/client fingerprints and, in strict mode, the
+client certificate must verify against the selected CA. OVPN directive values are
+validated at the same boundary: protocol is limited to `udp` or `tcp`, port must
+be `1..65535`, endpoints and tunnel devices must not contain injection
+characters, and the device-owned key reference must remain a safe relative path.
+
+The server-side `certificate_validation_mode` application setting defaults to
+`strict`. A development mode may relax validity and chain checks for demo
+fixtures, but it is not switchable from request parameters or wizard UI and does
+not bypass PEM parsing, role separation, identical fingerprint checks, secret
+sanitization or OVPN directive injection protections. Transactions created in
+development mode record the bypass metadata and render a visible warning.

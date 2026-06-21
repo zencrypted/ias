@@ -20,23 +20,32 @@ validate_fields(_Name, _Subject, <<>>) ->
     {error, <<"Certificate PEM is required">>};
 validate_fields(_Name, _Subject, Pem) ->
     case ias_certificate_material:validate_public(ca_certificate, Pem) of
-        {ok, _NormalizedPem} -> ok;
+        {ok, NormalizedPem} ->
+            case ias_x509_validation:validate_certificate(ca_certificate, NormalizedPem) of
+                {ok, _Metadata} -> ok;
+                {error, Reason} -> {error, Reason}
+            end;
         {error, Reason} -> {error, Reason}
     end.
 
 register_valid(Name, Subject, Pem) ->
     case ias_certificate_material:validate_public(ca_certificate, Pem) of
         {ok, NormalizedPem} ->
-            Certificate = certificate_object(Name, Subject),
-            Stored = ias_demo_store:put_runtime_object(Certificate),
-            case ias_certificate_material:put(maps:get(id, Stored), ca_certificate,
-                                              NormalizedPem, operator_load) of
-                {ok, _Status} ->
-                    {ok, Stored};
+            case ias_x509_validation:validate_certificate(ca_certificate, NormalizedPem) of
+                {ok, _Metadata} ->
+                    Certificate = certificate_object(Name, Subject),
+                    Stored = ias_demo_store:put_runtime_object(Certificate),
+                    case ias_certificate_material:put(maps:get(id, Stored), ca_certificate,
+                                                      NormalizedPem, operator_load) of
+                        {ok, _Status} ->
+                            {ok, Stored};
+                        {error, Reason} ->
+                            ok = ias_demo_store:delete_runtime_object(certificate,
+                                                                      maps:get(id, Stored)),
+                            {error, material_store_error(Reason)}
+                    end;
                 {error, Reason} ->
-                    ok = ias_demo_store:delete_runtime_object(certificate,
-                                                              maps:get(id, Stored)),
-                    {error, material_store_error(Reason)}
+                    {error, Reason}
             end;
         {error, Reason} ->
             {error, Reason}

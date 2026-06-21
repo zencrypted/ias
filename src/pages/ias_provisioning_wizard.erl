@@ -379,11 +379,13 @@ provisioning_created_panel(Draft, Transaction) ->
             {"Authorization", maps:get(authorization, Transaction, deny)},
             {"Material", maps:get(material_status, Transaction, blocked)},
             {"Assembly", maps:get(assembly_status, Transaction, blocked)},
+            {"Certificate Validation", maps:get(certificate_validation_mode, Transaction, strict)},
             {"Artifact", maps:get(artifact_status, Transaction, unavailable)},
             {"Delivery", maps:get(delivery_status, Transaction, not_ready)},
             {"Expires At", maps:get(expires_at, Transaction, undefined)},
             {"Completed At", maps:get(completed_at, Draft, undefined)}
         ]),
+        wizard_certificate_validation_warning(Transaction),
         #panel{style = <<"margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>, body = [
             #link{url = demo_object_url(ProvisioningId), class = [button, sgreen],
                   body = ias_html:text("Open Provisioning Transaction")},
@@ -403,6 +405,12 @@ wizard_download_device_bound_ovpn_action(#{mode := device_bound,
           postback = {wizard_download_device_bound_ovpn, ProvisioningId}};
 wizard_download_device_bound_ovpn_action(_Transaction) ->
     #span{body = <<>>}.
+
+wizard_certificate_validation_warning(#{certificate_validation_bypass := true}) ->
+    wizard_notice("Development certificate validation mode",
+                  "Validity and chain checks may be relaxed for demo fixtures; PEM parsing, role separation, fingerprint checks and OVPN injection protections remain enforced.");
+wizard_certificate_validation_warning(_Transaction) ->
+    #panel{body = []}.
 
 provisioning_create_panel(Draft, #{ready := true}) ->
     #panel{class = <<"ias-status-card">>, body = [

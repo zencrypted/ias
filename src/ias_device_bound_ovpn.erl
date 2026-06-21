@@ -97,8 +97,9 @@ build_artifact(Transaction) ->
                   fun(ClientPem) ->
                     with_key_reference(Device,
                       fun(KeyRef) ->
-                        case endpoint(Service) of
-                            {ok, Host, Port, Protocol} ->
+                        case assembly_validation(Device, Service, KeyRef, CaPem, ClientPem) of
+                            {ok, Validation} ->
+                                {ok, Host, Port, Protocol} = endpoint(Service),
                                 Body = ovpn_body(Device, Host, Port, Protocol,
                                                  CaPem, ClientPem, KeyRef),
                                 Filename = safe_filename(maps:get(id, Device, <<"device">>)),
@@ -106,7 +107,11 @@ build_artifact(Transaction) ->
                                        body => Body,
                                        sha256 => sha256(Body),
                                        private_key_provider => <<"device_file">>,
-                                       private_key_ref => KeyRef}};
+                                       private_key_ref => KeyRef,
+                                       certificate_validation_mode =>
+                                           maps:get(mode, Validation, strict),
+                                       certificate_validation_bypass =>
+                                           maps:get(development_bypass, Validation, false)}};
                             {error, Reason} ->
                                 {error, Reason}
                         end
@@ -158,6 +163,17 @@ with_key_reference(Device, Fun) ->
             {error, <<"Device-owned private key provider is unsupported.">>};
         {error, _Reason} ->
             {error, <<"Device-owned private key reference is invalid.">>}
+    end.
+
+assembly_validation(Device, Service, KeyRef, CaPem, ClientPem) ->
+    case ias_x509_validation:validate_pair(CaPem, ClientPem) of
+        {ok, Validation} ->
+            case ias_x509_validation:validate_ovpn_inputs(Device, Service, KeyRef) of
+                ok -> {ok, Validation};
+                {error, Reason} -> {error, Reason}
+            end;
+        {error, Reason} ->
+            {error, Reason}
     end.
 
 endpoint(Service) ->

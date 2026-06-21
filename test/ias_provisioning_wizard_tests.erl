@@ -885,8 +885,19 @@ client_certificate_step_displays_pem_helper_text_test() ->
         <<"CMP-issued certificates are recommended">>)).
 
 valid_ca_fields() ->
-    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
-    #{name => <<"Wizard Demo CA">>, subject => <<"CN=Wizard Demo CA">>, pem => Pem}.
+    #{name => <<"Wizard Demo CA">>,
+      subject => <<"CN=Wizard Demo CA">>,
+      pem => <<"-----BEGIN CERTIFICATE-----\n"
+               "MIIBojCCAUigAwIBAgIUAwOYI6HpKSa8g5wpOfhRv6uwqX4wCgYIKoZIzj0EAwIw\n"
+               "FjEUMBIGA1UEAwwLSUFTIFRlc3QgQ0EwHhcNMjYwNjIxMTIxMzA0WhcNMzYwNjE4\n"
+               "MTIxMzA0WjAWMRQwEgYDVQQDDAtJQVMgVGVzdCBDQTBZMBMGByqGSM49AgEGCCqG\n"
+               "SM49AwEHA0IABJAU2K3M/RJxUbnRyRMn/q/pKUvxyeSNfEd3ObgqUTI6EuoV7zXi\n"
+               "JwO7p523tuE4CYTi8cRXoASS+y/QyOJHCCWjdDByMB0GA1UdDgQWBBRBopAKdb8i\n"
+               "UUq0Wq/3vCdgOotuHzAfBgNVHSMEGDAWgBRBopAKdb8iUUq0Wq/3vCdgOotuHzAP\n"
+               "BgNVHRMBAf8EBTADAQH/MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEG\n"
+               "MAoGCCqGSM49BAMCA0gAMEUCIQDhHUDdaai3Q1/XU503lYPjc7s5c9uKSapnHS8h\n"
+               "/10rEAIgCOtblJiLMv40z/YBgZrBAli1wolz7X5FSYuG24LTCGk=\n"
+               "-----END CERTIFICATE-----\n">>}.
 
 auto_client_certificate_draft() ->
     ias_demo_state:clear(),

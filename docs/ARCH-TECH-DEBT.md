@@ -415,13 +415,16 @@ Medium
 
 ## TD-009: Demo CA Role Is Operator-Asserted
 
-**Status:** Open
+**Status:** Resolved by X.509 certificate validation
 
 **Area:** Certificate Registration / X.509 Validation
 
 ### Problem
 
-Manual Demo CA Certificate registration validates that the submitted material contains exactly one public X.509 certificate PEM block, but it does not yet verify that the decoded certificate is actually permitted to act as a certification authority.
+Manual Demo CA Certificate registration used to validate that submitted material
+contained exactly one public X.509 certificate PEM block, but did not verify that
+the decoded certificate was actually permitted to act as a certification
+authority.
 
 The runtime metadata currently trusts the operator-selected role:
 
@@ -430,33 +433,30 @@ certificate_role: ca_certificate
 material_type: ca_certificate
 ```
 
-A syntactically valid leaf certificate can therefore be registered as a demo CA certificate even when its X.509 extensions do not contain an affirmative CA constraint.
+A syntactically valid leaf certificate could therefore be registered as a demo
+CA certificate even when its X.509 extensions did not contain an affirmative CA
+constraint.
 
-### Current Impact
+### Resolution
 
-Medium.
+IAS now validates certificate material by semantic role through
+`ias_x509_validation`.
 
-Relationship constraints prevent explicitly classified client certificates from being linked as VPN service CA certificates. However, manual CA registration can still introduce incorrectly classified trust material because the role is asserted by the operator rather than derived from the certificate.
+Manual CA trust anchor registration requires a decodable X.509 certificate with
+`basicConstraints CA=TRUE` and, when Key Usage is present, `keyCertSign`.
 
-This is acceptable for the current demo workflow, but it must not be treated as production-grade trust-anchor validation.
+Device-bound OVPN assembly validates the selected CA and client certificate
+roles again, rejects identical CA/client fingerprints, verifies the client
+certificate against the selected CA in strict mode, and rejects unsafe OVPN
+directive values before producing any bundle.
 
-### Desired Direction
-
-Decode the certificate and validate its X.509 extensions before accepting the CA role.
-
-At minimum:
-
-- require `basicConstraints` with `CA = TRUE`;
-- reject certificates with `CA = FALSE` or without an acceptable CA constraint under the selected policy;
-- validate `keyUsage` when present, including `keyCertSign`;
-- preserve a clear distinction between PEM syntax validation and CA-role validation;
-- return an actionable UI error without creating an orphan metadata object or material entry.
-
-If policy-specific exceptions are ever supported, they must be explicit and auditable rather than inferred from names or subjects.
+The lower-level public material store still preserves its role as a volatile PEM
+body store. Semantic role validation is enforced at the CA registration and OVPN
+assembly boundaries where IAS has enough context to make trust decisions.
 
 ### Priority
 
-High before production use
+Closed
 
 ---
 

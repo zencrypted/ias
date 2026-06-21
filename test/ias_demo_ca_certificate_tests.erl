@@ -38,10 +38,17 @@ malformed_and_private_key_pem_are_rejected_test() ->
 
 multiple_pem_blocks_are_rejected_test() ->
     ias_demo_state:clear(),
-    Pem = certificate_pem(<<1,2,3>>),
+    Pem = ca_pem(),
     Result = ias_demo_ca_certificate:register((valid_fields())#{pem => <<Pem/binary, Pem/binary>>}),
 
     ?assertEqual({error, exactly_one_certificate_required}, Result),
+    ?assertEqual([], ias_demo_store:certificates()).
+
+client_certificate_pem_is_rejected_as_ca_trust_anchor_test() ->
+    ias_demo_state:clear(),
+    Result = ias_demo_ca_certificate:register((valid_fields())#{pem => client_pem()}),
+
+    ?assertEqual({error, <<"CA certificate must have basicConstraints CA=TRUE">>}, Result),
     ?assertEqual([], ias_demo_store:certificates()).
 
 required_fields_are_validated_test() ->
@@ -106,7 +113,29 @@ client_certificate_is_still_rejected_as_ca_test() ->
 valid_fields() ->
     #{name => <<"Demo Root CA">>,
       subject => <<"CN=Demo Root CA">>,
-      pem => certificate_pem(<<1,2,3,4>>)}.
+      pem => ca_pem()}.
 
-certificate_pem(Der) ->
-    public_key:pem_encode([{'Certificate', Der, not_encrypted}]).
+ca_pem() ->
+    <<"-----BEGIN CERTIFICATE-----\n"
+      "MIIBojCCAUigAwIBAgIUAwOYI6HpKSa8g5wpOfhRv6uwqX4wCgYIKoZIzj0EAwIw\n"
+      "FjEUMBIGA1UEAwwLSUFTIFRlc3QgQ0EwHhcNMjYwNjIxMTIxMzA0WhcNMzYwNjE4\n"
+      "MTIxMzA0WjAWMRQwEgYDVQQDDAtJQVMgVGVzdCBDQTBZMBMGByqGSM49AgEGCCqG\n"
+      "SM49AwEHA0IABJAU2K3M/RJxUbnRyRMn/q/pKUvxyeSNfEd3ObgqUTI6EuoV7zXi\n"
+      "JwO7p523tuE4CYTi8cRXoASS+y/QyOJHCCWjdDByMB0GA1UdDgQWBBRBopAKdb8i\n"
+      "UUq0Wq/3vCdgOotuHzAfBgNVHSMEGDAWgBRBopAKdb8iUUq0Wq/3vCdgOotuHzAP\n"
+      "BgNVHRMBAf8EBTADAQH/MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEG\n"
+      "MAoGCCqGSM49BAMCA0gAMEUCIQDhHUDdaai3Q1/XU503lYPjc7s5c9uKSapnHS8h\n"
+      "/10rEAIgCOtblJiLMv40z/YBgZrBAli1wolz7X5FSYuG24LTCGk=\n"
+      "-----END CERTIFICATE-----\n">>.
+
+client_pem() ->
+    <<"-----BEGIN CERTIFICATE-----\n"
+      "MIIBZDCCAQqgAwIBAgIUa1wxwBw2MaSaN2Zaqvu/4gWUgDMwCgYIKoZIzj0EAwIw\n"
+      "FjEUMBIGA1UEAwwLSUFTIFRlc3QgQ0EwHhcNMjYwNjIxMTIxMzA0WhcNMzYwNjE4\n"
+      "MTIxMzA0WjAaMRgwFgYDVQQDDA9JQVMgVGVzdCBDbGllbnQwWTATBgcqhkjOPQIB\n"
+      "BggqhkjOPQMBBwNCAAT9brxfCaaU/6LLtCNKICvq1UwQDTH9hS9teBzUhEPuxGcA\n"
+      "0wdjEO6F1kR64uUgAoUYOOlIqj31MWH5CcqBwuuxozIwMDAMBgNVHRMBAf8EAjAA\n"
+      "MAsGA1UdDwQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDAjAKBggqhkjOPQQDAgNI\n"
+      "ADBFAiEA2ye4DSJJuQnZ43+peLW5YsQHGEdGx9r1zuCKHxNcY0kCICsBo8QieTgA\n"
+      "Iq0sBJ/RxQ+E19tAL+EarYX6zvA00gz9\n"
+      "-----END CERTIFICATE-----\n">>.

@@ -404,11 +404,19 @@ ovpn_material_preview(#{kind := ovpn_provisioning} = Object) ->
         key_value_table([
             {"OVPN Assembly", maps:get(assembly_status, Object, blocked)},
             {"Reason", maps:get(assembly_reason, Object, undefined)},
+            {"Certificate Validation", maps:get(certificate_validation_mode, Object, strict)},
             {"Next Step", maps:get(next_step, Object, undefined)}
         ]),
+        certificate_validation_warning(Object),
         device_bound_ovpn_download_panel(Object)
     ]};
 ovpn_material_preview(_Object) ->
+    #panel{body = []}.
+
+certificate_validation_warning(#{certificate_validation_bypass := true}) ->
+    #panel{style = <<"margin-top:10px;padding:10px;border:1px solid rgba(217,119,6,0.28);border-radius:6px;background:#fffbeb;">>,
+           body = ias_html:text("Development certificate validation mode is active. Validity and chain checks may be relaxed for demo fixtures; PEM parsing, role separation, fingerprint checks and OVPN injection protections remain enforced.")};
+certificate_validation_warning(_Object) ->
     #panel{body = []}.
 
 device_bound_ovpn_download_panel(#{mode := device_bound,

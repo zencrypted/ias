@@ -48,6 +48,45 @@ unsupported_provider_blocks_assembly_test() ->
     ?assertEqual({error, <<"Device-owned private key provider is unsupported.">>},
                  ias_device_bound_ovpn:assemble(maps:get(id, Transaction))).
 
+unsafe_endpoint_blocks_assembly_test() ->
+    Transaction = setup_ready_transaction(),
+    {ok, Service} = ias_demo_store:get(<<"device_bound_ovpn_service">>),
+    _Updated = ias_demo_store:put_runtime_object(
+        Service#{remote_host => <<"vpn.example.com\nremote evil 1194">>}),
+
+    ?assertEqual({error, <<"OVPN remote endpoint contains unsafe characters">>},
+                 ias_device_bound_ovpn:assemble(maps:get(id, Transaction))).
+
+unsafe_protocol_blocks_assembly_test() ->
+    Transaction = setup_ready_transaction(),
+    {ok, Service} = ias_demo_store:get(<<"device_bound_ovpn_service">>),
+    _Updated = ias_demo_store:put_runtime_object(
+        Service#{protocol => <<"udp\nscript-security 2">>}),
+
+    ?assertEqual({error, <<"OVPN protocol must be udp or tcp">>},
+                 ias_device_bound_ovpn:assemble(maps:get(id, Transaction))).
+
+ca_client_chain_mismatch_blocks_assembly_test() ->
+    Transaction = setup_ready_transaction(),
+    {ok, Material} = ias_certificate_material:put(<<"device_bound_ovpn_ca">>,
+                                                  ca_certificate,
+                                                  other_ca_pem(),
+                                                  operator_load),
+    ?assertEqual(ca_certificate, maps:get(material_type, Material)),
+
+    ?assertEqual({error, <<"client certificate does not verify against selected CA">>},
+                 ias_device_bound_ovpn:assemble(maps:get(id, Transaction))).
+
+identical_ca_and_client_certificate_blocks_assembly_test() ->
+    Transaction = setup_ready_transaction(),
+    {ok, _} = ias_certificate_material:put(<<"device_bound_ovpn_client">>,
+                                           client_certificate,
+                                           ca_pem(),
+                                           operator_load),
+
+    ?assertEqual({error, <<"client certificate must not have basicConstraints CA=TRUE">>},
+                 ias_device_bound_ovpn:assemble(maps:get(id, Transaction))).
+
 safe_filename_test() ->
     ?assertEqual(<<"device___name.ovpn">>,
                  ias_device_bound_ovpn:safe_filename(<<"device / name">>)).
@@ -99,6 +138,17 @@ ready_transaction_status_is_delivery_ready_test() ->
     ?assertEqual(public_bundle_ready, maps:get(assembly_status, Transaction)),
     ?assertEqual(public_bundle_ready, maps:get(artifact_status, Transaction)),
     ?assertEqual(ready_for_device_import, maps:get(delivery_status, Transaction)).
+
+development_validation_mode_is_recorded_and_visible_test() ->
+    application:set_env(ias, certificate_validation_mode, development),
+    Transaction = setup_ready_transaction(),
+    Html = render(ias_demo:ovpn_material_preview(Transaction)),
+    application:set_env(ias, certificate_validation_mode, strict),
+
+    ?assertEqual(development, maps:get(certificate_validation_mode, Transaction)),
+    ?assertEqual(true, maps:get(certificate_validation_bypass, Transaction)),
+    ?assertMatch({_, _}, binary:match(
+        Html, <<"Development certificate validation mode is active">>)).
 
 setup_completed_wizard() ->
     Draft = setup_ready_wizard(),
@@ -202,13 +252,42 @@ verify_client_certificate(Certificate) ->
     ok.
 
 ca_pem() ->
-    certificate_pem(<<"real-ca-public-pem">>).
+    <<"-----BEGIN CERTIFICATE-----\n"
+      "MIIBojCCAUigAwIBAgIUAwOYI6HpKSa8g5wpOfhRv6uwqX4wCgYIKoZIzj0EAwIw\n"
+      "FjEUMBIGA1UEAwwLSUFTIFRlc3QgQ0EwHhcNMjYwNjIxMTIxMzA0WhcNMzYwNjE4\n"
+      "MTIxMzA0WjAWMRQwEgYDVQQDDAtJQVMgVGVzdCBDQTBZMBMGByqGSM49AgEGCCqG\n"
+      "SM49AwEHA0IABJAU2K3M/RJxUbnRyRMn/q/pKUvxyeSNfEd3ObgqUTI6EuoV7zXi\n"
+      "JwO7p523tuE4CYTi8cRXoASS+y/QyOJHCCWjdDByMB0GA1UdDgQWBBRBopAKdb8i\n"
+      "UUq0Wq/3vCdgOotuHzAfBgNVHSMEGDAWgBRBopAKdb8iUUq0Wq/3vCdgOotuHzAP\n"
+      "BgNVHRMBAf8EBTADAQH/MA8GA1UdEwEB/wQFMAMBAf8wDgYDVR0PAQH/BAQDAgEG\n"
+      "MAoGCCqGSM49BAMCA0gAMEUCIQDhHUDdaai3Q1/XU503lYPjc7s5c9uKSapnHS8h\n"
+      "/10rEAIgCOtblJiLMv40z/YBgZrBAli1wolz7X5FSYuG24LTCGk=\n"
+      "-----END CERTIFICATE-----\n">>.
 
 client_pem() ->
-    certificate_pem(<<"real-client-public-pem">>).
+    <<"-----BEGIN CERTIFICATE-----\n"
+      "MIIBZDCCAQqgAwIBAgIUa1wxwBw2MaSaN2Zaqvu/4gWUgDMwCgYIKoZIzj0EAwIw\n"
+      "FjEUMBIGA1UEAwwLSUFTIFRlc3QgQ0EwHhcNMjYwNjIxMTIxMzA0WhcNMzYwNjE4\n"
+      "MTIxMzA0WjAaMRgwFgYDVQQDDA9JQVMgVGVzdCBDbGllbnQwWTATBgcqhkjOPQIB\n"
+      "BggqhkjOPQMBBwNCAAT9brxfCaaU/6LLtCNKICvq1UwQDTH9hS9teBzUhEPuxGcA\n"
+      "0wdjEO6F1kR64uUgAoUYOOlIqj31MWH5CcqBwuuxozIwMDAMBgNVHRMBAf8EAjAA\n"
+      "MAsGA1UdDwQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDAjAKBggqhkjOPQQDAgNI\n"
+      "ADBFAiEA2ye4DSJJuQnZ43+peLW5YsQHGEdGx9r1zuCKHxNcY0kCICsBo8QieTgA\n"
+      "Iq0sBJ/RxQ+E19tAL+EarYX6zvA00gz9\n"
+      "-----END CERTIFICATE-----\n">>.
 
-certificate_pem(Der) ->
-    public_key:pem_encode([{'Certificate', Der, not_encrypted}]).
+other_ca_pem() ->
+    <<"-----BEGIN CERTIFICATE-----\n"
+      "MIIBpDCCAUqgAwIBAgIURWopEjxBWEnaN96gVY1c6eQ94BAwCgYIKoZIzj0EAwIw\n"
+      "FzEVMBMGA1UEAwwMSUFTIE90aGVyIENBMB4XDTI2MDYyMTEyMTMwNFoXDTM2MDYx\n"
+      "ODEyMTMwNFowFzEVMBMGA1UEAwwMSUFTIE90aGVyIENBMFkwEwYHKoZIzj0CAQYI\n"
+      "KoZIzj0DAQcDQgAEhA1YGntgDsrg8mw+tDlKq4zR8au8OQp/XsnHYqjui77LYm9f\n"
+      "VqFuHPlm/2ULsKt/fCs8eilHxnbLXbRb7BGW46N0MHIwHQYDVR0OBBYEFJcfJ21r\n"
+      "TGXOFCwLwpLrzyKgvPaZMB8GA1UdIwQYMBaAFJcfJ21rTGXOFCwLwpLrzyKgvPaZ\n"
+      "MA8GA1UdEwEB/wQFMAMBAf8wDwYDVR0TAQH/BAUwAwEB/zAOBgNVHQ8BAf8EBAMC\n"
+      "AQYwCgYIKoZIzj0EAwIDSAAwRQIgRT7I9+W19TBl086LDxktsIKM0EiScQ43UamZ\n"
+      "AzHJ+PECIQCGJnudBPRT1ppYr6bzrKQnj1aiowupWBYVm/srkBqfug==\n"
+      "-----END CERTIFICATE-----\n">>.
 
 render(Doc) ->
     iolist_to_binary(nitro:render(Doc)).
