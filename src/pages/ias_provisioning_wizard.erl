@@ -1070,9 +1070,26 @@ client_binding_label({other_device, DeviceId}) -> ias_html:join([<<"other Device
 
 ca_certificate_step(Draft) ->
     #panel{body = [
+        ca_trust_anchor_guidance_panel(),
         selected_ca_certificate_panel(Draft),
         existing_ca_certificates_panel(Draft),
         register_ca_certificate_panel(maps:get(id, Draft))
+    ]}.
+
+ca_trust_anchor_guidance_panel() ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("CA Trust Anchor")},
+        #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
+           body = ias_html:text("The CA PEM selected here is embedded in the generated OVPN profile <ca> block. The client certificate PEM is selected separately in the next step and is embedded in <cert>.")},
+        #panel{style = <<"margin-top:10px;padding:10px;border:1px solid rgba(37,99,235,0.18);border-radius:6px;background:#eff6ff;">>,
+               body = [
+                   #p{style = <<"margin:0 0 6px;font-weight:600;color:#1e3a8a;">>,
+                      body = ias_html:text("SYNRC development CA trust anchor:")},
+                   #pre{style = <<"margin:0 0 8px;font-family:monospace;font-size:12px;white-space:pre-wrap;">>,
+                        body = ias_html:text("synrc/ecc/secp384r1/ca.pem")},
+                   #p{style = <<"margin:0;font-size:12px;color:#334155;line-height:1.45;">>,
+                      body = ias_html:text("Upload the public CA certificate only. Never upload ca.key or a client .cer certificate. This path is a SYNRC development-layout hint, not a universal production path.")}
+               ]}
     ]}.
 
 selected_ca_certificate_panel(Draft) ->
@@ -1081,7 +1098,7 @@ selected_ca_certificate_panel(Draft) ->
             CertificateId = maps:get(id, Certificate, undefined),
             Material = ias_certificate_material:status(CertificateId),
             #panel{style = selected_ca_style(Material), body = [
-                #h3{body = ias_html:text("Selected CA Certificate")},
+                #h3{body = ias_html:text("Selected CA Trust Anchor")},
                 key_value_table([
                     {"Certificate", certificate_link(CertificateId)},
                     {"Name", maps:get(name, Certificate, CertificateId)},
@@ -1093,13 +1110,13 @@ selected_ca_certificate_panel(Draft) ->
                 ca_material_notice(Material)
             ]};
         not_selected ->
-            wizard_notice("No CA Certificate selected", "Select an existing CA certificate with public PEM material or register a new demo CA certificate before continuing.");
+            wizard_notice("No CA Trust Anchor selected", "Select an existing CA trust anchor with public PEM material or register a new demo CA trust anchor before continuing.");
         {error, selected_ca_certificate_missing} ->
-            wizard_error_panel("The CA Certificate stored in this wizard draft no longer exists. Select another CA certificate.");
+            wizard_error_panel("The CA Trust Anchor stored in this wizard draft no longer exists. Select another CA trust anchor.");
         {error, invalid_ca_certificate} ->
-            wizard_error_panel("The selected certificate is not classified as a CA certificate.");
+            wizard_error_panel("The selected certificate is not classified as a CA trust anchor.");
         {error, _Reason} ->
-            wizard_error_panel("The selected CA Certificate is invalid.")
+            wizard_error_panel("The selected CA Trust Anchor is invalid.")
     end.
 
 existing_ca_certificates_panel(Draft) ->
@@ -1108,12 +1125,12 @@ existing_ca_certificates_panel(Draft) ->
     WizardId = maps:get(id, Draft),
     SelectedId = maps:get(ca_certificate_id, Draft, undefined),
     #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("Use Existing CA Certificate")},
+        #h3{body = ias_html:text("Use Existing CA Trust Anchor")},
         existing_ca_certificates(Certificates, WizardId, SelectedId)
     ]}.
 
 existing_ca_certificates([], _WizardId, _SelectedId) ->
-    #p{body = ias_html:text("No explicit CA certificates exist yet. Register one below.")};
+    #p{body = ias_html:text("No explicit CA trust anchors exist yet. Register one below.")};
 existing_ca_certificates(Certificates, WizardId, SelectedId) ->
     #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;">>,
            body = [ca_certificate_choice(Certificate, WizardId, SelectedId)
@@ -1144,13 +1161,13 @@ ca_certificate_select_action(false, _Material, WizardId, CertificateId) ->
 
 register_ca_certificate_panel(WizardId) ->
     #panel{class = <<"ias-status-card">>, body = [
-        #h3{body = ias_html:text("Register New Demo CA Certificate")},
+        #h3{body = ias_html:text("Register New Demo CA Trust Anchor")},
         wizard_input_row("Name", wizard_ca_certificate_name, <<>>),
         wizard_input_row("Subject", wizard_ca_certificate_subject, <<"CN=Demo CA">>),
         #panel{style = <<"margin:8px 0;">>, body = [
             #label{for = wizard_ca_certificate_pem,
                    style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
-                   body = ias_html:text("Certificate PEM")},
+                   body = ias_html:text("Public CA Certificate PEM")},
             #textarea{id = wizard_ca_certificate_pem, rows = 8,
                       placeholder = <<"-----BEGIN CERTIFICATE-----
 ...
@@ -1159,7 +1176,7 @@ register_ca_certificate_panel(WizardId) ->
         ]},
         #panel{style = <<"margin-top:12px;">>, body = [
             #link{class = [button, sgreen],
-                  body = ias_html:text("Register and Select CA Certificate"),
+                  body = ias_html:text("Register and Select CA Trust Anchor"),
                   source = [wizard_ca_certificate_name, wizard_ca_certificate_subject,
                             wizard_ca_certificate_pem],
                   postback = {wizard_register_ca_certificate, WizardId}}
@@ -1190,9 +1207,9 @@ ca_material_fingerprint({ok, Status}) -> maps:get(fingerprint_sha256, Status, un
 ca_material_fingerprint(_) -> undefined.
 
 ca_material_notice({ok, #{material_type := ca_certificate}}) ->
-    wizard_notice("CA material available", "The public CA certificate PEM is ready for later relationship and provisioning steps.");
+    wizard_notice("CA trust anchor material available", "The public CA certificate PEM is ready for the generated OVPN <ca> block.");
 ca_material_notice(_) ->
-    wizard_error_panel("Public CA certificate PEM is unavailable. Load material on the certificate detail page or register a new CA certificate below.").
+    wizard_error_panel("Public CA trust anchor PEM is unavailable. Load material on the certificate detail page or register a new CA trust anchor below.").
 
 certificate_link(undefined) -> undefined;
 certificate_link(CertificateId) ->

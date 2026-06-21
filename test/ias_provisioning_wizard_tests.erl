@@ -533,9 +533,28 @@ ca_certificate_step_renders_selection_and_registration_test() ->
     {ok, Step} = ias_provisioning_wizard_store:update(
         maps:get(id, Draft0), #{current_step => ca_certificate}),
     Html = render(ias_provisioning_wizard:content_for({draft, Step})),
-    ?assertMatch({_, _}, binary:match(Html, <<"Use Existing CA Certificate">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Register New Demo CA Certificate">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Register and Select CA Certificate">>)).
+    ?assertMatch({_, _}, binary:match(Html, <<"Use Existing CA Trust Anchor">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Register New Demo CA Trust Anchor">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Register and Select CA Trust Anchor">>)).
+
+ca_trust_anchor_step_renders_development_guidance_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"CA Trust Anchor">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"SYNRC development CA trust anchor:">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"synrc/ecc/secp384r1/ca.pem">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Upload the public CA certificate only.">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Never upload ca.key or a client .cer certificate.">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"embedded in the generated OVPN profile">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"<ca>">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"<cert>">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"not a universal production path">>)).
 
 selecting_valid_existing_ca_certificate_advances_test() ->
     ias_demo_state:clear(),
