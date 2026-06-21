@@ -23,6 +23,8 @@
          relationship_review/1,
          apply_relationships/1,
          relationships_ready/1,
+         material_readiness/1,
+         material_readiness_ready/1,
          steps/0,
          step_title/1,
          step_description/1,
@@ -228,6 +230,16 @@ relationships_ready(Draft) when is_map(Draft) ->
 relationships_ready(_Draft) ->
     false.
 
+material_readiness(Draft) when is_map(Draft) ->
+    ias_provisioning_wizard_readiness:preview(Draft);
+material_readiness(_Draft) ->
+    ias_provisioning_wizard_readiness:preview(#{}).
+
+material_readiness_ready(Draft) when is_map(Draft) ->
+    ias_provisioning_wizard_readiness:ready(Draft);
+material_readiness_ready(_Draft) ->
+    false.
+
 apply_relationships(Id) ->
     case get(Id) of
         {ok, Draft} ->
@@ -360,6 +372,11 @@ movement_allowed(next_step, relationships, Draft) ->
     case relationships_ready(Draft) of
         true -> ok;
         false -> {error, relationships_not_applied}
+    end;
+movement_allowed(next_step, material_readiness, Draft) ->
+    case material_readiness_ready(Draft) of
+        true -> ok;
+        false -> {error, material_readiness_blocked}
     end;
 movement_allowed(_Direction, _Current, _Draft) ->
     ok.

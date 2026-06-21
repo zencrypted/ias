@@ -130,6 +130,20 @@ created by that apply attempt are rolled back before the error is returned.
 Navigation to Material Readiness remains blocked until all four required links
 are present.
 
+Stage 24H turns Material Readiness into a live preflight rather than a placeholder.
+The wizard reuses the existing device-bound OVPN provisioning preview and checks
+that the graph still matches the selected Device, VPN Service, CA certificate and
+client certificate. It renders current authorization, endpoint, certificate trust,
+public PEM, device-owned private-key and optional TLS-auth status without creating
+a provisioning transaction.
+
+Navigation to Provisioning is allowed only when the operational relationships are
+still consistent, OVPN authorization allows the device-bound flow, the VPN endpoint
+is available, both public certificate PEM bodies are present and assembly reports
+`ready_for_device_assembly`. Missing public material is recovered through links to
+the selected certificate detail pages. The final Provisioning step remains the
+transaction creation boundary.
+
 Material Contract
 -----------------
 

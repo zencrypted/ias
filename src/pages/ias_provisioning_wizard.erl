@@ -261,10 +261,136 @@ step_content(client_certificate, Draft) ->
     client_certificate_step(Draft);
 step_content(relationships, Draft) ->
     relationships_step(Draft);
+step_content(material_readiness, Draft) ->
+    material_readiness_step(Draft);
 step_content(_Step, _Draft) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px dashed rgba(15,23,42,0.2);border-radius:6px;background:#f8fafc;">>,
            body = ias_html:text("Placeholder only. Selection and validation for this step will be implemented in a later stage.")}.
 
+
+
+material_readiness_step(Draft) ->
+    Readiness = ias_provisioning_wizard_store:material_readiness(Draft),
+    #panel{body = [
+        material_readiness_notice(Readiness),
+        material_readiness_items(maps:get(items, Readiness, [])),
+        material_readiness_summary(Readiness),
+        material_readiness_actions(Draft, Readiness)
+    ]}.
+
+material_readiness_notice(#{ready := true}) ->
+    wizard_notice("Ready for Provisioning",
+                  "Authorization, relationships and public certificate material are ready. Continue to create the provisioning transaction.");
+material_readiness_notice(#{reason := Reason}) ->
+    wizard_error_panel(Reason);
+material_readiness_notice(_Readiness) ->
+    wizard_error_panel("Material readiness is blocked.").
+
+material_readiness_items(Items) ->
+    #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-top:12px;">>,
+           body = [material_readiness_card(Item) || Item <- Items]}.
+
+material_readiness_card(Item) ->
+    Status = maps:get(status, Item, unknown),
+    #panel{style = material_readiness_card_style(Status), body = [
+        #panel{style = <<"display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">>,
+               body = [
+                   #h3{style = <<"margin:0;font-size:14px;">>,
+                       body = ias_html:text(maps:get(label, Item, undefined))},
+                   material_readiness_badge(Status)
+               ]},
+        #p{style = <<"margin:8px 0 0;font-size:12px;line-height:1.45;color:#475569;overflow-wrap:anywhere;word-break:normal;">>,
+           body = ias_html:text(maps:get(detail, Item, undefined))}
+    ]}.
+
+material_readiness_badge(Status) ->
+    relationship_badge(ias_html:text(Status), material_readiness_badge_style(Status)).
+
+material_readiness_badge_style(ready) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(ready_for_device_assembly) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(available) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(available_on_device) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(trusted) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(allow) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(compatible) ->
+    <<"background:#eff6ff;color:#1d4ed8;border-color:#93c5fd;">>;
+material_readiness_badge_style(optional) ->
+    <<"background:#f8fafc;color:#475569;border-color:#cbd5e1;">>;
+material_readiness_badge_style(configured) ->
+    <<"background:#eff6ff;color:#1d4ed8;border-color:#93c5fd;">>;
+material_readiness_badge_style(warning) ->
+    <<"background:#fffbeb;color:#92400e;border-color:#fcd34d;">>;
+material_readiness_badge_style(_Status) ->
+    <<"background:#fef2f2;color:#991b1b;border-color:#fca5a5;">>.
+
+material_readiness_card_style(warning) ->
+    <<"padding:12px;border:1px solid rgba(217,119,6,0.24);border-radius:6px;background:#fffbeb;min-width:0;">>;
+material_readiness_card_style(Status) ->
+    Border = case readiness_positive_status(Status) of
+                 true -> <<"rgba(22,163,74,0.24)">>;
+                 false -> <<"rgba(220,38,38,0.22)">>
+             end,
+    Background = case readiness_positive_status(Status) of
+                     true -> <<"#fff">>;
+                     false -> <<"#fefafa">>
+                 end,
+    ias_html:join([<<"padding:12px;border:1px solid ">>, Border,
+                   <<";border-radius:6px;background:">>, Background,
+                   <<";min-width:0;">>]).
+
+readiness_positive_status(ready) -> true;
+readiness_positive_status(ready_for_device_assembly) -> true;
+readiness_positive_status(available) -> true;
+readiness_positive_status(available_on_device) -> true;
+readiness_positive_status(trusted) -> true;
+readiness_positive_status(allow) -> true;
+readiness_positive_status(compatible) -> true;
+readiness_positive_status(optional) -> true;
+readiness_positive_status(configured) -> true;
+readiness_positive_status(_) -> false.
+
+material_readiness_summary(Readiness) ->
+    Plan = maps:get(plan, Readiness, #{}),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Readiness Decision")},
+        key_value_table([
+            {"Ready", maps:get(ready, Readiness, false)},
+            {"Authorization", maps:get(authorization, Plan, deny)},
+            {"Material", maps:get(material_status, Plan, blocked)},
+            {"Assembly", maps:get(assembly_status, Plan, blocked)},
+            {"Reason", maps:get(reason, Readiness, undefined)},
+            {"Next Step", maps:get(next_step, Readiness, undefined)}
+        ])
+    ]}.
+
+material_readiness_actions(Draft, Readiness) ->
+    Plan = maps:get(plan, Readiness, #{}),
+    Components = maps:get(material_components, Plan, #{}),
+    CaId = maps:get(ca_certificate_id, Draft, undefined),
+    ClientId = maps:get(client_certificate_id, Draft, undefined),
+    Actions0 = [
+        material_action(maps:get(ca_certificate, Components, missing_body),
+                        "Open CA Certificate", CaId),
+        material_action(maps:get(client_certificate, Components, missing_body),
+                        "Open Client Certificate", ClientId),
+        #link{url = wizard_url(maps:get(id, Draft)), class = [button, more],
+              body = ias_html:text("Refresh Readiness")}
+    ],
+    Actions = [Action || Action <- Actions0, Action =/= undefined],
+    #panel{style = <<"margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
+           body = Actions}.
+
+material_action(available, _Label, _CertificateId) -> undefined;
+material_action(_Status, _Label, undefined) -> undefined;
+material_action(_Status, Label, CertificateId) ->
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(CertificateId)]),
+          class = [button, sgreen], body = ias_html:text(Label)}.
 
 
 relationships_step(Draft) ->
@@ -1047,6 +1173,8 @@ wizard_error(client_certificate_linked_to_other_device) ->
     wizard_error_panel("The selected Client Certificate is already linked to another Device.");
 wizard_error(relationships_not_applied) ->
     wizard_error_panel("Apply all required relationships before continuing to Material Readiness.");
+wizard_error(material_readiness_blocked) ->
+    wizard_error_panel("Material readiness is blocked. Resolve the failed checks before continuing to Provisioning.");
 wizard_error({relationship_preflight_failed, _Review}) ->
     wizard_error_panel("Relationship preflight failed. Resolve conflicts or stale selections before applying the graph.");
 wizard_error({relationship_apply_failed, Key, Reason}) ->
@@ -1136,6 +1264,11 @@ next_action(#{current_step := client_certificate} = Draft, WizardId) ->
     end;
 next_action(#{current_step := relationships} = Draft, WizardId) ->
     case ias_provisioning_wizard_store:relationships_ready(Draft) of
+        true -> nav_action("Next", {wizard_next, WizardId});
+        false -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
+    end;
+next_action(#{current_step := material_readiness} = Draft, WizardId) ->
+    case ias_provisioning_wizard_store:material_readiness_ready(Draft) of
         true -> nav_action("Next", {wizard_next, WizardId});
         false -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
     end;
