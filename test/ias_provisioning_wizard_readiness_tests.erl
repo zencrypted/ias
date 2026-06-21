@@ -98,6 +98,62 @@ material_readiness_renders_inline_verification_action_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Client Certificate Verification">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Security Policy">>)).
 
+
+readiness_remediation_repairs_relationships_and_verifies_test() ->
+    Draft = setup_graph(true, false),
+    WizardId = maps:get(id, Draft),
+
+    ?assertEqual(false, ias_provisioning_wizard_store:relationships_ready(Draft)),
+    ?assertEqual(not_verified,
+                 ias_provisioning_wizard_authorization:verification_status(Draft)),
+
+    {ok, Updated} = ias_provisioning_wizard_store:remediate_readiness(WizardId),
+
+    ?assertEqual(true, ias_provisioning_wizard_store:relationships_ready(Updated)),
+    ?assertEqual(true, maps:get(relationships_applied, Updated)),
+    ?assertEqual(verified,
+                 ias_provisioning_wizard_authorization:verification_status(Updated)),
+    ?assertEqual(true,
+                 maps:get(ready,
+                          ias_provisioning_wizard_store:material_readiness(Updated))).
+
+material_readiness_actions_are_contextual_test() ->
+    Draft = setup_graph(true, false),
+    Html0 = iolist_to_binary(nitro:render(
+        ias_provisioning_wizard:content_for({draft, Draft}))),
+
+    ?assertMatch({_, _}, binary:match(Html0, <<"Repair Relationships">>)),
+    ?assertMatch({_, _}, binary:match(Html0, <<"Open Device">>)),
+    ?assertMatch({_, _}, binary:match(Html0, <<"Open Client Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html0, <<"Verify Client Certificate">>)),
+    ?assertEqual(nomatch, binary:match(Html0, <<"Open VPN Service">>)),
+    ?assertEqual(nomatch, binary:match(Html0, <<"Open CA Certificate">>)),
+
+    {ok, Updated} = ias_provisioning_wizard_store:remediate_readiness(
+        maps:get(id, Draft)),
+    Html1 = iolist_to_binary(nitro:render(
+        ias_provisioning_wizard:content_for({draft, Updated}))),
+
+    ?assertEqual(nomatch, binary:match(Html1, <<"Repair Relationships">>)),
+    ?assertEqual(nomatch, binary:match(Html1, <<"Open Device">>)),
+    ?assertEqual(nomatch, binary:match(Html1, <<"Open Client Certificate">>)),
+    ?assertEqual(nomatch, binary:match(Html1, <<"Verify Client Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html1, <<"Refresh Readiness">>)).
+
+progress_marks_broken_relationship_step_blocked_test() ->
+    Draft = setup_ready_graph(true),
+    [Relationship | _] = [R || R <- ias_demo_store:relationships(),
+                               maps:get(relation_type, R, undefined) =:= uses_security_policy,
+                               maps:get(source_kind, R, undefined) =:= device],
+    ok = ias_demo_store:delete_relationship(maps:get(id, Relationship)),
+
+    Html = iolist_to_binary(nitro:render(
+        ias_provisioning_wizard:content_for({draft, Draft}))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"7 Relationships">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<">blocked</span>">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"background:#fef2f2">>)).
+
 setup_ready_graph(StoreMaterial) ->
     setup_graph(StoreMaterial, true).
 

@@ -42,6 +42,14 @@ event({wizard_verify_client_certificate, WizardId}) ->
         not_found ->
             nitro:update(wizard_feedback, wizard_error(not_found))
     end;
+event({wizard_refresh_readiness, WizardId}) ->
+    redirect_after(ias_provisioning_wizard_store:remediate_readiness(WizardId));
+event({wizard_repair_relationships, WizardId}) ->
+    redirect_after(ias_provisioning_wizard_store:remediate_readiness(WizardId));
+event({wizard_review_relationships, WizardId}) ->
+    redirect_after(ias_provisioning_wizard_store:update(
+        WizardId, #{current_step => relationships,
+                    relationships_applied => false}));
 event({wizard_create_provisioning, WizardId}) ->
     case ias_provisioning_wizard_store:create_provisioning(WizardId) of
         {ok, Draft, _Transaction} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
@@ -113,10 +121,18 @@ content() ->
             content_for(start);
         WizardId ->
             case ias_provisioning_wizard_store:get(WizardId) of
-                {ok, Draft} -> content_for({draft, Draft});
+                {ok, Draft} -> content_for({draft, prepared_draft(WizardId, Draft)});
                 not_found -> content_for({error, WizardId})
             end
     end.
+
+prepared_draft(WizardId, #{current_step := material_readiness} = Draft) ->
+    case ias_provisioning_wizard_store:remediate_readiness(WizardId) of
+        {ok, Updated} -> Updated;
+        {error, _Reason} -> Draft
+    end;
+prepared_draft(_WizardId, Draft) ->
+    Draft.
 
 content_for(start) ->
     page([
@@ -126,12 +142,11 @@ content_for(start) ->
         scheme_panel(undefined)
     ]);
 content_for({draft, Draft}) ->
-    CurrentStep = maps:get(current_step, Draft, scheme),
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
         #p{body = ias_html:text("Wizard draft is stored in runtime ETS. The derived Security Policy is shown with the selected profile, and relationships are committed automatically after the client certificate step when preflight succeeds.")},
         draft_summary(Draft),
-        progress_panel(CurrentStep),
+        progress_panel(Draft),
         step_panel(Draft)
     ]);
 content_for({error, WizardId}) ->
@@ -236,16 +251,16 @@ draft_summary(Draft) ->
         ])
     ]}.
 
-progress_panel(CurrentStep) ->
+progress_panel(Draft) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Progress")},
         #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;">>,
-               body = [progress_item(Index, Step, CurrentStep)
+               body = [progress_item(Index, Step, Draft)
                        || {Index, Step} <- enumerate(ias_provisioning_wizard_store:steps())]}
     ]}.
 
-progress_item(Index, Step, CurrentStep) ->
-    State = step_state(Step, CurrentStep),
+progress_item(Index, Step, Draft) ->
+    State = step_state(Step, Draft),
     #panel{style = progress_style(State), body = [
         #span{style = <<"font-weight:700;margin-right:6px;">>,
               body = ias_html:text(Index)},
@@ -517,21 +532,98 @@ material_readiness_summary(Readiness) ->
     ]}.
 
 material_readiness_actions(Draft, Readiness) ->
-    Components = maps:get(material_components, Readiness, #{}),
     CaId = maps:get(ca_certificate_id, Draft, undefined),
     ClientId = maps:get(client_certificate_id, Draft, undefined),
+    DeviceId = maps:get(device_id, Draft, undefined),
+    ServiceId = maps:get(vpn_service_id, Draft, undefined),
+    Review = maps:get(relationship_review, Readiness, #{}),
     Actions0 = [
-        material_action(maps:get(ca_certificate, Components, missing_body),
-                        "Open CA Certificate", CaId),
-        material_action(maps:get(client_certificate, Components, missing_body),
-                        "Open Client Certificate", ClientId),
+        relationship_remediation_action(Draft, Review),
+        device_remediation_action(Readiness, DeviceId),
+        object_remediation_action(readiness_status(vpn_endpoint, Readiness),
+                                  available, "Open VPN Service", ServiceId),
+        ca_certificate_action(Readiness, CaId),
+        client_certificate_action(Readiness, ClientId),
         client_verification_action(Draft),
-        #link{url = wizard_url(maps:get(id, Draft)), class = [button, more],
-              body = ias_html:text("Refresh Readiness")}
+        #link{class = [button, more],
+              body = ias_html:text("Refresh Readiness"),
+              postback = {wizard_refresh_readiness, maps:get(id, Draft)}}
     ],
     Actions = [Action || Action <- Actions0, Action =/= undefined],
     #panel{style = <<"margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
            body = Actions}.
+
+relationship_remediation_action(_Draft, #{ready := true}) ->
+    undefined;
+relationship_remediation_action(Draft, #{can_apply := true}) ->
+    #link{class = [button, sgreen],
+          body = ias_html:text("Repair Relationships"),
+          postback = {wizard_repair_relationships, maps:get(id, Draft)}};
+relationship_remediation_action(Draft, _Review) ->
+    #link{class = [button, more],
+          body = ias_html:text("Review Relationships"),
+          postback = {wizard_review_relationships, maps:get(id, Draft)}}.
+
+
+device_remediation_action(Readiness, DeviceId) ->
+    RelationshipStatus = readiness_status(relationships, Readiness),
+    PolicyStatus = readiness_status(security_policy, Readiness),
+    ProfileStatus = readiness_status(security_profile, Readiness),
+    case readiness_statuses_positive([
+             {RelationshipStatus, [ready]},
+             {PolicyStatus, [ready]},
+             {ProfileStatus, [compatible, warning]}
+         ]) of
+        true -> undefined;
+        false -> object_link_action("Open Device", DeviceId)
+    end.
+
+ca_certificate_action(Readiness, CaId) ->
+    CertificateStatus = readiness_status(ca_certificate, Readiness),
+    MaterialStatus = readiness_status(ca_certificate_pem, Readiness),
+    case readiness_statuses_positive([
+             {CertificateStatus, [trusted]},
+             {MaterialStatus, [available]}
+         ]) of
+        true -> undefined;
+        false -> object_link_action("Open CA Certificate", CaId)
+    end.
+
+client_certificate_action(Readiness, ClientId) ->
+    CertificateStatus = readiness_status(client_certificate, Readiness),
+    MaterialStatus = readiness_status(client_certificate_pem, Readiness),
+    VerificationStatus = readiness_status(client_verification, Readiness),
+    case readiness_statuses_positive([
+             {CertificateStatus, [trusted]},
+             {MaterialStatus, [available]},
+             {VerificationStatus, [verified]}
+         ]) of
+        true -> undefined;
+        false -> object_link_action("Open Client Certificate", ClientId)
+    end.
+
+object_remediation_action(Status, Expected, _Label, _ObjectId)
+  when Status =:= Expected ->
+    undefined;
+object_remediation_action(_Status, _Expected, Label, ObjectId) ->
+    object_link_action(Label, ObjectId).
+
+object_link_action(_Label, undefined) ->
+    undefined;
+object_link_action(Label, ObjectId) ->
+    #link{url = demo_object_url(ObjectId), class = [button, sgreen],
+          body = ias_html:text(Label)}.
+
+readiness_status(Key, Readiness) ->
+    case [maps:get(status, Item, unknown)
+          || Item <- maps:get(items, Readiness, []),
+             maps:get(key, Item, undefined) =:= Key] of
+        [Status | _] -> Status;
+        [] -> unknown
+    end.
+
+readiness_statuses_positive(Checks) ->
+    lists:all(fun({Status, Allowed}) -> lists:member(Status, Allowed) end, Checks).
 
 
 client_verification_action(Draft) ->
@@ -550,13 +642,6 @@ client_verification_action(Draft) ->
         _ ->
             undefined
     end.
-
-material_action(available, _Label, _CertificateId) -> undefined;
-material_action(_Status, _Label, undefined) -> undefined;
-material_action(_Status, Label, CertificateId) ->
-    #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(CertificateId)]),
-          class = [button, sgreen], body = ias_html:text(Label)}.
-
 
 relationships_step(Draft) ->
     Review = ias_provisioning_wizard_store:relationship_review(Draft),
@@ -1490,10 +1575,21 @@ key_value_row(Label, Value) ->
 value_body(#link{} = Link) -> Link;
 value_body(Value) -> ias_html:text(Value).
 
-step_state(Step, CurrentStep) ->
+step_state(Step, Draft) ->
+    CurrentStep = maps:get(current_step, Draft, scheme),
     StepIndex = index_of(Step),
     CurrentIndex = index_of(CurrentStep),
-    case StepIndex of
+    case Step of
+        relationships when StepIndex < CurrentIndex ->
+            case ias_provisioning_wizard_store:relationships_ready(Draft) of
+                true -> completed;
+                false -> blocked
+            end;
+        material_readiness when StepIndex < CurrentIndex ->
+            case ias_provisioning_wizard_store:material_readiness_ready(Draft) of
+                true -> completed;
+                false -> blocked
+            end;
         _ when Step =:= CurrentStep -> current;
         _ when StepIndex < CurrentIndex -> completed;
         _ -> pending

@@ -170,6 +170,21 @@ selected Device exists. An authorization denial still blocks assembly and the
 final readiness decision, but it must not relabel already stored public PEM as
 missing or unavailable.
 
+Stage 24K makes Material Readiness an active remediation surface. Entering or
+refreshing the step re-runs relationship preflight, applies missing compatible
+links through the existing relationship service and attempts the first client
+certificate verification when no verification record exists. Failed
+verification records are not retried automatically.
+
+The page shows contextual actions only while their checks are unresolved:
+`Open Device` for Device or policy problems, `Open VPN Service` for endpoint
+problems, certificate links for missing or invalid public material, and
+verification or relationship repair actions when those checks remain blocked.
+Those actions disappear after the corresponding runtime state becomes ready.
+The progress indicator derives the Relationships and Material Readiness states
+from the current graph and readiness preview; a previously visited step is shown
+as `blocked` if its runtime prerequisites later become stale or conflicting.
+
 Material Contract
 -----------------
 

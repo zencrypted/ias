@@ -25,6 +25,7 @@
          relationships_ready/1,
          material_readiness/1,
          material_readiness_ready/1,
+         remediate_readiness/1,
          create_provisioning/1,
          create_another_provisioning/1,
          provisioning_transaction/1,
@@ -430,13 +431,11 @@ commit_relationships_or_review(Id, Draft) ->
     Review = relationship_review(Draft),
     case {maps:get(ready, Review, false), maps:get(can_apply, Review, false)} of
         {true, _} ->
-            update(Id, #{relationships_applied => true,
-                         current_step => material_readiness});
+            enter_material_readiness(Id);
         {false, true} ->
             case ias_provisioning_wizard_relationships:apply(Draft) of
                 {ok, _AppliedReview} ->
-                    update(Id, #{relationships_applied => true,
-                                 current_step => material_readiness});
+                    enter_material_readiness(Id);
                 {error, _Reason} ->
                     update(Id, #{relationships_applied => false,
                                  current_step => relationships})
@@ -444,6 +443,83 @@ commit_relationships_or_review(Id, Draft) ->
         _ ->
             update(Id, #{relationships_applied => false,
                          current_step => relationships})
+    end.
+
+remediate_readiness(Id) ->
+    case get(Id) of
+        {ok, Draft0} ->
+            case ensure_relationships(Draft0) of
+                {ok, Draft1} ->
+                    maybe_auto_verify(Draft1),
+                    current_draft(Id, Draft1);
+                {blocked, Draft1} ->
+                    current_draft(Id, Draft1)
+            end;
+        not_found ->
+            {error, not_found}
+    end.
+
+enter_material_readiness(Id) ->
+    case get(Id) of
+        {ok, _Draft0} ->
+            update(Id, #{relationships_applied => true,
+                         current_step => material_readiness});
+        not_found ->
+            {error, not_found}
+    end.
+
+ensure_relationships(Draft) ->
+    Id = maps:get(id, Draft),
+    Review = relationship_review(Draft),
+    case {maps:get(ready, Review, false), maps:get(can_apply, Review, false)} of
+        {true, _} ->
+            sync_relationship_marker(Id, Draft, true, ok);
+        {false, true} ->
+            case ias_provisioning_wizard_relationships:apply(Draft) of
+                {ok, _AppliedReview} ->
+                    sync_relationship_marker(Id, Draft, true, ok);
+                {error, _Reason} ->
+                    sync_relationship_marker(Id, Draft, false, blocked)
+            end;
+        _ ->
+            sync_relationship_marker(Id, Draft, false, blocked)
+    end.
+
+sync_relationship_marker(Id, Draft, Value, Result) ->
+    case maps:get(relationships_applied, Draft, false) =:= Value of
+        true ->
+            case Result of
+                ok -> {ok, Draft};
+                blocked -> {blocked, Draft}
+            end;
+        false ->
+            case update(Id, #{relationships_applied => Value}) of
+                {ok, Updated} ->
+                    case Result of
+                        ok -> {ok, Updated};
+                        blocked -> {blocked, Updated}
+                    end;
+                {error, _Reason} ->
+                    case Result of
+                        ok -> {ok, Draft};
+                        blocked -> {blocked, Draft}
+                    end
+            end
+    end.
+
+maybe_auto_verify(Draft) ->
+    case ias_provisioning_wizard_authorization:verification_status(Draft) of
+        not_verified ->
+            _ = ias_provisioning_wizard_authorization:verify_client_certificate(Draft),
+            ok;
+        _ ->
+            ok
+    end.
+
+current_draft(Id, Fallback) ->
+    case get(Id) of
+        {ok, Draft} -> {ok, Draft};
+        not_found -> {ok, Fallback}
     end.
 
 movement_allowed(next_step, device, Draft) ->
