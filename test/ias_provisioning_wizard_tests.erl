@@ -371,6 +371,34 @@ manual_vpn_service_creation_uses_binary_input_test() ->
     ?assertEqual(<<"443">>, maps:get(remote_port, Service)),
     ?assertMatch({ok, _}, ias_demo_store:get(maps:get(id, Service))).
 
+vpn_create_and_select_advances_to_ca_step_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, VpnStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => vpn_service}),
+    {ok, Service} = ias_manual_vpn_service:create(
+        #{name => <<"Auto VPN">>, endpoint => <<"vpn.example.com">>,
+          port => <<"1194">>, protocol => <<"udp">>}),
+    {ok, Advanced} = ias_provisioning_wizard_store:select_existing_vpn_service(
+        maps:get(id, VpnStep), maps:get(id, Service)),
+    ?assertEqual(maps:get(id, Service), maps:get(vpn_service_id, Advanced)),
+    ?assertEqual(ca_certificate, maps:get(current_step, Advanced)).
+
+failed_vpn_create_validation_does_not_advance_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, VpnStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => vpn_service}),
+    ?assertMatch({error, _},
+                 ias_manual_vpn_service:create(
+                     #{name => <<>>, endpoint => <<"vpn.example.com">>,
+                       port => <<"1194">>, protocol => <<"udp">>})),
+    {ok, Current} = ias_provisioning_wizard_store:get(maps:get(id, VpnStep)),
+    ?assertEqual(vpn_service, maps:get(current_step, Current)),
+    ?assertEqual(undefined, maps:get(vpn_service_id, Current)).
+
 vpn_service_step_renders_selection_and_creation_test() ->
     ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
@@ -503,6 +531,18 @@ selecting_valid_existing_ca_certificate_advances_test() ->
         maps:get(id, Draft0), #{current_step => ca_certificate}),
     {ok, Advanced} = ias_provisioning_wizard_store:select_existing_ca_certificate(
         maps:get(id, Step), maps:get(id, Certificate)),
+    ?assertEqual(maps:get(id, Certificate), maps:get(ca_certificate_id, Advanced)),
+    ?assertEqual(client_certificate, maps:get(current_step, Advanced)).
+
+ca_register_and_select_advances_to_client_certificate_step_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, CaStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => ca_certificate}),
+    {ok, Certificate} = ias_demo_ca_certificate:register(valid_ca_fields()),
+    {ok, Advanced} = ias_provisioning_wizard_store:select_existing_ca_certificate(
+        maps:get(id, CaStep), maps:get(id, Certificate)),
     ?assertEqual(maps:get(id, Certificate), maps:get(ca_certificate_id, Advanced)),
     ?assertEqual(client_certificate, maps:get(current_step, Advanced)).
 
@@ -706,6 +746,39 @@ selecting_valid_existing_cmp_client_certificate_auto_commits_relationships_test(
     ?assertEqual(true, maps:get(relationships_applied, Advanced)),
     ?assertEqual(true, ias_provisioning_wizard_store:relationships_ready(Advanced)).
 
+client_issue_and_select_advances_through_relationship_preflight_test() ->
+    Draft = client_issue_ready_draft(),
+    User = ias_demo_store:put_runtime_object(
+        #{id => alice, kind => user, name => <<"Alice">>, profile_id => administrator}),
+    Pem = public_key:pem_encode([{'Certificate', <<9,8,7,6>>, not_encrypted}]),
+    {ok, Certificate} = ias_wizard_client_certificate:issue(
+        #{user_id => maps:get(id, User), subject_cn => <<"issued-auto-client">>,
+          pem => Pem}),
+    {ok, Advanced} = ias_provisioning_wizard_store:select_existing_client_certificate(
+        maps:get(id, Draft), maps:get(id, Certificate)),
+
+    ?assertEqual(maps:get(id, Certificate), maps:get(client_certificate_id, Advanced)),
+    ?assertEqual(material_readiness, maps:get(current_step, Advanced)),
+    ?assertEqual(true, maps:get(relationships_applied, Advanced)),
+    ?assertEqual(true, ias_provisioning_wizard_store:relationships_ready(Advanced)).
+
+client_certificate_missing_pem_selection_does_not_advance_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Certificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_auto_missing_pem_client">>,
+          source => certificate_issue_demo,
+          certificate_role => client_certificate,
+          subject_cn => <<"missing-pem-client">>}),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_existing_client_certificate(
+        maps:get(id, Step), maps:get(id, Certificate)),
+
+    ?assertEqual(maps:get(id, Certificate), maps:get(client_certificate_id, Selected)),
+    ?assertEqual(client_certificate, maps:get(current_step, Selected)).
+
 client_certificate_step_displays_pem_helper_text_test() ->
     ias_demo_state:clear(),
     ias_provisioning_wizard_store:clear(),
@@ -750,5 +823,23 @@ auto_client_certificate_draft() ->
           vpn_service_id => maps:get(id, Service),
           ca_certificate_id => maps:get(id, CaCertificate),
           client_certificate_id => maps:get(id, ClientCertificate),
+          relationships_applied => false}),
+    Draft.
+
+client_issue_ready_draft() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_issue_auto_device">>),
+    Service = demo_vpn_service(<<"wizard_issue_auto_service">>),
+    {ok, CaCertificate} = ias_demo_ca_certificate:register(valid_ca_fields()),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0),
+        #{current_step => client_certificate,
+          device_id => maps:get(id, Device),
+          security_profile_id => administrator,
+          vpn_service_id => maps:get(id, Service),
+          ca_certificate_id => maps:get(id, CaCertificate),
+          client_certificate_id => undefined,
           relationships_applied => false}),
     Draft.

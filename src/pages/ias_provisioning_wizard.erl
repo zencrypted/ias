@@ -69,7 +69,7 @@ event({wizard_issue_client_certificate, WizardId}) ->
                pem => nitro:q(wizard_client_certificate_pem)},
     case ias_wizard_client_certificate:issue(Fields) of
         {ok, Certificate} ->
-            redirect_after(ias_provisioning_wizard_store:select_client_certificate(
+            redirect_after(ias_provisioning_wizard_store:select_existing_client_certificate(
                 WizardId, maps:get(id, Certificate)));
         {error, Reason} ->
             nitro:update(wizard_feedback, wizard_error(Reason))
@@ -80,7 +80,7 @@ event({wizard_register_ca_certificate, WizardId}) ->
                pem => nitro:q(wizard_ca_certificate_pem)},
     case ias_demo_ca_certificate:register(Fields) of
         {ok, Certificate} ->
-            redirect_after(ias_provisioning_wizard_store:select_ca_certificate(
+            redirect_after(ias_provisioning_wizard_store:select_existing_ca_certificate(
                 WizardId, maps:get(id, Certificate)));
         {error, Reason} ->
             nitro:update(wizard_feedback, wizard_error(Reason))
@@ -92,7 +92,7 @@ event({wizard_create_vpn_service, WizardId}) ->
                protocol => nitro:q(wizard_vpn_service_protocol)},
     case ias_manual_vpn_service:create(Fields) of
         {ok, Service} ->
-            redirect_after(ias_provisioning_wizard_store:select_vpn_service(
+            redirect_after(ias_provisioning_wizard_store:select_existing_vpn_service(
                 WizardId, maps:get(id, Service)));
         {error, Reason} ->
             nitro:update(wizard_feedback, wizard_error(Reason))
