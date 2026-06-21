@@ -13,6 +13,7 @@
     relationships/0,
     runtime_objects/0,
     put_runtime_object/1,
+    delete_runtime_object/2,
     clear/0,
     add_device/1,
     add_certificate/1,
@@ -93,6 +94,11 @@ put_runtime_object(#{kind := Kind, id := Id} = Object) ->
     ensure(),
     ets:insert(?TABLE, {{Kind, Id}, Object}),
     Object.
+
+delete_runtime_object(Kind, Id) ->
+    ensure(),
+    ets:delete(?TABLE, {Kind, normalize_id(Id)}),
+    ok.
 
 clear() ->
     ensure(),

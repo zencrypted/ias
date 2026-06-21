@@ -470,14 +470,14 @@ relationship_preview(Object) ->
                 candidate_table(filter_occupied_groups([
                     {"Suggested Devices", ias_relationship_preview:suggested_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_service, SourceId},
-                    {"Suggested CA Certificates", ias_relationship_preview:suggested_candidates(maps:get(suggested_ca_certificates, Preview, [])),
+                    {"Suggested CA", ias_relationship_preview:suggested_candidates(maps:get(suggested_ca_certificates, Preview, [])),
                      uses_ca_certificate, SourceId}
                 ]), <<"no candidates">>),
                 #h3{body = ias_html:text("Available Objects")},
                 candidate_table(filter_occupied_groups([
                     {"Available Devices", ias_relationship_preview:available_candidates(maps:get(suggested_devices, Preview, [])),
                      uses_service, SourceId},
-                    {"Available CA Certificates", ias_relationship_preview:available_candidates(maps:get(suggested_ca_certificates, Preview, [])),
+                    {"Available CA", ias_relationship_preview:available_candidates(maps:get(suggested_ca_certificates, Preview, [])),
                      uses_ca_certificate, SourceId}
                 ]), <<"no available objects">>),
                 #h3{body = ias_html:text("Suggested Security Policies")},
@@ -1455,7 +1455,7 @@ candidate_link(Candidate) ->
 
 candidate_body(Candidate, RelationType, SourceId) ->
     Lines = candidate_policy_warning(Candidate, RelationType, SourceId) ++
-        candidate_constraint_lines(Candidate, RelationType, SourceId),
+        candidate_warning_lines(Candidate, RelationType, SourceId),
     case Lines of
         [] ->
             candidate_link(Candidate);
@@ -1463,13 +1463,11 @@ candidate_body(Candidate, RelationType, SourceId) ->
             #panel{body = [candidate_link(Candidate), #br{} | Lines]}
     end.
 
-candidate_constraint_lines(Candidate, RelationType, SourceId) ->
+candidate_warning_lines(Candidate, RelationType, SourceId) ->
     TargetId = maps:get(id, Candidate, undefined),
     case ias_relationship_link:status(RelationType, SourceId, TargetId) of
         {link_warning, Warnings} ->
             warning_lines(Warnings);
-        {blocked, Reason} ->
-            blocked_reason_lines(Reason);
         _ ->
             []
     end.
@@ -1626,13 +1624,6 @@ warning_badge(#{warning := unclassified_certificate_role}) ->
 warning_badge(Warning) ->
     #span{style = <<"display:inline-block;margin-top:4px;padding:2px 6px;border:1px solid #f59e0b;border-radius:999px;color:#92400e;background:#fffbeb;font-size:11px;font-weight:600;">>,
            body = ias_html:text(maps:get(message, Warning, undefined))}.
-
-blocked_reason_lines(#{message := Message}) ->
-    [#span{style = <<"color:#991b1b;font-size:12px;">>,
-           body = ias_html:text(Message)}];
-blocked_reason_lines(Reason) ->
-    [#span{style = <<"color:#991b1b;font-size:12px;">>,
-           body = ias_html:text(Reason)}].
 
 relationship_error_panel(#{message := Message} = Reason) ->
     #panel{style = <<"margin:8px 0;padding:10px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;">>,

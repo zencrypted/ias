@@ -78,6 +78,28 @@ unclassified_warning_is_compact_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Unclassified role">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"certificate role is unclassified">>)).
 
+blocked_reason_is_rendered_only_in_action_test() ->
+    ias_demo_store:clear(),
+    Device = device(<<"layout_blocked_role_device">>),
+    _Ca = ca_certificate(<<"layout_blocked_role_ca">>),
+
+    Html = render(Device),
+
+    ?assertEqual(1, occurrences(Html, <<"CA certificate cannot be linked as a device client certificate">>)).
+
+ca_candidate_labels_are_short_test() ->
+    ias_demo_store:clear(),
+    Service = service_no_flow(<<"layout_ca_label_service">>),
+    _Ca = ca_certificate(<<"layout_ca_label_certificate">>),
+    _Unknown = unknown_certificate(<<"layout_ca_label_unknown_certificate">>),
+
+    Html = render(Service),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Suggested CA">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Available CA">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Suggested CA Certificates">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Available CA Certificates">>)).
+
 render(Object) ->
     iolist_to_binary(nitro:render(ias_demo:relationship_preview(Object))).
 
@@ -93,6 +115,13 @@ service(Id) ->
                                  service => openvpn,
                                  remote => <<"vpn.example.com:1194">>,
                                  protocol => udp}).
+
+service_no_flow(Id) ->
+    ias_demo_store:put_runtime_object(#{id => Id,
+                                        kind => vpn_service,
+                                        service => openvpn,
+                                        remote => <<"vpn.example.com:1194">>,
+                                        protocol => udp}).
 
 client_certificate(Id) ->
     ias_demo_store:add_certificate(#{id => Id,

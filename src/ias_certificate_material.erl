@@ -1,6 +1,6 @@
 -module(ias_certificate_material).
 -compile({no_auto_import, [get/1]}).
--export([put/4, get/1, status/1, delete/1, clear/0,
+-export([put/4, validate_public/2, get/1, status/1, delete/1, clear/0,
          stage_cmp/2, attach_staged/2]).
 
 -define(TABLE, ias_certificate_material).
@@ -28,6 +28,12 @@ put_existing(Id, MaterialType, Pem, Source) ->
             {ok, public_status(Record)};
         {error, Reason} ->
             {error, Reason}
+    end.
+
+validate_public(MaterialType, Pem) ->
+    case validate(MaterialType, Pem) of
+        {ok, NormalizedPem, _Der} -> {ok, NormalizedPem};
+        {error, Reason} -> {error, Reason}
     end.
 
 
