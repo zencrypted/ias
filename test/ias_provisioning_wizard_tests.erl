@@ -174,6 +174,77 @@ ovpn_import_scheme_links_existing_route_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Import Existing OVPN">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"/app/ovpn.htm">>)).
 
+security_profile_step_requires_selection_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_profile_required_device">>),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, SelectedDevice} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft0), maps:get(id, Device)),
+    {ok, ProfileStep} = ias_provisioning_wizard_store:next(maps:get(id, SelectedDevice)),
+    ?assertEqual({error, security_profile_required},
+                 ias_provisioning_wizard_store:next(maps:get(id, ProfileStep))).
+
+security_profile_can_be_selected_test() ->
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, ProfileStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => security_profile}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_security_profile(
+        maps:get(id, ProfileStep), administrator),
+    ?assertEqual(administrator, maps:get(security_profile_id, Selected)),
+    ?assertMatch({ok, _}, ias_provisioning_wizard_store:selected_security_profile(Selected)),
+    {ok, VpnStep} = ias_provisioning_wizard_store:next(maps:get(id, Selected)),
+    ?assertEqual(vpn_service, maps:get(current_step, VpnStep)).
+
+security_profile_warning_is_allowed_test() ->
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, ProfileStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => security_profile}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_security_profile(
+        maps:get(id, ProfileStep), default_user),
+    {ok, Profile} = ias_provisioning_wizard_store:selected_security_profile(Selected),
+    ?assertMatch({warning, _},
+                 ias_provisioning_wizard_store:security_profile_compatibility(Profile)),
+    ?assertMatch({ok, _}, ias_provisioning_wizard_store:next(maps:get(id, Selected))).
+
+stale_security_profile_blocks_next_test() ->
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Stale} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => security_profile,
+                               security_profile_id => <<"missing_profile">>}),
+    ?assertEqual({error, selected_security_profile_missing},
+                 ias_provisioning_wizard_store:next(maps:get(id, Stale))).
+
+security_profile_step_renders_effects_test() ->
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, ProfileStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => security_profile}),
+    {ok, Selected} = ias_provisioning_wizard_store:select_security_profile(
+        maps:get(id, ProfileStep), administrator),
+    Html = render(ias_provisioning_wizard:content_for({draft, Selected})),
+    ?assertMatch({_, _}, binary:match(Html, <<"Selected Security Profile">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Device Lock">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Provisioning Mode">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"device_bound">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"device_owned">>)).
+
+security_profile_next_is_disabled_until_selection_test() ->
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, ProfileStep} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => security_profile}),
+    Html = render(ias_provisioning_wizard:content_for({draft, ProfileStep})),
+    ?assertMatch({_, _}, binary:match(Html, <<">Next</span>">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Choose Security Profile">>)).
+
+incompatible_security_profile_is_blocked_test() ->
+    ?assertEqual({blocked, incompatible_security_profile},
+                 ias_provisioning_wizard_store:security_profile_compatibility(#{})).
+
 bootstrap_page_is_packaged_test() ->
     Path = filename:join(["priv", "static", "provisioning-wizard.htm"]),
     ?assert(filelib:is_regular(Path)),

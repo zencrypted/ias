@@ -16,6 +16,8 @@ event({wizard_next, WizardId}) ->
     end;
 event({wizard_select_device, WizardId, DeviceId}) ->
     redirect_after(ias_provisioning_wizard_store:select_device(WizardId, DeviceId));
+event({wizard_select_security_profile, WizardId, ProfileId}) ->
+    redirect_after(ias_provisioning_wizard_store:select_security_profile(WizardId, ProfileId));
 event({wizard_create_device, WizardId}) ->
     Fields = #{name => nitro:q(wizard_device_name),
                type => nitro:q(wizard_device_type),
@@ -58,7 +60,7 @@ content_for({draft, Draft}) ->
     CurrentStep = maps:get(current_step, Draft, scheme),
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24B can create or select a Device; later objects and relationships are not created yet.")},
+        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24C can select a Device and Security Profile; later objects and relationships are not created yet.")},
         draft_summary(Draft),
         progress_panel(CurrentStep),
         step_panel(Draft)
@@ -161,9 +163,109 @@ step_content(scheme, _Draft) ->
     #panel{body = [scheme_panel(undefined)]};
 step_content(device, Draft) ->
     device_step(Draft);
+step_content(security_profile, Draft) ->
+    security_profile_step(Draft);
 step_content(_Step, _Draft) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px dashed rgba(15,23,42,0.2);border-radius:6px;background:#f8fafc;">>,
            body = ias_html:text("Placeholder only. Selection and validation for this step will be implemented in a later stage.")}.
+
+
+security_profile_step(Draft) ->
+    #panel{body = [
+        selected_security_profile_panel(Draft),
+        available_security_profiles_panel(Draft)
+    ]}.
+
+selected_security_profile_panel(Draft) ->
+    case ias_provisioning_wizard_store:selected_security_profile(Draft) of
+        {ok, Profile} ->
+            Compatibility = ias_provisioning_wizard_store:security_profile_compatibility(Profile),
+            #panel{style = selected_profile_style(Compatibility),
+                   body = [
+                       #h3{body = ias_html:text("Selected Security Profile")},
+                       key_value_table([
+                           {"Profile", maps:get(name, Profile, maps:get(id, Profile, undefined))},
+                           {"Device Lock", ias_security_profile:device_lock_label(Profile)},
+                           {"2FA", ias_security_profile:two_factor_label(Profile)},
+                           {"Services", ias_html:join_csv(maps:get(services, Profile, []))},
+                           {"Trust Level", maps:get(trust_level, Profile, undefined)},
+                           {"Provisioning Mode", <<"device_bound">>},
+                           {"Private Key Policy", <<"device_owned">>}
+                       ]),
+                       profile_compatibility_notice(Compatibility)
+                   ]};
+        not_selected ->
+            wizard_notice("No Security Profile selected", "Select a Security Profile before continuing.");
+        {error, selected_security_profile_missing} ->
+            wizard_error_panel("The Security Profile stored in this wizard draft no longer exists. Select another profile.");
+        {error, _Reason} ->
+            wizard_error_panel("The selected Security Profile is invalid.")
+    end.
+
+available_security_profiles_panel(Draft) ->
+    Profiles = ias_security_profile:profiles(),
+    WizardId = maps:get(id, Draft),
+    SelectedId = maps:get(security_profile_id, Draft, undefined),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Choose Security Profile")},
+        #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;">>,
+               body = [security_profile_choice(Profile, WizardId, SelectedId) || Profile <- Profiles]}
+    ]}.
+
+security_profile_choice(Profile, WizardId, SelectedId) ->
+    ProfileId = maps:get(id, Profile, undefined),
+    Selected = ias_html:text(ProfileId) =:= ias_html:text(SelectedId),
+    Compatibility = ias_provisioning_wizard_store:security_profile_compatibility(Profile),
+    #panel{style = profile_choice_style(Selected, Compatibility), body = [
+        #h3{style = <<"margin:0 0 6px;font-size:14px;">>,
+            body = ias_html:text(maps:get(name, Profile, ProfileId))},
+        #p{style = <<"margin:0 0 6px;font-size:12px;color:#64748b;">>,
+           body = ias_html:text(maps:get(description, Profile, <<>>))},
+        #p{style = <<"margin:0 0 8px;font-size:12px;">>,
+           body = ias_html:join([<<"Device Lock: ">>, ias_security_profile:device_lock_label(Profile),
+                                 <<" / 2FA: ">>, ias_security_profile:two_factor_label(Profile)])},
+        compact_compatibility(Compatibility),
+        profile_select_action(Compatibility, Selected, WizardId, ProfileId)
+    ]}.
+
+profile_select_action({blocked, _Reason}, _Selected, _WizardId, _ProfileId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Unavailable")};
+profile_select_action(_Compatibility, true, _WizardId, _ProfileId) ->
+    #span{style = disabled_action_style(), body = ias_html:text("Selected")};
+profile_select_action(_Compatibility, false, WizardId, ProfileId) ->
+    #link{class = [button, sgreen], body = ias_html:text("Select"),
+          postback = {wizard_select_security_profile, WizardId, ProfileId}}.
+
+compact_compatibility(compatible) ->
+    #p{style = <<"margin:0 0 8px;font-size:11px;color:#166534;">>, body = ias_html:text("Recommended for device-bound provisioning")};
+compact_compatibility({warning, _Reason}) ->
+    #p{style = <<"margin:0 0 8px;font-size:11px;color:#92400e;">>, body = ias_html:text("Allowed with warning")};
+compact_compatibility({blocked, _Reason}) ->
+    #p{style = <<"margin:0 0 8px;font-size:11px;color:#991b1b;">>, body = ias_html:text("Incompatible with device-bound provisioning")}.
+
+profile_compatibility_notice(compatible) ->
+    wizard_notice("Compatible", "This profile requires device lock and matches the device-bound provisioning scenario.");
+profile_compatibility_notice({warning, Reason}) ->
+    #panel{style = <<"margin-top:10px;padding:10px;border:1px solid rgba(217,119,6,0.25);border-radius:6px;background:#fffbeb;color:#92400e;">>,
+           body = ias_html:text(Reason)};
+profile_compatibility_notice({blocked, Reason}) ->
+    wizard_error_panel(Reason).
+
+selected_profile_style(compatible) ->
+    <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>;
+selected_profile_style({warning, _}) ->
+    <<"margin-top:12px;padding:12px;border:1px solid rgba(217,119,6,0.25);border-radius:6px;background:#fffbeb;">>;
+selected_profile_style({blocked, _}) ->
+    <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>.
+
+profile_choice_style(true, _Compatibility) ->
+    <<"padding:12px;border:1px solid rgba(37,99,235,0.35);border-radius:6px;background:#eff6ff;">>;
+profile_choice_style(false, compatible) ->
+    <<"padding:12px;border:1px solid rgba(22,163,74,0.22);border-radius:6px;background:#fff;">>;
+profile_choice_style(false, {warning, _}) ->
+    <<"padding:12px;border:1px solid rgba(217,119,6,0.22);border-radius:6px;background:#fff;">>;
+profile_choice_style(false, {blocked, _}) ->
+    <<"padding:12px;border:1px solid rgba(220,38,38,0.18);border-radius:6px;background:#f8fafc;opacity:0.8;">>.
 
 device_step(Draft) ->
     #panel{body = [
@@ -276,6 +378,12 @@ wizard_error(device_required) ->
     wizard_error_panel("Select or create a Device before continuing.");
 wizard_error(selected_device_missing) ->
     wizard_error_panel("The selected Device no longer exists. Select another Device.");
+wizard_error(security_profile_required) ->
+    wizard_error_panel("Select a Security Profile before continuing.");
+wizard_error(selected_security_profile_missing) ->
+    wizard_error_panel("The selected Security Profile no longer exists. Select another profile.");
+wizard_error(incompatible_security_profile) ->
+    wizard_error_panel("The selected Security Profile is incompatible with device-bound provisioning.");
 wizard_error(Reason) ->
     wizard_error_panel(Reason).
 
@@ -314,6 +422,15 @@ nav_action(Label, Postback) ->
 next_action(#{current_step := device} = Draft, WizardId) ->
     case ias_provisioning_wizard_store:selected_device(Draft) of
         {ok, _Device} -> nav_action("Next", {wizard_next, WizardId});
+        _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
+    end;
+next_action(#{current_step := security_profile} = Draft, WizardId) ->
+    case ias_provisioning_wizard_store:selected_security_profile(Draft) of
+        {ok, Profile} ->
+            case ias_provisioning_wizard_store:security_profile_compatibility(Profile) of
+                {blocked, _Reason} -> #span{style = disabled_action_style(), body = ias_html:text("Next")};
+                _ -> nav_action("Next", {wizard_next, WizardId})
+            end;
         _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
     end;
 next_action(_Draft, WizardId) ->

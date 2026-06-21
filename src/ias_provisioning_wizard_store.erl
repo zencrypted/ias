@@ -9,6 +9,9 @@
          back/1,
          select_device/2,
          selected_device/1,
+         select_security_profile/2,
+         selected_security_profile/1,
+         security_profile_compatibility/1,
          steps/0,
          step_title/1,
          step_description/1,
@@ -101,6 +104,30 @@ selected_device(Draft) when is_map(Draft) ->
         DeviceId -> valid_device(DeviceId)
     end.
 
+select_security_profile(Id, ProfileId) ->
+    case valid_security_profile(ProfileId) of
+        {ok, Profile} ->
+            case security_profile_compatibility(Profile) of
+                {blocked, Reason} -> {error, Reason};
+                _ -> update(Id, #{security_profile_id => maps:get(id, Profile)})
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+selected_security_profile(Draft) when is_map(Draft) ->
+    case maps:get(security_profile_id, Draft, undefined) of
+        undefined -> not_selected;
+        ProfileId -> valid_security_profile(ProfileId)
+    end.
+
+security_profile_compatibility(#{device_lock := enabled}) ->
+    compatible;
+security_profile_compatibility(#{device_lock := disabled}) ->
+    {warning, <<"This profile does not require device lock. The wizard will still use device-bound provisioning and a device-owned private key.">>};
+security_profile_compatibility(_Profile) ->
+    {blocked, incompatible_security_profile}.
+
 steps() ->
     [scheme,
      device,
@@ -128,7 +155,7 @@ step_description(scheme) ->
 step_description(device) ->
     <<"Select an existing runtime Device or create a new demo Device that will own the VPN profile.">>;
 step_description(security_profile) ->
-    <<"Bind a Security Profile through the existing relationship flow in a later stage.">>;
+    <<"Select the Security Profile that defines device lock, 2FA, services and trust expectations for this device-bound flow.">>;
 step_description(vpn_service) ->
     <<"Choose the VPN Service endpoint that will supply remote/protocol settings.">>;
 step_description(ca_certificate) ->
@@ -177,6 +204,16 @@ movement_allowed(next_step, device, Draft) ->
         not_selected -> {error, device_required};
         {error, _Reason} -> {error, selected_device_missing}
     end;
+movement_allowed(next_step, security_profile, Draft) ->
+    case selected_security_profile(Draft) of
+        {ok, Profile} ->
+            case security_profile_compatibility(Profile) of
+                {blocked, Reason} -> {error, Reason};
+                _ -> ok
+            end;
+        not_selected -> {error, security_profile_required};
+        {error, _Reason} -> {error, selected_security_profile_missing}
+    end;
 movement_allowed(_Direction, _Current, _Draft) ->
     ok.
 
@@ -189,6 +226,16 @@ valid_device(DeviceId) ->
         {ok, #{kind := device} = Device} -> {ok, Device};
         {ok, _Other} -> {error, invalid_device};
         not_found -> {error, selected_device_missing}
+    end.
+
+valid_security_profile(undefined) ->
+    {error, security_profile_required};
+valid_security_profile(<<>>) ->
+    {error, security_profile_required};
+valid_security_profile(ProfileId) ->
+    case ias_security_profile:profile(normalize_id(ProfileId)) of
+        {ok, Profile} -> {ok, Profile};
+        not_found -> {error, selected_security_profile_missing}
     end.
 
 adjacent_step(Current, Delta) ->
