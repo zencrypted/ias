@@ -254,6 +254,21 @@ bootstrap_page_is_packaged_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"id=\"stand\"">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"N2O_start()">>)).
 
+start_page_lists_existing_drafts_test() ->
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    Html = render(ias_provisioning_wizard:content_for(start)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Existing Wizard Drafts">>)),
+    ?assertMatch({_, _}, binary:match(Html, maps:get(id, Draft))),
+    ?assertMatch({_, _}, binary:match(Html, <<"Resume">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Delete">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"?id=", (maps:get(id, Draft))/binary>>)).
+
+start_page_handles_no_existing_drafts_test() ->
+    ias_provisioning_wizard_store:clear(),
+    Html = render(ias_provisioning_wizard:content_for(start)),
+    ?assertMatch({_, _}, binary:match(Html, <<"No saved wizard drafts are available">>)).
+
 demo_device(Id) ->
     ias_demo_store:put_runtime_object(#{id => Id,
                                         kind => device,

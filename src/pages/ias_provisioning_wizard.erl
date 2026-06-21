@@ -9,6 +9,9 @@ event(init) ->
 event(select_device_bound) ->
     {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
     nitro:redirect(wizard_url(maps:get(id, Draft)));
+event({wizard_delete_draft, WizardId}) ->
+    ok = ias_provisioning_wizard_store:delete(WizardId),
+    nitro:redirect(start_url());
 event({wizard_next, WizardId}) ->
     case ias_provisioning_wizard_store:next(WizardId) of
         {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
@@ -67,7 +70,8 @@ content() ->
 content_for(start) ->
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Live runtime orchestration skeleton for future device-bound VPN provisioning. Stage 24A creates only a volatile wizard draft.")},
+        #p{body = ias_html:text("Create a new device-bound provisioning draft or resume work restored from Demo State.")},
+        existing_wizard_drafts_panel(),
         scheme_panel(undefined)
     ]);
 content_for({draft, Draft}) ->
@@ -95,6 +99,45 @@ content_for({error, WizardId}) ->
 
 page(Body) ->
     #panel{class = <<"ias-placeholder">>, body = Body}.
+
+existing_wizard_drafts_panel() ->
+    Drafts = lists:reverse(ias_provisioning_wizard_store:all()),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Existing Wizard Drafts")},
+        existing_wizard_drafts(Drafts)
+    ]}.
+
+existing_wizard_drafts([]) ->
+    #p{body = ias_html:text("No saved wizard drafts are available. Start a new provisioning scheme below.")};
+existing_wizard_drafts(Drafts) ->
+    #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;">>,
+           body = [existing_wizard_draft_card(Draft) || Draft <- Drafts]}.
+
+existing_wizard_draft_card(Draft) ->
+    WizardId = maps:get(id, Draft, undefined),
+    #panel{style = <<"padding:12px;border:1px solid rgba(15,23,42,0.12);border-radius:6px;background:#fff;min-width:0;">>,
+           body = [
+               #h3{style = <<"margin:0 0 8px;font-size:14px;overflow-wrap:anywhere;">>,
+                   body = ias_html:text(WizardId)},
+               key_value_table([
+                   {"Scenario", maps:get(scenario, Draft, undefined)},
+                   {"Current Step", maps:get(current_step, Draft, undefined)},
+                   {"Device", draft_reference(maps:get(device_id, Draft, undefined))},
+                   {"VPN Service", draft_reference(maps:get(vpn_service_id, Draft, undefined))},
+                   {"Updated At", maps:get(updated_at, Draft, undefined)}
+               ]),
+               #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>, body = [
+                   #link{url = wizard_url(WizardId), class = [button, sgreen],
+                         body = ias_html:text("Resume")},
+                   #link{class = [button, more],
+                         body = ias_html:text("Delete"),
+                         postback = {wizard_delete_draft, WizardId}}
+               ]}
+           ]}.
+
+draft_reference(undefined) -> <<"not selected">>;
+draft_reference(<<>>) -> <<"not selected">>;
+draft_reference(Value) -> Value.
 
 scheme_panel(_Draft) ->
     #panel{class = <<"ias-status-card">>, body = [

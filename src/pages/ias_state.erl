@@ -115,7 +115,8 @@ import_result(#{imported_objects := Objects,
                    {"Imported Relationships", Relationships},
                    {"Imported Wizard Drafts", maps:get(imported_wizard_drafts, Result, 0)},
                    {"Skipped Invalid Records", Skipped}
-               ])
+               ]),
+               imported_wizard_drafts_action(Result)
            ]};
 import_result({error, Reason}) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
@@ -125,6 +126,18 @@ import_result({error, Reason}) ->
                    {"Reason", Reason}
                ])
            ]}.
+
+imported_wizard_drafts_action(Result) ->
+    case maps:get(imported_wizard_drafts, Result, 0) of
+        Count when Count > 0 ->
+            #panel{style = <<"margin-top:12px;">>, body = [
+                #link{url = <<"/app/provisioning-wizard.htm">>,
+                      class = [button, sgreen],
+                      body = ias_html:text("Open Restored Wizard Drafts")}
+            ]};
+        _ ->
+            #panel{body = []}
+    end.
 
 clear_result() ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
