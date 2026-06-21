@@ -39,6 +39,7 @@ runtime_summary() ->
         key_value_table([
             {"Runtime Objects", maps:get(objects, Summary, 0)},
             {"Runtime Relationships", maps:get(relationships, Summary, 0)},
+            {"Provisioning Wizard Drafts", maps:get(wizard_drafts, Summary, 0)},
             {"Total Runtime Records", maps:get(total_records, Summary, 0)}
         ])
     ]}.
@@ -46,7 +47,7 @@ runtime_summary() ->
 export_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Export Demo State")},
-        #p{body = ias_html:text("Exports current ETS demo runtime state as Erlang term metadata.")},
+        #p{body = ias_html:text("Exports current ETS demo runtime state and sanitized provisioning wizard drafts as Erlang term metadata.")},
         #link{class = [button, sgreen],
               body = ias_html:text("Export Demo State"),
               postback = export_demo_state},
@@ -88,7 +89,7 @@ import_panel() ->
 clear_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Clear Demo State")},
-        #p{body = ias_html:text("Clears ETS runtime demo objects and relationships only. Built-in fixtures are not deleted.")},
+        #p{body = ias_html:text("Clears ETS runtime demo objects, relationships, certificate material and provisioning wizard drafts. Built-in fixtures are not deleted.")},
         #link{class = [button, sgreen],
               body = ias_html:text("Clear Demo State"),
               postback = clear_demo_state}
@@ -105,13 +106,14 @@ export_result(Term) ->
 
 import_result(#{imported_objects := Objects,
                 imported_relationships := Relationships,
-                skipped_invalid_records := Skipped}) ->
+                skipped_invalid_records := Skipped} = Result) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
                #h3{body = ias_html:text("Demo state import completed")},
                key_value_table([
                    {"Imported Objects", Objects},
                    {"Imported Relationships", Relationships},
+                   {"Imported Wizard Drafts", maps:get(imported_wizard_drafts, Result, 0)},
                    {"Skipped Invalid Records", Skipped}
                ])
            ]};

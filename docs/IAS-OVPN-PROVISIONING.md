@@ -77,9 +77,18 @@ Device-bound Provisioning Wizard Skeleton
 -----------------------------------------
 
 Stage 24A introduces a live-runtime-only Provisioning Wizard entry point for the
-future forward device-bound VPN provisioning flow. The wizard stores only a
-volatile ETS draft outside Demo State and does not create IAS objects,
-relationships, provisioning transactions or export artifacts.
+future forward device-bound VPN provisioning flow. The wizard stores its active
+draft in a separate ETS store and does not create relationships, provisioning
+transactions or export artifacts merely by navigating between steps.
+
+Once the wizard started carrying selected Device, Security Profile and VPN
+Service references, sanitized drafts became part of the Demo State boundary.
+Demo State export/import preserves only the wizard id, scenario, current step,
+selected object ids and timestamps. PEM, CSR, private-key, TLS secret, form and
+session data are never included. Older snapshots without `wizard_drafts` remain
+valid, and stale object references are restored so the wizard can surface its
+existing blocked-selection guidance rather than silently discarding operator
+progress.
 
 The current skeleton defines the orchestration path:
 

@@ -238,6 +238,12 @@ Certificate or Device
 -> await real CA/client certificate/private-key material
 ```
 
+Provisioning Wizard drafts are also live-runtime orchestration metadata. Demo
+State may preserve their scenario, current step, selected object identifiers and
+timestamps, but never certificate material, private keys, CSR bodies, TLS
+secrets, temporary form values or process/session identifiers. Import restores
+stale references deliberately so the wizard can require a new selection.
+
 A Stage 23A transaction records only sanitized metadata:
 
 - provisioning id;

@@ -1,6 +1,8 @@
 -module(ias_provisioning_wizard_store).
 -compile({no_auto_import,[get/1]}).
 -export([new/1,
+         all/0,
+         restore/1,
          get/1,
          update/2,
          delete/1,
@@ -44,6 +46,26 @@ new(device_bound) ->
     {ok, Draft};
 new(_Scenario) ->
     {error, unsupported_scenario}.
+
+all() ->
+    ensure(),
+    lists:sort(fun(A, B) -> maps:get(id, A) =< maps:get(id, B) end,
+               [Draft || {_Id, Draft} <- ets:tab2list(?TABLE)]).
+
+restore(Draft) when is_map(Draft) ->
+    ensure(),
+    case validate_restored_draft(Draft) of
+        {ok, SafeDraft} ->
+            Id = maps:get(id, SafeDraft),
+            case ets:insert_new(?TABLE, {Id, SafeDraft}) of
+                true -> {ok, SafeDraft};
+                false -> {error, duplicate_id}
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end;
+restore(_Draft) ->
+    {error, invalid_draft}.
 
 get(undefined) ->
     not_found;
@@ -295,6 +317,39 @@ clamp(Value, _Min, Max) when Value > Max ->
     Max;
 clamp(Value, _Min, _Max) ->
     Value.
+
+validate_restored_draft(Draft) ->
+    Allowed = [id, scenario, current_step, device_id, security_profile_id,
+               vpn_service_id, ca_certificate_id, client_certificate_id,
+               created_at, updated_at],
+    Safe = maps:with(Allowed, Draft),
+    case {maps:get(id, Safe, undefined),
+          maps:get(scenario, Safe, undefined),
+          maps:get(current_step, Safe, undefined)} of
+        {Id, device_bound, Step} ->
+            case usable_restore_id(Id) andalso lists:member(Step, steps())
+                 andalso valid_optional_reference(maps:get(device_id, Safe, undefined))
+                 andalso valid_optional_profile_reference(maps:get(security_profile_id, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(vpn_service_id, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(ca_certificate_id, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(client_certificate_id, Safe, undefined)) of
+                true -> {ok, Safe};
+                false -> {error, invalid_draft}
+            end;
+        _ ->
+            {error, invalid_draft}
+    end.
+
+usable_restore_id(Id) when is_binary(Id) -> byte_size(Id) > 0;
+usable_restore_id(Id) when is_list(Id) -> Id =/= [];
+usable_restore_id(_) -> false.
+
+valid_optional_reference(undefined) -> true;
+valid_optional_reference(Id) -> usable_restore_id(Id).
+
+valid_optional_profile_reference(undefined) -> true;
+valid_optional_profile_reference(Id) when is_atom(Id) -> true;
+valid_optional_profile_reference(Id) -> usable_restore_id(Id).
 
 normalize_updates(Updates) ->
     CurrentStep = maps:get(current_step, Updates, undefined),

@@ -189,6 +189,113 @@ demo_state_roundtrip_supports_ovpn_provisioning_transactions_test() ->
                         status := awaiting_material}},
                  ias_demo_store:get(maps:get(id, Transaction))).
 
+
+demo_state_roundtrip_restores_wizard_drafts_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = ias_demo_store:add_device(#{id => <<"wizard_state_device">>,
+                                         source => manual_device,
+                                         name => <<"Wizard State Device">>,
+                                         type => <<"vpn-client">>}),
+    Service = ias_demo_store:add_service(#{id => <<"wizard_state_service">>,
+                                           source => manual_vpn_service,
+                                           name => <<"Wizard State VPN">>,
+                                           endpoint => <<"vpn.example.com">>,
+                                           remote_port => <<"1194">>,
+                                           protocol => <<"udp">>}),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft1} = ias_provisioning_wizard_store:select_device(
+        maps:get(id, Draft0), maps:get(id, Device)),
+    {ok, Draft2} = ias_provisioning_wizard_store:select_security_profile(
+        maps:get(id, Draft1), administrator),
+    {ok, Draft3} = ias_provisioning_wizard_store:select_vpn_service(
+        maps:get(id, Draft2), maps:get(id, Service)),
+    {ok, Draft} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft3), #{current_step => ca_certificate}),
+
+    Term = ias_demo_state:export(),
+    ok = ias_demo_state:clear(),
+    ?assertEqual(not_found, ias_provisioning_wizard_store:get(maps:get(id, Draft))),
+
+    Result = ias_demo_state:import(Term),
+    {ok, Restored} = ias_provisioning_wizard_store:get(maps:get(id, Draft)),
+
+    ?assertEqual(1, maps:get(imported_wizard_drafts, Result)),
+    ?assertEqual(ca_certificate, maps:get(current_step, Restored)),
+    ?assertEqual(maps:get(id, Device), maps:get(device_id, Restored)),
+    ?assertEqual(administrator, maps:get(security_profile_id, Restored)),
+    ?assertEqual(maps:get(id, Service), maps:get(vpn_service_id, Restored)).
+
+wizard_draft_export_is_sanitized_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, _Draft} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => vpn_service,
+                               certificate_pem => <<"WIZARD-CERTIFICATE-PEM">>,
+                               private_key_pem => <<"WIZARD-PRIVATE-KEY">>,
+                               form_error => <<"temporary UI error">>}),
+
+    Snapshot = decode_snapshot(ias_demo_state:export()),
+    [ExportedDraft] = maps:get(wizard_drafts, Snapshot),
+
+    ?assertEqual(false, maps:is_key(certificate_pem, ExportedDraft)),
+    ?assertEqual(false, maps:is_key(private_key_pem, ExportedDraft)),
+    ?assertEqual(false, maps:is_key(form_error, ExportedDraft)),
+    ?assertEqual(nomatch, binary:match(ias_demo_state:export(), <<"WIZARD-CERTIFICATE-PEM">>)),
+    ?assertEqual(nomatch, binary:match(ias_demo_state:export(), <<"WIZARD-PRIVATE-KEY">>)).
+
+legacy_demo_state_without_wizard_drafts_imports_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Snapshot = #{format => ias_demo_state_v1,
+                 objects => [],
+                 relationships => []},
+    Result = ias_demo_state:import(iolist_to_binary(io_lib:format("~tp.~n", [Snapshot]))),
+
+    ?assertEqual(0, maps:get(imported_wizard_drafts, Result)),
+    ?assertEqual([], ias_provisioning_wizard_store:all()).
+
+invalid_and_duplicate_wizard_drafts_are_skipped_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Valid = #{id => <<"restored_wizard">>,
+              scenario => device_bound,
+              current_step => vpn_service,
+              device_id => <<"missing_device_is_allowed_as_stale">>,
+              security_profile_id => administrator,
+              vpn_service_id => undefined,
+              ca_certificate_id => undefined,
+              client_certificate_id => undefined,
+              created_at => <<"2026-06-21T06:30:00+03:00">>,
+              updated_at => <<"2026-06-21T06:31:00+03:00">>},
+    Snapshot = #{format => ias_demo_state_v1,
+                 objects => [],
+                 relationships => [],
+                 wizard_drafts => [Valid,
+                                   Valid,
+                                   #{id => <<"bad_scenario">>,
+                                     scenario => portable,
+                                     current_step => device},
+                                   #{id => <<"bad_step">>,
+                                     scenario => device_bound,
+                                     current_step => unknown_step}]},
+    Result = ias_demo_state:import(iolist_to_binary(io_lib:format("~tp.~n", [Snapshot]))),
+
+    ?assertEqual(1, maps:get(imported_wizard_drafts, Result)),
+    ?assertEqual(3, maps:get(skipped_invalid_records, Result)),
+    ?assertMatch({ok, _}, ias_provisioning_wizard_store:get(<<"restored_wizard">>)).
+
+clear_demo_state_clears_wizard_drafts_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+
+    ok = ias_demo_state:clear(),
+
+    ?assertEqual(not_found, ias_provisioning_wizard_store:get(maps:get(id, Draft))),
+    ?assertEqual(0, maps:get(wizard_drafts, ias_demo_state:summary())).
+
 setup_demo_graph() ->
     Device = ias_demo_store:add_device(#{id => <<"state_device">>,
                                          source => ovpn_demo_import,

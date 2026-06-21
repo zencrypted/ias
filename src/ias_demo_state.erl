@@ -12,12 +12,15 @@ summary() ->
                               maps:get(kind, Object, undefined) =:= relationship],
     DomainObjects = [Object || Object <- Objects,
                               maps:get(kind, Object, undefined) =/= relationship],
+    WizardDrafts = ias_provisioning_wizard_store:all(),
     #{objects => length(DomainObjects),
       relationships => length(Relationships),
+      wizard_drafts => length(WizardDrafts),
       total_records => length(Objects)}.
 
 clear() ->
     ok = ias_demo_store:clear(),
+    ok = ias_provisioning_wizard_store:clear(),
     ias_certificate_material:clear().
 
 export() ->
@@ -30,7 +33,8 @@ export() ->
         format => ?FORMAT,
         exported_at => created_at(),
         objects => [sanitize_record(Object) || Object <- DomainObjects],
-        relationships => [sanitize_record(Relationship) || Relationship <- Relationships]
+        relationships => [sanitize_record(Relationship) || Relationship <- Relationships],
+        wizard_drafts => [sanitize_wizard_draft(Draft) || Draft <- ias_provisioning_wizard_store:all()]
     },
     iolist_to_binary(io_lib:format("~tp.~n", [Snapshot])).
 
@@ -77,26 +81,36 @@ validate_snapshot(#{format := ?FORMAT,
                     objects := Objects,
                     relationships := Relationships} = Snapshot)
   when is_list(Objects), is_list(Relationships) ->
-    {ok, Snapshot};
+    case maps:get(wizard_drafts, Snapshot, []) of
+        WizardDrafts when is_list(WizardDrafts) -> {ok, Snapshot};
+        _ -> {error, invalid_snapshot_format}
+    end;
 validate_snapshot(_) ->
     {error, invalid_snapshot_format}.
 
 restore_snapshot(Snapshot) ->
     Objects = maps:get(objects, Snapshot, []),
     Relationships = maps:get(relationships, Snapshot, []),
+    WizardDrafts = maps:get(wizard_drafts, Snapshot, []),
     ValidObjects = [Object || Object <- Objects, valid_object(Object)],
     ValidRelationships = [Relationship || Relationship <- Relationships,
                                           valid_relationship(Relationship)],
+    ValidWizardDrafts = [Draft || Draft <- WizardDrafts, valid_wizard_draft(Draft)],
     Skipped = length(Objects) - length(ValidObjects) +
-        length(Relationships) - length(ValidRelationships),
+        length(Relationships) - length(ValidRelationships) +
+        length(WizardDrafts) - length(ValidWizardDrafts),
     ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
     ias_certificate_material:clear(),
     [ias_demo_store:put_runtime_object(sanitize_record(Object)) || Object <- ValidObjects],
     UniqueRelationships = unique_relationships(ValidRelationships),
     [ias_demo_store:put_runtime_object(Relationship) || Relationship <- UniqueRelationships],
+    ImportedWizardDrafts = restore_wizard_drafts(ValidWizardDrafts),
     #{imported_objects => length(ValidObjects),
       imported_relationships => length(UniqueRelationships),
-      skipped_invalid_records => Skipped + length(ValidRelationships) - length(UniqueRelationships)}.
+      imported_wizard_drafts => ImportedWizardDrafts,
+      skipped_invalid_records => Skipped + length(ValidRelationships) - length(UniqueRelationships) +
+          length(ValidWizardDrafts) - ImportedWizardDrafts}.
 
 valid_object(#{kind := Kind, id := Id}) when Kind =/= relationship ->
     is_supported_kind(Kind) andalso usable_id(Id);
@@ -160,6 +174,24 @@ relationship_key(Relationship) ->
      maps:get(source_id, Relationship, undefined),
      maps:get(target_kind, Relationship, undefined),
      maps:get(target_id, Relationship, undefined)}.
+
+valid_wizard_draft(#{id := Id, scenario := device_bound, current_step := Step}) ->
+    usable_id(Id) andalso lists:member(Step, ias_provisioning_wizard_store:steps());
+valid_wizard_draft(_) ->
+    false.
+
+restore_wizard_drafts(Drafts) ->
+    lists:foldl(fun(Draft, Count) ->
+        case ias_provisioning_wizard_store:restore(sanitize_wizard_draft(Draft)) of
+            {ok, _} -> Count + 1;
+            {error, _} -> Count
+        end
+    end, 0, Drafts).
+
+sanitize_wizard_draft(Draft) ->
+    maps:with([id, scenario, current_step, device_id, security_profile_id,
+               vpn_service_id, ca_certificate_id, client_certificate_id,
+               created_at, updated_at], Draft).
 
 sanitize_record(Record) ->
     Sanitized = maps:without(secret_keys(), Record),
