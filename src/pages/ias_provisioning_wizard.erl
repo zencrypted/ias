@@ -32,6 +32,16 @@ event({wizard_apply_relationships, WizardId}) ->
         {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
         {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
     end;
+event({wizard_verify_client_certificate, WizardId}) ->
+    case ias_provisioning_wizard_store:get(WizardId) of
+        {ok, Draft} ->
+            case ias_provisioning_wizard_authorization:verify_client_certificate(Draft) of
+                {ok, _Verification} -> nitro:redirect(wizard_url(WizardId));
+                {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
+            end;
+        not_found ->
+            nitro:update(wizard_feedback, wizard_error(not_found))
+    end;
 event({wizard_issue_client_certificate, WizardId}) ->
     Fields = #{user_id => nitro:q(wizard_client_certificate_user),
                subject_cn => nitro:q(wizard_client_certificate_subject_cn),
@@ -109,7 +119,7 @@ content_for({draft, Draft}) ->
     CurrentStep = maps:get(current_step, Draft, scheme),
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Wizard draft is stored in runtime ETS. Stage 24G reviews the selected Device, Security Profile, VPN Service and certificates before applying their relationships.")},
+        #p{body = ias_html:text("Wizard draft is stored in runtime ETS. Relationships, derived Security Policy and certificate verification are applied before provisioning readiness is allowed.")},
         draft_summary(Draft),
         progress_panel(CurrentStep),
         step_panel(Draft)
@@ -318,6 +328,8 @@ material_readiness_badge_style(trusted) ->
     <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
 material_readiness_badge_style(allow) ->
     <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(verified) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
 material_readiness_badge_style(compatible) ->
     <<"background:#eff6ff;color:#1d4ed8;border-color:#93c5fd;">>;
 material_readiness_badge_style(optional) ->
@@ -350,6 +362,7 @@ readiness_positive_status(available) -> true;
 readiness_positive_status(available_on_device) -> true;
 readiness_positive_status(trusted) -> true;
 readiness_positive_status(allow) -> true;
+readiness_positive_status(verified) -> true;
 readiness_positive_status(compatible) -> true;
 readiness_positive_status(optional) -> true;
 readiness_positive_status(configured) -> true;
@@ -379,12 +392,31 @@ material_readiness_actions(Draft, Readiness) ->
                         "Open CA Certificate", CaId),
         material_action(maps:get(client_certificate, Components, missing_body),
                         "Open Client Certificate", ClientId),
+        client_verification_action(Draft),
         #link{url = wizard_url(maps:get(id, Draft)), class = [button, more],
               body = ias_html:text("Refresh Readiness")}
     ],
     Actions = [Action || Action <- Actions0, Action =/= undefined],
     #panel{style = <<"margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
            body = Actions}.
+
+
+client_verification_action(Draft) ->
+    WizardId = maps:get(id, Draft, undefined),
+    case ias_provisioning_wizard_authorization:verification_status(Draft) of
+        verified ->
+            undefined;
+        not_verified ->
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Verify Client Certificate"),
+                  postback = {wizard_verify_client_certificate, WizardId}};
+        failed ->
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Verify Client Certificate Again"),
+                  postback = {wizard_verify_client_certificate, WizardId}};
+        _ ->
+            undefined
+    end.
 
 material_action(available, _Label, _CertificateId) -> undefined;
 material_action(_Status, _Label, undefined) -> undefined;
@@ -467,8 +499,10 @@ relationship_notes(Notes) ->
             ]}].
 
 relationship_label(device_security_profile) -> <<"Device -> Security Profile">>;
+relationship_label(device_security_policy) -> <<"Device -> Security Policy">>;
 relationship_label(device_vpn_service) -> <<"Device -> VPN Service">>;
 relationship_label(device_client_certificate) -> <<"Device -> Client Certificate">>;
+relationship_label(client_certificate_security_policy) -> <<"Client Certificate -> Security Policy">>;
 relationship_label(vpn_service_ca_certificate) -> <<"VPN Service -> CA Certificate">>;
 relationship_label(Key) -> ias_html:text(Key).
 

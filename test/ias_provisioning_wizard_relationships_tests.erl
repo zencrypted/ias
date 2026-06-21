@@ -1,15 +1,16 @@
 -module(ias_provisioning_wizard_relationships_tests).
 -include_lib("eunit/include/eunit.hrl").
 
-relationship_review_lists_four_pending_links_test() ->
+relationship_review_lists_six_pending_links_test() ->
     Draft = complete_draft(),
     Review = ias_provisioning_wizard_store:relationship_review(Draft),
     Items = maps:get(items, Review),
 
-    ?assertEqual(4, length(Items)),
+    ?assertEqual(6, length(Items)),
     ?assertEqual(true, maps:get(can_apply, Review)),
     ?assertEqual(false, maps:get(ready, Review)),
-    ?assertEqual([will_create, will_create, will_create, will_create],
+    ?assertEqual([will_create, will_create, will_create,
+                  will_create, will_create, will_create],
                  [maps:get(status, Item) || Item <- Items]).
 
 relationship_apply_creates_graph_and_unlocks_next_test() ->
@@ -22,7 +23,7 @@ relationship_apply_creates_graph_and_unlocks_next_test() ->
 
     ?assertEqual(true, maps:get(relationships_applied, AppliedDraft)),
     ?assertEqual(true, ias_provisioning_wizard_store:relationships_ready(AppliedDraft)),
-    ?assertEqual(4, length(ias_demo_store:relationships())),
+    ?assertEqual(6, length(ias_demo_store:relationships())),
     {ok, MaterialStep} = ias_provisioning_wizard_store:next(WizardId),
     ?assertEqual(material_readiness, maps:get(current_step, MaterialStep)).
 
@@ -36,7 +37,31 @@ relationship_apply_is_idempotent_test() ->
     SecondIds = relationship_ids(),
 
     ?assertEqual(FirstIds, SecondIds),
-    ?assertEqual(4, length(SecondIds)).
+    ?assertEqual(6, length(SecondIds)).
+
+security_policy_relationships_are_applied_test() ->
+    Draft = complete_draft(),
+    DeviceId = maps:get(device_id, Draft),
+    CertificateId = maps:get(client_certificate_id, Draft),
+    {ok, _AppliedDraft} = ias_provisioning_wizard_store:apply_relationships(
+        maps:get(id, Draft)),
+
+    ?assertMatch(#{kind := relationship}, ias_relationship_link:exists(
+        uses_security_policy, DeviceId, <<"high_security">>)),
+    ?assertMatch(#{kind := relationship}, ias_relationship_link:exists(
+        uses_security_policy, CertificateId, <<"high_security">>)).
+
+different_security_policy_blocks_apply_test() ->
+    Draft = complete_draft(),
+    DeviceId = maps:get(device_id, Draft),
+    {ok, _} = ias_relationship_link:create(
+        uses_security_policy, DeviceId, <<"standard">>),
+
+    Review = ias_provisioning_wizard_store:relationship_review(Draft),
+    PolicyItem = item(device_security_policy, Review),
+
+    ?assertEqual(conflict, maps:get(status, PolicyItem)),
+    ?assertEqual(false, maps:get(can_apply, Review)).
 
 existing_operational_conflict_blocks_apply_test() ->
     Draft = complete_draft(),
@@ -110,7 +135,8 @@ already_linked_graph_is_ready_test() ->
     Review = ias_provisioning_wizard_store:relationship_review(AppliedDraft),
 
     ?assertEqual(true, maps:get(ready, Review)),
-    ?assertEqual([already_linked, already_linked, already_linked, already_linked],
+    ?assertEqual([already_linked, already_linked, already_linked,
+                  already_linked, already_linked, already_linked],
                  [maps:get(status, Item) || Item <- maps:get(items, Review)]).
 
 relationship_review_renders_apply_action_test() ->

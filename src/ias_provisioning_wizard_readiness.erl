@@ -12,11 +12,13 @@ preview(Draft) when is_map(Draft) ->
     Items = [
         relationships_item(RelationshipReview),
         security_profile_item(Draft),
+        security_policy_item(Draft),
         endpoint_item(ExportPreview, ProvisioningPreview),
         certificate_item(ca_certificate, Draft, ExportPreview),
         material_item(ca_certificate_pem, Components),
         certificate_item(client_certificate, Draft, ExportPreview),
         material_item(client_certificate_pem, Components),
+        client_verification_item(Draft),
         private_key_item(Components),
         tls_auth_item(Draft),
         authorization_item(Plan),
@@ -82,6 +84,58 @@ security_profile_item(Draft) ->
             item(security_profile, <<"Security Profile">>, stale_reference,
                  <<"The selected Security Profile no longer exists.">>)
     end.
+
+security_policy_item(Draft) ->
+    case ias_provisioning_wizard_authorization:derived_policy(Draft) of
+        {ok, Policy} ->
+            PolicyId = maps:get(id, Policy, undefined),
+            DeviceId = maps:get(device_id, Draft, undefined),
+            CertificateId = maps:get(client_certificate_id, Draft, undefined),
+            DeviceLinked = policy_linked(device, DeviceId, PolicyId),
+            CertificateLinked = policy_linked(certificate, CertificateId, PolicyId),
+            case {DeviceLinked, CertificateLinked} of
+                {true, true} ->
+                    item(security_policy, <<"Security Policy">>, ready,
+                         ias_html:join([<<"Policy ">>, PolicyId,
+                                        <<" is applied to the Device and Client Certificate.">>]));
+                _ ->
+                    item(security_policy, <<"Security Policy">>, blocked,
+                         ias_html:join([<<"Policy ">>, PolicyId,
+                                        <<" must be applied to both the Device and Client Certificate.">>]))
+            end;
+        {error, _Reason} ->
+            item(security_policy, <<"Security Policy">>, missing,
+                 <<"No Security Policy could be derived from the selected Security Profile.">>)
+    end.
+
+client_verification_item(Draft) ->
+    Status = ias_provisioning_wizard_authorization:verification_status(Draft),
+    case Status of
+        verified ->
+            item(client_verification, <<"Client Certificate Verification">>, verified,
+                 <<"The selected Client Certificate has a successful verification record.">>);
+        failed ->
+            item(client_verification, <<"Client Certificate Verification">>, failed,
+                 <<"The selected Client Certificate has a failed verification record. Verify it again after correcting its claims or trust inputs.">>);
+        not_verified ->
+            item(client_verification, <<"Client Certificate Verification">>, not_verified,
+                 <<"The selected Client Certificate has not been verified yet.">>);
+        not_selected ->
+            item(client_verification, <<"Client Certificate Verification">>, missing,
+                 <<"No Client Certificate is selected.">>);
+        _ ->
+            item(client_verification, <<"Client Certificate Verification">>, stale_reference,
+                 <<"The selected Client Certificate is unavailable.">>)
+    end.
+
+policy_linked(SourceKind, SourceId, PolicyId) ->
+    lists:any(fun(Relationship) ->
+        maps:get(relation_type, Relationship, undefined) =:= uses_security_policy andalso
+        maps:get(source_kind, Relationship, undefined) =:= SourceKind andalso
+        same_id(maps:get(source_id, Relationship, undefined), SourceId) andalso
+        maps:get(target_kind, Relationship, undefined) =:= security_policy andalso
+        same_id(maps:get(target_id, Relationship, undefined), PolicyId)
+    end, ias_demo_store:relationships()).
 
 endpoint_item(ExportPreview, ProvisioningPreview) ->
     case maps:get(vpn_endpoint_status, ProvisioningPreview, missing) of

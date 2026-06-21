@@ -40,12 +40,17 @@ required_relationships(Draft) ->
     ServiceId = maps:get(vpn_service_id, Draft, undefined),
     CaCertificateId = maps:get(ca_certificate_id, Draft, undefined),
     ClientCertificateId = maps:get(client_certificate_id, Draft, undefined),
+    PolicyId = ias_provisioning_wizard_authorization:derived_policy_id(Draft),
     [relationship(device_security_profile, uses_security_profile,
                   device, DeviceId, security_profile, ProfileId),
+     relationship(device_security_policy, uses_security_policy,
+                  device, DeviceId, security_policy, PolicyId),
      relationship(device_vpn_service, uses_service,
                   device, DeviceId, vpn_service, ServiceId),
      relationship(device_client_certificate, uses_certificate,
                   device, DeviceId, certificate, ClientCertificateId),
+     relationship(client_certificate_security_policy, uses_security_policy,
+                  certificate, ClientCertificateId, security_policy, PolicyId),
      relationship(vpn_service_ca_certificate, uses_ca_certificate,
                   vpn_service, ServiceId, certificate, CaCertificateId)].
 
@@ -85,6 +90,8 @@ review_resolved(#{key := device_client_certificate} = Item, Draft) ->
     end;
 review_resolved(#{relation_type := uses_security_profile} = Item, _Draft) ->
     profile_review(Item);
+review_resolved(#{relation_type := uses_security_policy} = Item, _Draft) ->
+    security_policy_review(Item);
 review_resolved(Item, _Draft) ->
     review_operational(Item).
 
@@ -124,6 +131,31 @@ review_operational(Item) ->
                   notes => term_text(Other)}
     end.
 
+
+security_policy_review(Item) ->
+    SourceId = maps:get(source_id, Item),
+    TargetId = maps:get(target_id, Item),
+    case ias_relationship_link:status(uses_security_policy, SourceId, TargetId) of
+        link ->
+            Item#{status => will_create, notes => <<"-">>};
+        {linked, Relationship} ->
+            Item#{status => already_linked,
+                  relationship_id => maps:get(id, Relationship, undefined),
+                  notes => <<"-">>};
+        {already_has_policy, ExistingPolicyId, Relationship} ->
+            Item#{status => conflict,
+                  relationship_id => maps:get(id, Relationship, undefined),
+                  existing_target_ids => [ExistingPolicyId],
+                  notes => ias_html:join([
+                      <<"Object already uses a different Security Policy: ">>,
+                      ias_html:text(ExistingPolicyId)])};
+        not_found ->
+            Item#{status => invalid,
+                  notes => <<"Security Policy relationship is not supported for the selected objects">>};
+        Other ->
+            Item#{status => invalid, reason => Other,
+                  notes => term_text(Other)}
+    end.
 
 client_certificate_binding(Draft) ->
     CertificateId = maps:get(client_certificate_id, Draft, undefined),

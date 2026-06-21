@@ -70,6 +70,34 @@ material_readiness_renders_available_material_during_authorization_denial_test()
     ?assertEqual(nomatch, binary:match(Html, <<"Open CA Certificate">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Open Client Certificate">>)).
 
+wizard_inline_verification_completes_authorization_prerequisites_test() ->
+    Draft0 = setup_graph(true, false),
+    {ok, Draft} = ias_provisioning_wizard_store:apply_relationships(
+        maps:get(id, Draft0)),
+
+    ?assertEqual(not_verified,
+                 ias_provisioning_wizard_authorization:verification_status(Draft)),
+    {ok, Verification} =
+        ias_provisioning_wizard_authorization:verify_client_certificate(Draft),
+    ?assertEqual(verified, maps:get(verification_status, Verification)),
+    ?assertEqual(verified,
+                 ias_provisioning_wizard_authorization:verification_status(Draft)),
+
+    Readiness = ias_provisioning_wizard_store:material_readiness(Draft),
+    ?assertEqual(true, maps:get(ready, Readiness)),
+    ?assertEqual(allow, maps:get(authorization, maps:get(plan, Readiness))).
+
+material_readiness_renders_inline_verification_action_test() ->
+    Draft0 = setup_graph(true, false),
+    {ok, Draft} = ias_provisioning_wizard_store:apply_relationships(
+        maps:get(id, Draft0)),
+    Html = iolist_to_binary(nitro:render(
+        ias_provisioning_wizard:content_for({draft, Draft}))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Verify Client Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Client Certificate Verification">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Security Policy">>)).
+
 setup_ready_graph(StoreMaterial) ->
     setup_graph(StoreMaterial, true).
 

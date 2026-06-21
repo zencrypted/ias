@@ -288,7 +288,7 @@ step_description(ca_certificate) ->
 step_description(client_certificate) ->
     <<"Choose the device-bound client certificate.">>;
 step_description(relationships) ->
-    <<"Review the required Device, Certificate, Security Profile and VPN Service relationships.">>;
+    <<"Review the required Device, Certificate, Security Profile, Security Policy and VPN Service relationships.">>;
 step_description(material_readiness) ->
     <<"Check public certificate material and assembly readiness before provisioning.">>;
 step_description(provisioning) ->
