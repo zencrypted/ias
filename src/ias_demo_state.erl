@@ -206,7 +206,8 @@ secret_keys() ->
     [private_key, private_key_body, private_key_pem, key_pem,
      certificate_body, certificate_pem, cert_pem,
      ca_body, ca_pem, ca_certificate_body, ca_certificate_pem,
-     csr_body, csr_pem, tls_auth_body, tls_crypt_body, shared_secret].
+     csr_body, csr_pem, tls_auth_body, tls_crypt_body, shared_secret,
+     ovpn_body, ovpn_profile, artifact_body].
 
 created_at() ->
     iolist_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second),

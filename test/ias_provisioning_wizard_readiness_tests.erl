@@ -20,7 +20,7 @@ material_readiness_allows_provisioning_when_public_material_is_available_test() 
     ?assertEqual(true, maps:get(ready, Readiness)),
     ?assertEqual(allow, maps:get(authorization, Plan)),
     ?assertEqual(public_material_available, maps:get(material_status, Plan)),
-    ?assertEqual(ready_for_device_assembly, maps:get(assembly_status, Plan)),
+    ?assertEqual(public_bundle_ready, maps:get(assembly_status, Plan)),
     {ok, ProvisioningStep} = ias_provisioning_wizard_store:next(maps:get(id, Draft)),
     ?assertEqual(provisioning, maps:get(current_step, ProvisioningStep)).
 

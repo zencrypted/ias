@@ -60,6 +60,9 @@ event({wizard_create_another_provisioning, WizardId}) ->
         {ok, Draft, _Transaction} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
         {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
     end;
+event({wizard_download_device_bound_ovpn, ProvisioningId}) ->
+    wizard_download_device_bound_ovpn(
+        ias_device_bound_ovpn:download_response(ProvisioningId));
 event({wizard_issue_client_certificate, WizardId}) ->
     Fields = #{user_id => nitro:q(wizard_client_certificate_user),
                subject_cn => nitro:q(wizard_client_certificate_subject_cn),
@@ -384,11 +387,22 @@ provisioning_created_panel(Draft, Transaction) ->
         #panel{style = <<"margin-top:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>, body = [
             #link{url = demo_object_url(ProvisioningId), class = [button, sgreen],
                   body = ias_html:text("Open Provisioning Transaction")},
+            wizard_download_device_bound_ovpn_action(Transaction),
             #link{class = [button, more],
                   body = ias_html:text("Create Another Transaction"),
                   postback = {wizard_create_another_provisioning, maps:get(id, Draft)}}
-        ]}
+        ]},
+        #panel{id = wizard_ovpn_download_result}
     ]}.
+
+wizard_download_device_bound_ovpn_action(#{mode := device_bound,
+                                           artifact_status := public_bundle_ready,
+                                           id := ProvisioningId}) ->
+    #link{class = [button, sgreen],
+          body = ias_html:text("Download Device-bound OVPN"),
+          postback = {wizard_download_device_bound_ovpn, ProvisioningId}};
+wizard_download_device_bound_ovpn_action(_Transaction) ->
+    #span{body = <<>>}.
 
 provisioning_create_panel(Draft, #{ready := true}) ->
     #panel{class = <<"ias-status-card">>, body = [
@@ -470,6 +484,12 @@ material_readiness_badge_style(ready) ->
     <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
 material_readiness_badge_style(ready_for_device_assembly) ->
     <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(public_bundle_ready) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(ready_for_delivery) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
+material_readiness_badge_style(ready_for_device_import) ->
+    <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
 material_readiness_badge_style(available) ->
     <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>;
 material_readiness_badge_style(available_on_device) ->
@@ -508,6 +528,9 @@ material_readiness_card_style(Status) ->
 
 readiness_positive_status(ready) -> true;
 readiness_positive_status(ready_for_device_assembly) -> true;
+readiness_positive_status(public_bundle_ready) -> true;
+readiness_positive_status(ready_for_delivery) -> true;
+readiness_positive_status(ready_for_device_import) -> true;
 readiness_positive_status(available) -> true;
 readiness_positive_status(available_on_device) -> true;
 readiness_positive_status(trusted) -> true;
@@ -1640,6 +1663,63 @@ disabled_action_style() ->
 
 note_style() ->
     <<"font-size:12px;color:#64748b;">>.
+
+wizard_download_device_bound_ovpn({ok, #{filename := Filename, body := Content,
+                                          private_key_ref := KeyRef}}) ->
+    nitro:update(wizard_ovpn_download_result,
+                 wizard_device_bound_ovpn_ready(Filename, Content, KeyRef)),
+    nitro:wire(wizard_ovpn_download_js(Filename, Content));
+wizard_download_device_bound_ovpn({error, Reason}) ->
+    nitro:update(wizard_ovpn_download_result,
+                 wizard_device_bound_ovpn_error(Reason)).
+
+wizard_device_bound_ovpn_ready(Filename, Content, KeyRef) ->
+    #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #h3{body = ias_html:text("Device-bound OVPN ready")},
+               #p{body = ias_html:join([
+                   <<"This profile references a private key already stored on the device: ">>,
+                   ias_html:text(KeyRef)])},
+               key_value_table([
+                   {"Filename", Filename},
+                   {"Bytes", byte_size(Content)}
+               ])
+           ]}.
+
+wizard_device_bound_ovpn_error(Reason) ->
+    #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
+           body = [
+               #h3{body = ias_html:text("Device-bound OVPN unavailable")},
+               key_value_table([
+                   {"Reason", Reason}
+               ])
+           ]}.
+
+wizard_ovpn_download_js(Filename, Content) ->
+    Encoded = base64:encode(Content),
+    SafeFilename = js_string(Filename),
+    [
+        <<"var data=atob('">>, Encoded, <<"');">>,
+        <<"var blob=new Blob([data],{type:'application/x-openvpn-profile'});">>,
+        <<"var url=URL.createObjectURL(blob);">>,
+        <<"var a=document.createElement('a');">>,
+        <<"a.href=url;">>,
+        <<"a.download='">>, SafeFilename, <<"';">>,
+        <<"document.body.appendChild(a);">>,
+        <<"a.click();">>,
+        <<"document.body.removeChild(a);">>,
+        <<"URL.revokeObjectURL(url);">>
+    ].
+
+js_string(Value) ->
+    Text = ias_html:text(Value),
+    << <<(js_string_char(Char))/binary>> || <<Char>> <= Text >>.
+
+js_string_char($\\) -> <<"\\\\">>;
+js_string_char($') -> <<"\\'">>;
+js_string_char($\n) -> <<"\\n">>;
+js_string_char($\r) -> <<"\\r">>;
+js_string_char(Char) -> <<Char>>.
 
 redirect_after({ok, Draft}) ->
     nitro:redirect(wizard_url(maps:get(id, Draft)));

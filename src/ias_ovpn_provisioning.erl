@@ -2,7 +2,8 @@
 -export([preview/3,
          create/3,
          get/1,
-         refresh/1]).
+         refresh/1,
+         artifact_filename/1]).
 
 -define(TTL_SECONDS, 900).
 
@@ -63,12 +64,18 @@ refresh(#{kind := ovpn_provisioning} = Transaction) ->
     Mode = maps:get(mode, Transaction, undefined),
     Authorization = maps:get(authorization, Transaction, deny),
     Components = material_components_from_transaction(Mode, Transaction, Authorization),
+    ArtifactStatus = refreshed_artifact_status(Mode, Components, Authorization),
     Transaction#{material_components => Components,
+                 status => refreshed_transaction_status(Mode, Components, Authorization),
                  material_status => refreshed_material_status(Components, Authorization),
-                 assembly_status => assembly_status_for(Mode, Components, Authorization),
+                 assembly_status => refreshed_assembly_status(Mode, Components, Authorization),
                  assembly_reason => refreshed_assembly_reason(Mode, Components,
                                                                Authorization, Transaction),
-                 next_step => assembly_next_step_for(Mode, Components, Authorization)};
+                 next_step => assembly_next_step_for(Mode, Components, Authorization),
+                 artifact_status => ArtifactStatus,
+                 delivery_status => refreshed_delivery_status(ArtifactStatus),
+                 artifact_filename => refreshed_artifact_filename(Mode, Transaction,
+                                                                  ArtifactStatus)};
 refresh(Transaction) ->
     Transaction.
 
@@ -260,6 +267,46 @@ refreshed_material_status(Components, allow) ->
         false -> pending_real_material
     end.
 
+refreshed_transaction_status(Mode, Components, allow) ->
+    case artifact_ready(Mode, Components) of
+        true -> ready_for_delivery;
+        false -> awaiting_material
+    end;
+refreshed_transaction_status(_Mode, _Components, _Authorization) ->
+    blocked.
+
+refreshed_assembly_status(Mode, Components, allow) ->
+    case artifact_ready(Mode, Components) of
+        true -> public_bundle_ready;
+        false -> assembly_status_for(Mode, Components, allow)
+    end;
+refreshed_assembly_status(Mode, Components, Authorization) ->
+    assembly_status_for(Mode, Components, Authorization).
+
+refreshed_artifact_status(Mode, Components, allow) ->
+    case artifact_ready(Mode, Components) of
+        true -> public_bundle_ready;
+        false -> artifact_status(allow)
+    end;
+refreshed_artifact_status(_Mode, _Components, _Authorization) ->
+    unavailable.
+
+refreshed_delivery_status(public_bundle_ready) ->
+    ready_for_device_import;
+refreshed_delivery_status(_ArtifactStatus) ->
+    not_ready.
+
+refreshed_artifact_filename(device_bound, Transaction, public_bundle_ready) ->
+    artifact_filename(maps:get(device_id, Transaction,
+                               maps:get(subject_id, Transaction, <<"device">>)));
+refreshed_artifact_filename(_Mode, Transaction, _ArtifactStatus) ->
+    maps:get(artifact_filename, Transaction, undefined).
+
+artifact_ready(device_bound, Components) ->
+    public_material_available(Components) andalso private_key_available(Components);
+artifact_ready(_Mode, _Components) ->
+    false.
+
 assembly_status_for(_Mode, _Components, Authorization) when Authorization =/= allow -> blocked;
 assembly_status_for(device_bound, Components, allow) ->
     case public_material_available(Components) andalso private_key_available(Components) of
@@ -372,3 +419,18 @@ provisioning_id() ->
 
 timestamp(SystemTime) ->
     iolist_to_binary(calendar:system_time_to_rfc3339(SystemTime, [{unit, second}])).
+
+artifact_filename(SubjectId) ->
+    SafeId = safe_filename_part(ias_html:text(SubjectId)),
+    ias_html:join([SafeId, <<".ovpn">>]).
+
+safe_filename_part(Value) ->
+    << <<(safe_filename_char(Char))>> || <<Char>> <= Value >>.
+
+safe_filename_char(Char) when Char >= $a, Char =< $z -> Char;
+safe_filename_char(Char) when Char >= $A, Char =< $Z -> Char;
+safe_filename_char(Char) when Char >= $0, Char =< $9 -> Char;
+safe_filename_char($_) -> $_;
+safe_filename_char($-) -> $-;
+safe_filename_char($.) -> $.;
+safe_filename_char(_) -> $_.

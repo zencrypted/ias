@@ -31,7 +31,7 @@ preview(Draft) when is_map(Draft) ->
         andalso maps:get(ca_certificate, Components, missing_body) =:= available
         andalso maps:get(client_certificate, Components, missing_body) =:= available
         andalso maps:get(private_key, Components, unavailable) =:= available_on_device
-        andalso maps:get(assembly_status, Plan, blocked) =:= ready_for_device_assembly,
+        andalso assembly_ready(maps:get(assembly_status, Plan, blocked)),
     #{ready => Ready,
       reference_match => ReferenceMatch,
       relationship_review => RelationshipReview,
@@ -55,6 +55,10 @@ preview(_Draft) ->
 
 ready(Draft) ->
     maps:get(ready, preview(Draft), false).
+
+assembly_ready(ready_for_device_assembly) -> true;
+assembly_ready(public_bundle_ready) -> true;
+assembly_ready(_) -> false.
 
 relationships_item(#{ready := true}) ->
     item(relationships, <<"Relationships">>, ready,

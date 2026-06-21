@@ -34,6 +34,9 @@ event({download_ovpn_artifact, device, DeviceId}) ->
     download_ovpn_artifact(ias_ovpn_export:device_artifact(DeviceId));
 event({download_ovpn_artifact, certificate, CertificateId}) ->
     download_ovpn_artifact(ias_ovpn_export:certificate_artifact(CertificateId));
+event({download_device_bound_ovpn, ProvisioningId}) ->
+    download_device_bound_ovpn(
+        ias_device_bound_ovpn:download_response(ProvisioningId));
 event({create_ovpn_provisioning, Mode, SubjectKind, SubjectId}) ->
     create_ovpn_provisioning(ias_ovpn_provisioning:create(Mode, SubjectKind, SubjectId));
 event({store_certificate_material, CertificateId, MaterialType}) ->
@@ -268,7 +271,10 @@ rows(#{kind := ovpn_provisioning} = Object) ->
         {"Assembly Reason", maps:get(assembly_reason, Object, undefined)},
         {"Artifact", maps:get(artifact_status, Object, unavailable)},
         {"Delivery", maps:get(delivery_status, Object, not_ready)},
+        {"Artifact Filename", maps:get(artifact_filename, Object, undefined)},
         {"Private Key Policy", maps:get(private_key_policy, Object, undefined)},
+        {"Private Key Provider", maps:get(private_key_provider, Object, undefined)},
+        {"Private Key Reference", maps:get(private_key_ref, Object, undefined)},
         {"Downloaded", maps:get(downloaded, Object, false)},
         {"Expires At", maps:get(expires_at, Object, undefined)}
     ] ++ created_row(Object);
@@ -399,10 +405,27 @@ ovpn_material_preview(#{kind := ovpn_provisioning} = Object) ->
             {"OVPN Assembly", maps:get(assembly_status, Object, blocked)},
             {"Reason", maps:get(assembly_reason, Object, undefined)},
             {"Next Step", maps:get(next_step, Object, undefined)}
-        ])
+        ]),
+        device_bound_ovpn_download_panel(Object)
     ]};
 ovpn_material_preview(_Object) ->
     #panel{body = []}.
+
+device_bound_ovpn_download_panel(#{mode := device_bound,
+                                   id := ProvisioningId,
+                                   artifact_status := public_bundle_ready} = Object) ->
+    #panel{style = <<"margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">>,
+           body = [
+               #link{class = [button, sgreen],
+                     body = ias_html:text("Download Device-bound OVPN"),
+                     postback = {download_device_bound_ovpn, ProvisioningId}},
+               #span{body = ias_html:join([
+                   <<"Private key reference: ">>,
+                   ias_html:text(maps:get(private_key_ref, Object, undefined))])},
+               #panel{id = device_bound_ovpn_result}
+           ]};
+device_bound_ovpn_download_panel(_Object) ->
+    #panel{id = device_bound_ovpn_result}.
 
 material_requirements_table(Requirements, Sources, Components) ->
     Materials = [ca_certificate, client_certificate, private_key, tls_auth],
@@ -1278,6 +1301,14 @@ download_ovpn_artifact({ok, Filename, Content}) ->
 download_ovpn_artifact({error, Reason}) ->
     nitro:update(ovpn_export_result, ovpn_artifact_error(Reason)).
 
+download_device_bound_ovpn({ok, #{filename := Filename, body := Content,
+                                  private_key_ref := KeyRef}}) ->
+    nitro:update(device_bound_ovpn_result,
+                 device_bound_ovpn_ready(Filename, Content, KeyRef)),
+    nitro:wire(ovpn_download_js(Filename, Content));
+download_device_bound_ovpn({error, Reason}) ->
+    nitro:update(device_bound_ovpn_result, device_bound_ovpn_error(Reason)).
+
 create_ovpn_provisioning({ok, Transaction}) ->
     nitro:update(ovpn_export_result, ovpn_provisioning_created(Transaction));
 create_ovpn_provisioning({error, Reason}) ->
@@ -1327,6 +1358,28 @@ ovpn_artifact_error(Reason) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
            body = [
                #h3{body = ias_html:text("OVPN skeleton unavailable")},
+               key_value_table([
+                   {"Reason", Reason}
+               ])
+           ]}.
+
+device_bound_ovpn_ready(Filename, Content, KeyRef) ->
+    #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #h3{body = ias_html:text("Device-bound OVPN ready")},
+               #p{body = ias_html:join([
+                   <<"This profile references a private key already stored on the device: ">>,
+                   ias_html:text(KeyRef)])},
+               key_value_table([
+                   {"Filename", Filename},
+                   {"Bytes", byte_size(Content)}
+               ])
+           ]}.
+
+device_bound_ovpn_error(Reason) ->
+    #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;">>,
+           body = [
+               #h3{body = ias_html:text("Device-bound OVPN unavailable")},
                key_value_table([
                    {"Reason", Reason}
                ])

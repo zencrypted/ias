@@ -98,7 +98,10 @@ provisioning_refresh_uses_public_material_store_test() ->
     ?assertEqual(available, maps:get(client_certificate, maps:get(material_components, Transaction))),
     ?assertEqual(available, maps:get(ca_certificate, maps:get(material_components, Transaction))),
     ?assertEqual(public_material_available, maps:get(material_status, Transaction)),
-    ?assertEqual(ready_for_device_assembly, maps:get(assembly_status, Transaction)).
+    ?assertEqual(ready_for_delivery, maps:get(status, Transaction)),
+    ?assertEqual(public_bundle_ready, maps:get(assembly_status, Transaction)),
+    ?assertEqual(public_bundle_ready, maps:get(artifact_status, Transaction)),
+    ?assertEqual(ready_for_device_import, maps:get(delivery_status, Transaction)).
 
 certificate_pem(Der) ->
     public_key:pem_encode([{'Certificate', Der, not_encrypted}]).

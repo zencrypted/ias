@@ -462,7 +462,7 @@ High before production use
 
 ## TD-010: Provisioning Status Is Not Derived From Current Readiness
 
-**Status:** Open
+**Status:** Resolved by Stage 25B
 
 **Area:** OVPN Provisioning Transaction
 
@@ -501,13 +501,29 @@ awaiting_material
 -> delivered
 ```
 
-The implementation should:
+Stage 25B implemented the first derived transaction lifecycle for device-bound
+OVPN provisioning. When authorization still passes, public CA/client PEM is
+available and the selected Device has a valid device-owned private-key
+reference, refresh derives:
 
-- avoid maintaining contradictory status fields independently;
-- clearly separate immutable transaction history from current derived state;
-- define how expired, denied, conflicted, and downloaded transactions override normal readiness;
-- use the same derived semantics in detail pages, lists, exports, tests, and future APIs;
-- preserve backward compatibility for previously exported Demo State where practical.
+```text
+Status: ready_for_delivery
+Material: public_material_available
+Assembly: public_bundle_ready
+Artifact: public_bundle_ready
+Delivery: ready_for_device_import
+```
+
+The implementation:
+
+- avoids maintaining contradictory status fields independently;
+- clearly separates immutable transaction history from current derived state;
+- uses the same derived semantics in detail pages, lists, exports, tests and future APIs;
+- preserves backward compatibility for previously exported Demo State where practical.
+
+Future production lifecycle work still needs explicit expiration and delivery
+audit semantics, but the stale `awaiting_material` display for ready public
+bundles is closed.
 
 ### Priority
 

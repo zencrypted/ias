@@ -14,7 +14,10 @@ provisioning_transaction_is_created_and_recorded_test() ->
     ?assertMatch({ok, _}, ias_ovpn_provisioning:get(maps:get(id, Transaction))),
     ?assertEqual(allow, maps:get(authorization, Transaction)),
     ?assertEqual(public_material_available, maps:get(material_status, Transaction)),
-    ?assertEqual(ready_for_device_assembly, maps:get(assembly_status, Transaction)).
+    ?assertEqual(ready_for_delivery, maps:get(status, Transaction)),
+    ?assertEqual(public_bundle_ready, maps:get(assembly_status, Transaction)),
+    ?assertEqual(public_bundle_ready, maps:get(artifact_status, Transaction)),
+    ?assertEqual(ready_for_device_import, maps:get(delivery_status, Transaction)).
 
 provisioning_creation_is_idempotent_test() ->
     Draft = setup_ready_wizard(),
@@ -99,6 +102,7 @@ provisioning_step_renders_create_and_completed_states_test() ->
     ?assertMatch({_, _}, binary:match(HtmlAfter, <<"Provisioning Transaction Created">>)),
     ?assertMatch({_, _}, binary:match(HtmlAfter, maps:get(id, Transaction))),
     ?assertMatch({_, _}, binary:match(HtmlAfter, <<"Open Provisioning Transaction">>)),
+    ?assertMatch({_, _}, binary:match(HtmlAfter, <<"Download Device-bound OVPN">>)),
     ?assertMatch({_, _}, binary:match(HtmlAfter, <<"Create Another Transaction">>)),
     ?assertMatch({_, _}, binary:match(HtmlAfter, <<">Completed</span>">>)).
 
