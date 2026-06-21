@@ -285,42 +285,60 @@ relationships_review_notice(_Review) ->
     wizard_error_panel("Relationship preflight found a conflict, invalid selection or stale reference. Resolve it before applying the graph.").
 
 relationships_review_table(Items) ->
-    Header = #tr{cells = [
-        #th{style = <<"width:20%;">>, body = ias_html:text("Relationship")},
-        #th{style = <<"width:22%;">>, body = ias_html:text("Source")},
-        #th{style = <<"width:22%;">>, body = ias_html:text("Target")},
-        #th{style = <<"width:14%;">>, body = ias_html:text("Status")},
-        #th{style = <<"width:22%;">>, body = ias_html:text("Notes")}
-    ]},
-    Rows = [relationships_review_row(Item) || Item <- Items],
-    #panel{class = <<"ias-table-container">>, body = [
-        #table{class = <<"ias-table">>,
-               style = <<"table-layout:fixed;width:100%;">>,
-               body = #tbody{body = [Header | Rows]}}
-    ]}.
+    #panel{style = <<"display:grid;grid-template-columns:1fr;gap:10px;">>,
+           body = [relationships_review_card(Item) || Item <- Items]}.
 
-relationships_review_row(Item) ->
-    #tr{cells = [
-        #td{style = <<"overflow-wrap:anywhere;word-break:normal;">>,
-            body = relationship_label(maps:get(key, Item, undefined))},
-        #td{style = <<"overflow-wrap:anywhere;word-break:normal;">>,
-            body = relationship_object_cell(maps:get(source_label, Item, undefined),
-                                            maps:get(source_id, Item, undefined))},
-        #td{style = <<"overflow-wrap:anywhere;word-break:normal;">>,
-            body = relationship_object_cell(maps:get(target_label, Item, undefined),
-                                            maps:get(target_id, Item, undefined))},
-        #td{body = relationship_status_badge(maps:get(status, Item, invalid))},
-        #td{style = <<"overflow-wrap:anywhere;word-break:normal;">>,
-            body = ias_html:text(maps:get(notes, Item, <<"-">>))}
-    ]}.
+relationships_review_card(Item) ->
+    Status = maps:get(status, Item, invalid),
+    Base = [
+        #panel{style = <<"display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">>,
+               body = [
+                   #h3{style = <<"margin:0;font-size:15px;line-height:1.3;">>,
+                       body = relationship_label(maps:get(key, Item, undefined))},
+                   relationship_status_badge(Status)
+               ]},
+        #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:10px;margin-top:10px;">>,
+               body = [
+                   relationship_endpoint("Source",
+                                         maps:get(source_label, Item, undefined),
+                                         maps:get(source_id, Item, undefined)),
+                   relationship_endpoint("Target",
+                                         maps:get(target_label, Item, undefined),
+                                         maps:get(target_id, Item, undefined))
+               ]}
+    ],
+    #panel{style = <<"padding:12px;border:1px solid rgba(15,23,42,0.12);border-radius:6px;background:#fff;min-width:0;overflow:hidden;">>,
+           body = Base ++ relationship_notes(maps:get(notes, Item, <<"-">>))}.
+
+relationship_endpoint(Caption, Label, Id) ->
+    #panel{style = <<"padding:10px;border:1px solid rgba(15,23,42,0.08);border-radius:5px;background:#f8fafc;min-width:0;">>,
+           body = [
+               #span{style = <<"display:block;margin-bottom:5px;font-size:10px;font-weight:700;letter-spacing:0.04em;text-transform:uppercase;color:#64748b;">>,
+                     body = ias_html:text(Caption)},
+               relationship_object_cell(Label, Id)
+           ]}.
 
 relationship_object_cell(undefined, Id) ->
-    ias_html:text(Id);
+    #span{style = <<"display:block;overflow-wrap:anywhere;word-break:normal;min-width:0;">>,
+          body = ias_html:text(Id)};
 relationship_object_cell(Label, Id) ->
-    #panel{body = [
-        #span{style = <<"display:block;font-weight:600;">>, body = ias_html:text(Label)},
-        #span{style = <<"display:block;font-size:10px;color:#64748b;">>, body = ias_html:text(Id)}
+    #panel{style = <<"min-width:0;">>, body = [
+        #span{style = <<"display:block;font-weight:600;overflow-wrap:anywhere;word-break:normal;">>,
+              body = ias_html:text(Label)},
+        #span{style = <<"display:block;margin-top:3px;font-size:10px;line-height:1.35;color:#64748b;overflow-wrap:anywhere;word-break:normal;">>,
+              body = ias_html:text(Id)}
     ]}.
+
+relationship_notes(undefined) -> [];
+relationship_notes(<<>>) -> [];
+relationship_notes(<<"-">>) -> [];
+relationship_notes(Notes) ->
+    [#panel{style = <<"margin-top:10px;padding-top:9px;border-top:1px solid rgba(15,23,42,0.08);font-size:12px;color:#475569;overflow-wrap:anywhere;word-break:normal;">>,
+            body = [
+                #span{style = <<"font-weight:700;margin-right:6px;">>,
+                      body = ias_html:text("Notes:")},
+                #span{body = ias_html:text(Notes)}
+            ]}].
 
 relationship_label(device_security_profile) -> <<"Device -> Security Profile">>;
 relationship_label(device_vpn_service) -> <<"Device -> VPN Service">>;
@@ -341,7 +359,7 @@ relationship_status_badge(Status) ->
 
 relationship_badge(Label, Style) ->
     #span{style = ias_html:join([
-              <<"display:inline-block;padding:3px 6px;border:1px solid;border-radius:999px;font-size:10px;font-weight:700;">>,
+              <<"display:inline-block;flex:0 0 auto;padding:3px 6px;border:1px solid;border-radius:999px;font-size:10px;font-weight:700;white-space:nowrap;">>,
               Style]),
           body = ias_html:text(Label)}.
 

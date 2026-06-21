@@ -122,6 +122,16 @@ relationship_review_renders_apply_action_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"VPN Service">>)),
     ?assertMatch({_, _}, binary:match(Html, <<">Next</span>">>)).
 
+relationship_review_uses_responsive_cards_test() ->
+    Draft = complete_draft(),
+    Html = render(ias_provisioning_wizard:content_for({draft, Draft})),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"grid-template-columns:repeat(auto-fit,minmax(260px,1fr))">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<">Source</span>">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<">Target</span>">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"min-width:0;overflow:hidden">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"width:20%;">>)).
+
 relationship_review_renders_applied_state_test() ->
     Draft = complete_draft(),
     {ok, AppliedDraft} = ias_provisioning_wizard_store:apply_relationships(
