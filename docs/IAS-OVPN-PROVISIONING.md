@@ -111,8 +111,13 @@ OVPN remains a link to the existing OVPN onboarding flow, and Portable VPN
 Profile remains disabled until one-time private-key generation and delivery are
 implemented.
 
-Stage 24G turns the Relationships step into an explicit graph commit boundary.
-The wizard preflights the six required links before changing runtime state:
+Stage 24G introduced a single graph commit boundary for the six required
+links. Stage 24J keeps that boundary but makes the normal path automatic: `Next`
+from Client Certificate runs the full preflight, applies all missing links
+atomically when safe and continues directly to Material Readiness. The
+Relationships step remains available for conflicts, retries and explicit review.
+
+The committed links are:
 
 ```text
 Device -> Security Profile
@@ -130,8 +135,10 @@ idempotent. A different active operational target, an incompatible certificate
 role, a stale object reference or a different Device Security Profile blocks the
 whole apply action. If runtime creation fails after preflight, relationships
 created by that apply attempt are rolled back before the error is returned.
-Navigation to Material Readiness remains blocked until all four required links
-are present.
+Navigation to Material Readiness remains blocked until all six required links
+are present. A selected Security Profile also displays its derived Security
+Policy and makes clear that the policy will be applied to both the Device and the
+Client Certificate during the automatic commit.
 
 Stage 24H turns Material Readiness into a live preflight rather than a placeholder.
 The wizard reuses the existing device-bound OVPN provisioning preview and checks

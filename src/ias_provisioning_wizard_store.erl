@@ -125,7 +125,14 @@ clear() ->
     ok.
 
 next(Id) ->
-    move(Id, next_step).
+    case get(Id) of
+        {ok, #{current_step := client_certificate} = Draft} ->
+            advance_from_client_certificate(Id, Draft);
+        {ok, _Draft} ->
+            move(Id, next_step);
+        not_found ->
+            {error, not_found}
+    end.
 
 back(Id) ->
     move(Id, previous_step).
@@ -354,7 +361,7 @@ steps() ->
 
 step_title(scheme) -> <<"Scheme">>;
 step_title(device) -> <<"Device">>;
-step_title(security_profile) -> <<"Security Profile">>;
+step_title(security_profile) -> <<"Security Profile & Policy">>;
 step_title(vpn_service) -> <<"VPN Service">>;
 step_title(ca_certificate) -> <<"CA Certificate">>;
 step_title(client_certificate) -> <<"Client Certificate">>;
@@ -368,15 +375,15 @@ step_description(scheme) ->
 step_description(device) ->
     <<"Select an existing runtime Device or create a new demo Device that will own the VPN profile.">>;
 step_description(security_profile) ->
-    <<"Select the Security Profile that defines device lock, 2FA, services and trust expectations for this device-bound flow.">>;
+    <<"Select the Security Profile. The wizard derives its Security Policy and will apply both to the Device and Client Certificate after the certificate step.">>;
 step_description(vpn_service) ->
     <<"Choose the VPN Service endpoint that will supply remote/protocol settings.">>;
 step_description(ca_certificate) ->
     <<"Choose the CA trust anchor used by the VPN service.">>;
 step_description(client_certificate) ->
-    <<"Choose the device-bound client certificate.">>;
+    <<"Choose the device-bound client certificate. Continuing automatically commits the prepared relationships when preflight succeeds.">>;
 step_description(relationships) ->
-    <<"Review the required Device, Certificate, Security Profile, Security Policy and VPN Service relationships.">>;
+    <<"Review relationship conflicts or retry the automatic graph commit. Successful flows normally continue directly to Material Readiness.">>;
 step_description(material_readiness) ->
     <<"Check public certificate material and assembly readiness before provisioning.">>;
 step_description(provisioning) ->
@@ -409,6 +416,34 @@ move(Id, Direction) ->
             end;
         not_found ->
             {error, not_found}
+    end.
+
+advance_from_client_certificate(Id, Draft) ->
+    case movement_allowed(next_step, client_certificate, Draft) of
+        ok ->
+            commit_relationships_or_review(Id, Draft);
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+commit_relationships_or_review(Id, Draft) ->
+    Review = relationship_review(Draft),
+    case {maps:get(ready, Review, false), maps:get(can_apply, Review, false)} of
+        {true, _} ->
+            update(Id, #{relationships_applied => true,
+                         current_step => material_readiness});
+        {false, true} ->
+            case ias_provisioning_wizard_relationships:apply(Draft) of
+                {ok, _AppliedReview} ->
+                    update(Id, #{relationships_applied => true,
+                                 current_step => material_readiness});
+                {error, _Reason} ->
+                    update(Id, #{relationships_applied => false,
+                                 current_step => relationships})
+            end;
+        _ ->
+            update(Id, #{relationships_applied => false,
+                         current_step => relationships})
     end.
 
 movement_allowed(next_step, device, Draft) ->

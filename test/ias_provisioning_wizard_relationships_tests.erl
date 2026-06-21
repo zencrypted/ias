@@ -27,6 +27,71 @@ relationship_apply_creates_graph_and_unlocks_next_test() ->
     {ok, MaterialStep} = ias_provisioning_wizard_store:next(WizardId),
     ?assertEqual(material_readiness, maps:get(current_step, MaterialStep)).
 
+automatic_relationship_commit_skips_review_test() ->
+    Draft0 = complete_draft(),
+    WizardId = maps:get(id, Draft0),
+    ClientCertificateId = maps:get(client_certificate_id, Draft0),
+    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
+    {ok, _} = ias_certificate_material:put(
+        ClientCertificateId, client_certificate, Pem, operator_load),
+    {ok, Draft} = ias_provisioning_wizard_store:update(
+        WizardId, #{current_step => client_certificate}),
+
+    {ok, MaterialStep} = ias_provisioning_wizard_store:next(maps:get(id, Draft)),
+
+    ?assertEqual(material_readiness, maps:get(current_step, MaterialStep)),
+    ?assertEqual(true, maps:get(relationships_applied, MaterialStep)),
+    ?assertEqual(true, ias_provisioning_wizard_store:relationships_ready(MaterialStep)),
+    ?assertEqual(6, length(ias_demo_store:relationships())).
+
+automatic_relationship_conflict_opens_review_test() ->
+    Draft0 = complete_draft(),
+    WizardId = maps:get(id, Draft0),
+    DeviceId = maps:get(device_id, Draft0),
+    ClientCertificateId = maps:get(client_certificate_id, Draft0),
+    OtherService = ias_demo_store:put_runtime_object(
+        #{id => <<"wizard_auto_commit_other_service">>,
+          kind => vpn_service,
+          source => manual_vpn_service,
+          name => <<"Other VPN">>,
+          endpoint => <<"other.example.com">>,
+          remote_port => <<"1194">>,
+          protocol => <<"udp">>}),
+    {ok, _} = ias_relationship_link:create(
+        uses_service, DeviceId, maps:get(id, OtherService)),
+    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
+    {ok, _} = ias_certificate_material:put(
+        ClientCertificateId, client_certificate, Pem, operator_load),
+    {ok, Draft} = ias_provisioning_wizard_store:update(
+        WizardId, #{current_step => client_certificate}),
+
+    {ok, ReviewStep} = ias_provisioning_wizard_store:next(maps:get(id, Draft)),
+
+    ?assertEqual(relationships, maps:get(current_step, ReviewStep)),
+    ?assertEqual(false, maps:get(relationships_applied, ReviewStep)),
+    Review = ias_provisioning_wizard_store:relationship_review(ReviewStep),
+    ?assertEqual(false, maps:get(can_apply, Review)),
+    ?assertEqual(conflict, maps:get(status, item(device_vpn_service, Review))).
+
+automatic_commit_is_idempotent_for_existing_graph_test() ->
+    Draft0 = complete_draft(),
+    WizardId = maps:get(id, Draft0),
+    ClientCertificateId = maps:get(client_certificate_id, Draft0),
+    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
+    {ok, _} = ias_certificate_material:put(
+        ClientCertificateId, client_certificate, Pem, operator_load),
+    {ok, _AppliedDraft} = ias_provisioning_wizard_store:apply_relationships(WizardId),
+    {ok, Draft} = ias_provisioning_wizard_store:update(
+        WizardId, #{current_step => client_certificate,
+                    relationships_applied => false}),
+    ExistingIds = relationship_ids(),
+
+    {ok, MaterialStep} = ias_provisioning_wizard_store:next(maps:get(id, Draft)),
+
+    ?assertEqual(material_readiness, maps:get(current_step, MaterialStep)),
+    ?assertEqual(true, maps:get(relationships_applied, MaterialStep)),
+    ?assertEqual(ExistingIds, relationship_ids()).
+
 relationship_apply_is_idempotent_test() ->
     Draft = complete_draft(),
     WizardId = maps:get(id, Draft),

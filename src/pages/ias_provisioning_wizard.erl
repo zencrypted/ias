@@ -129,7 +129,7 @@ content_for({draft, Draft}) ->
     CurrentStep = maps:get(current_step, Draft, scheme),
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Wizard draft is stored in runtime ETS. Relationships, derived Security Policy and certificate verification are applied before provisioning readiness is allowed.")},
+        #p{body = ias_html:text("Wizard draft is stored in runtime ETS. The derived Security Policy is shown with the selected profile, and relationships are committed automatically after the client certificate step when preflight succeeds.")},
         draft_summary(Draft),
         progress_panel(CurrentStep),
         step_panel(Draft)
@@ -1117,6 +1117,9 @@ selected_security_profile_panel(Draft) ->
                        #h3{body = ias_html:text("Selected Security Profile")},
                        key_value_table([
                            {"Profile", maps:get(name, Profile, maps:get(id, Profile, undefined))},
+                           {"Derived Policy", derived_policy_label(Draft)},
+                           {"Policy Applies To", <<"Device, Client Certificate">>},
+                           {"Relationship Commit", <<"Automatic after Client Certificate">>},
                            {"Device Lock", ias_security_profile:device_lock_label(Profile)},
                            {"2FA", ias_security_profile:two_factor_label(Profile)},
                            {"Services", ias_html:join_csv(maps:get(services, Profile, []))},
@@ -1132,6 +1135,12 @@ selected_security_profile_panel(Draft) ->
             wizard_error_panel("The Security Profile stored in this wizard draft no longer exists. Select another profile.");
         {error, _Reason} ->
             wizard_error_panel("The selected Security Profile is invalid.")
+    end.
+
+derived_policy_label(Draft) ->
+    case ias_provisioning_wizard_authorization:derived_policy(Draft) of
+        {ok, Policy} -> ias_security_profile:profile_label(Policy);
+        {error, _Reason} -> <<"unavailable">>
     end.
 
 available_security_profiles_panel(Draft) ->
@@ -1453,6 +1462,12 @@ next_action(_Draft, WizardId) ->
 boundary_note(scheme) ->
     #span{style = note_style(),
           body = ias_html:text("Select or keep the device-bound scenario before continuing.")};
+boundary_note(client_certificate) ->
+    #span{style = note_style(),
+          body = ias_html:text("Next runs relationship preflight automatically and continues directly to Material Readiness when the graph can be committed safely.")};
+boundary_note(relationships) ->
+    #span{style = note_style(),
+          body = ias_html:text("This review is shown when automatic relationship commit needs conflict resolution or a retry.")};
 boundary_note(provisioning) ->
     #span{style = note_style(),
           body = ias_html:text("Provisioning creation is explicit and idempotent. Existing transactions are reused unless Create Another Transaction is chosen.")};
