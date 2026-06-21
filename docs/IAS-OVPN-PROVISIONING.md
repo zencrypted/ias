@@ -84,9 +84,10 @@ transactions or export artifacts merely by navigating between steps.
 Once the wizard started carrying selected Device, Security Profile and VPN
 Service references, sanitized drafts became part of the Demo State boundary.
 Demo State export/import preserves only the wizard id, scenario, current step,
-selected object ids and timestamps. PEM, CSR, private-key, TLS secret, form and
-session data are never included. Older snapshots without `wizard_drafts` remain
-valid, and stale object references are restored so the wizard can surface its
+selected object ids, the relationship-apply marker and timestamps. PEM, CSR,
+private-key, TLS secret, form and session data are never included. Older
+snapshots without `wizard_drafts` remain valid, and stale object references are
+restored so the wizard can surface its
 existing blocked-selection guidance rather than silently discarding operator
 progress.
 
@@ -108,6 +109,26 @@ Only the Device-bound VPN Profile scheme is active in this stage. Import Existin
 OVPN remains a link to the existing OVPN onboarding flow, and Portable VPN
 Profile remains disabled until one-time private-key generation and delivery are
 implemented.
+
+Stage 24G turns the Relationships step into an explicit graph commit boundary.
+The wizard preflights the four required links before changing runtime state:
+
+```text
+Device -> Security Profile
+Device -> VPN Service
+Device -> Client Certificate
+VPN Service -> CA Certificate
+```
+
+Each link is reported as `will_create`, `already_linked`, `conflict`, `invalid`
+or `stale_reference`. Missing links are created only through the existing
+relationship service after every item passes preflight. Exact existing links are
+idempotent. A different active operational target, an incompatible certificate
+role, a stale object reference or a different Device Security Profile blocks the
+whole apply action. If runtime creation fails after preflight, relationships
+created by that apply attempt are rolled back before the error is returned.
+Navigation to Material Readiness remains blocked until all four required links
+are present.
 
 Material Contract
 -----------------

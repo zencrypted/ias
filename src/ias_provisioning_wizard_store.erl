@@ -20,6 +20,9 @@
          selected_ca_certificate/1,
          select_client_certificate/2,
          selected_client_certificate/1,
+         relationship_review/1,
+         apply_relationships/1,
+         relationships_ready/1,
          steps/0,
          step_title/1,
          step_description/1,
@@ -43,6 +46,7 @@ new(device_bound) ->
         vpn_service_id => undefined,
         ca_certificate_id => undefined,
         client_certificate_id => undefined,
+        relationships_applied => false,
         created_at => Now,
         updated_at => Now
     },
@@ -121,7 +125,8 @@ back(Id) ->
 select_device(Id, DeviceId) ->
     case valid_device(DeviceId) of
         {ok, Device} ->
-            update(Id, #{device_id => maps:get(id, Device)});
+            update(Id, #{device_id => maps:get(id, Device),
+                         relationships_applied => false});
         {error, Reason} ->
             {error, Reason}
     end.
@@ -137,7 +142,8 @@ select_security_profile(Id, ProfileId) ->
         {ok, Profile} ->
             case security_profile_compatibility(Profile) of
                 {blocked, Reason} -> {error, Reason};
-                _ -> update(Id, #{security_profile_id => maps:get(id, Profile)})
+                _ -> update(Id, #{security_profile_id => maps:get(id, Profile),
+                                   relationships_applied => false})
             end;
         {error, Reason} ->
             {error, Reason}
@@ -158,7 +164,8 @@ security_profile_compatibility(_Profile) ->
 
 select_vpn_service(Id, ServiceId) ->
     case valid_vpn_service(ServiceId) of
-        {ok, Service} -> update(Id, #{vpn_service_id => maps:get(id, Service)});
+        {ok, Service} -> update(Id, #{vpn_service_id => maps:get(id, Service),
+                                        relationships_applied => false});
         {error, Reason} -> {error, Reason}
     end.
 
@@ -170,7 +177,8 @@ selected_vpn_service(Draft) when is_map(Draft) ->
 
 select_ca_certificate(Id, CertificateId) ->
     case valid_ca_certificate(CertificateId) of
-        {ok, Certificate} -> update(Id, #{ca_certificate_id => maps:get(id, Certificate)});
+        {ok, Certificate} -> update(Id, #{ca_certificate_id => maps:get(id, Certificate),
+                                            relationships_applied => false});
         {error, Reason} -> {error, Reason}
     end.
 
@@ -186,7 +194,8 @@ select_client_certificate(Id, CertificateId) ->
             case valid_client_certificate(CertificateId) of
                 {ok, Certificate} ->
                     case client_certificate_device_status(Certificate, Draft) of
-                        ok -> update(Id, #{client_certificate_id => maps:get(id, Certificate)});
+                        ok -> update(Id, #{client_certificate_id => maps:get(id, Certificate),
+                                         relationships_applied => false});
                         {error, Reason} -> {error, Reason}
                     end;
                 {error, Reason} -> {error, Reason}
@@ -207,6 +216,29 @@ selected_client_certificate(Draft) when is_map(Draft) ->
                     end;
                 Error -> Error
             end
+    end.
+
+relationship_review(Draft) when is_map(Draft) ->
+    ias_provisioning_wizard_relationships:review(Draft);
+relationship_review(_Draft) ->
+    #{items => [], can_apply => false, ready => false, error => invalid_draft}.
+
+relationships_ready(Draft) when is_map(Draft) ->
+    ias_provisioning_wizard_relationships:ready(Draft);
+relationships_ready(_Draft) ->
+    false.
+
+apply_relationships(Id) ->
+    case get(Id) of
+        {ok, Draft} ->
+            case ias_provisioning_wizard_relationships:apply(Draft) of
+                {ok, _Review} ->
+                    update(Id, #{relationships_applied => true});
+                {error, Reason} ->
+                    {error, Reason}
+            end;
+        not_found ->
+            {error, not_found}
     end.
 
 steps() ->
@@ -323,6 +355,11 @@ movement_allowed(next_step, client_certificate, Draft) ->
             {error, client_certificate_linked_to_other_device};
         {error, invalid_client_certificate} -> {error, invalid_client_certificate};
         {error, _Reason} -> {error, selected_client_certificate_missing}
+    end;
+movement_allowed(next_step, relationships, Draft) ->
+    case relationships_ready(Draft) of
+        true -> ok;
+        false -> {error, relationships_not_applied}
     end;
 movement_allowed(_Direction, _Current, _Draft) ->
     ok.
@@ -448,8 +485,10 @@ clamp(Value, _Min, _Max) ->
 validate_restored_draft(Draft) ->
     Allowed = [id, scenario, current_step, device_id, security_profile_id,
                vpn_service_id, ca_certificate_id, client_certificate_id,
-               created_at, updated_at],
-    Safe = maps:with(Allowed, Draft),
+               relationships_applied, created_at, updated_at],
+    Selected = maps:with(Allowed, Draft),
+    Safe = Selected#{relationships_applied =>
+                         maps:get(relationships_applied, Selected, false)},
     case {maps:get(id, Safe, undefined),
           maps:get(scenario, Safe, undefined),
           maps:get(current_step, Safe, undefined)} of
@@ -459,7 +498,8 @@ validate_restored_draft(Draft) ->
                  andalso valid_optional_profile_reference(maps:get(security_profile_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(vpn_service_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(ca_certificate_id, Safe, undefined))
-                 andalso valid_optional_reference(maps:get(client_certificate_id, Safe, undefined)) of
+                 andalso valid_optional_reference(maps:get(client_certificate_id, Safe, undefined))
+                 andalso is_boolean(maps:get(relationships_applied, Safe, false)) of
                 true -> {ok, Safe};
                 false -> {error, invalid_draft}
             end;

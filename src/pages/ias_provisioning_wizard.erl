@@ -27,6 +27,11 @@ event({wizard_select_ca_certificate, WizardId, CertificateId}) ->
     redirect_after(ias_provisioning_wizard_store:select_ca_certificate(WizardId, CertificateId));
 event({wizard_select_client_certificate, WizardId, CertificateId}) ->
     redirect_after(ias_provisioning_wizard_store:select_client_certificate(WizardId, CertificateId));
+event({wizard_apply_relationships, WizardId}) ->
+    case ias_provisioning_wizard_store:apply_relationships(WizardId) of
+        {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
+        {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
+    end;
 event({wizard_issue_client_certificate, WizardId}) ->
     Fields = #{user_id => nitro:q(wizard_client_certificate_user),
                subject_cn => nitro:q(wizard_client_certificate_subject_cn),
@@ -104,7 +109,7 @@ content_for({draft, Draft}) ->
     CurrentStep = maps:get(current_step, Draft, scheme),
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Wizard draft is stored in runtime ETS only. Stage 24F can select or create a Device and VPN Service, select a Security Profile and CA Certificate, and select or issue a Client Certificate; relationships are not created yet.")},
+        #p{body = ias_html:text("Wizard draft is stored in runtime ETS. Stage 24G reviews the selected Device, Security Profile, VPN Service and certificates before applying their relationships.")},
         draft_summary(Draft),
         progress_panel(CurrentStep),
         step_panel(Draft)
@@ -254,12 +259,106 @@ step_content(ca_certificate, Draft) ->
     ca_certificate_step(Draft);
 step_content(client_certificate, Draft) ->
     client_certificate_step(Draft);
+step_content(relationships, Draft) ->
+    relationships_step(Draft);
 step_content(_Step, _Draft) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px dashed rgba(15,23,42,0.2);border-radius:6px;background:#f8fafc;">>,
            body = ias_html:text("Placeholder only. Selection and validation for this step will be implemented in a later stage.")}.
 
 
 
+relationships_step(Draft) ->
+    Review = ias_provisioning_wizard_store:relationship_review(Draft),
+    #panel{body = [
+        relationships_review_notice(Review),
+        relationships_review_table(maps:get(items, Review, [])),
+        relationships_apply_action(Review, maps:get(id, Draft))
+    ]}.
+
+relationships_review_notice(#{ready := true}) ->
+    wizard_notice("Relationships Applied",
+                  "All required relationships are present. Continue to Material Readiness.");
+relationships_review_notice(#{can_apply := true}) ->
+    wizard_notice("Ready to Apply",
+                  "Preflight passed. Review the graph below, then apply all missing relationships together.");
+relationships_review_notice(_Review) ->
+    wizard_error_panel("Relationship preflight found a conflict, invalid selection or stale reference. Resolve it before applying the graph.").
+
+relationships_review_table(Items) ->
+    Header = #tr{cells = [
+        #th{style = <<"width:20%;">>, body = ias_html:text("Relationship")},
+        #th{style = <<"width:22%;">>, body = ias_html:text("Source")},
+        #th{style = <<"width:22%;">>, body = ias_html:text("Target")},
+        #th{style = <<"width:14%;">>, body = ias_html:text("Status")},
+        #th{style = <<"width:22%;">>, body = ias_html:text("Notes")}
+    ]},
+    Rows = [relationships_review_row(Item) || Item <- Items],
+    #panel{class = <<"ias-table-container">>, body = [
+        #table{class = <<"ias-table">>,
+               style = <<"table-layout:fixed;width:100%;">>,
+               body = #tbody{body = [Header | Rows]}}
+    ]}.
+
+relationships_review_row(Item) ->
+    #tr{cells = [
+        #td{style = <<"overflow-wrap:anywhere;word-break:normal;">>,
+            body = relationship_label(maps:get(key, Item, undefined))},
+        #td{style = <<"overflow-wrap:anywhere;word-break:normal;">>,
+            body = relationship_object_cell(maps:get(source_label, Item, undefined),
+                                            maps:get(source_id, Item, undefined))},
+        #td{style = <<"overflow-wrap:anywhere;word-break:normal;">>,
+            body = relationship_object_cell(maps:get(target_label, Item, undefined),
+                                            maps:get(target_id, Item, undefined))},
+        #td{body = relationship_status_badge(maps:get(status, Item, invalid))},
+        #td{style = <<"overflow-wrap:anywhere;word-break:normal;">>,
+            body = ias_html:text(maps:get(notes, Item, <<"-">>))}
+    ]}.
+
+relationship_object_cell(undefined, Id) ->
+    ias_html:text(Id);
+relationship_object_cell(Label, Id) ->
+    #panel{body = [
+        #span{style = <<"display:block;font-weight:600;">>, body = ias_html:text(Label)},
+        #span{style = <<"display:block;font-size:10px;color:#64748b;">>, body = ias_html:text(Id)}
+    ]}.
+
+relationship_label(device_security_profile) -> <<"Device -> Security Profile">>;
+relationship_label(device_vpn_service) -> <<"Device -> VPN Service">>;
+relationship_label(device_client_certificate) -> <<"Device -> Client Certificate">>;
+relationship_label(vpn_service_ca_certificate) -> <<"VPN Service -> CA Certificate">>;
+relationship_label(Key) -> ias_html:text(Key).
+
+relationship_status_badge(will_create) ->
+    relationship_badge("will_create", <<"background:#eff6ff;color:#1d4ed8;border-color:#93c5fd;">>);
+relationship_status_badge(already_linked) ->
+    relationship_badge("already_linked", <<"background:#f0fdf4;color:#166534;border-color:#86efac;">>);
+relationship_status_badge(conflict) ->
+    relationship_badge("conflict", <<"background:#fef2f2;color:#991b1b;border-color:#fca5a5;">>);
+relationship_status_badge(stale_reference) ->
+    relationship_badge("stale_reference", <<"background:#fff7ed;color:#9a3412;border-color:#fdba74;">>);
+relationship_status_badge(Status) ->
+    relationship_badge(ias_html:text(Status), <<"background:#f8fafc;color:#475569;border-color:#cbd5e1;">>).
+
+relationship_badge(Label, Style) ->
+    #span{style = ias_html:join([
+              <<"display:inline-block;padding:3px 6px;border:1px solid;border-radius:999px;font-size:10px;font-weight:700;">>,
+              Style]),
+          body = ias_html:text(Label)}.
+
+relationships_apply_action(#{ready := true}, _WizardId) ->
+    #panel{style = <<"margin-top:12px;">>, body = [
+        #span{style = disabled_action_style(), body = ias_html:text("Relationships Applied")}
+    ]};
+relationships_apply_action(#{can_apply := true}, WizardId) ->
+    #panel{style = <<"margin-top:12px;">>, body = [
+        #link{class = [button, sgreen],
+              body = ias_html:text("Apply Relationships"),
+              postback = {wizard_apply_relationships, WizardId}}
+    ]};
+relationships_apply_action(_Review, _WizardId) ->
+    #panel{style = <<"margin-top:12px;">>, body = [
+        #span{style = disabled_action_style(), body = ias_html:text("Apply Relationships")}
+    ]}.
 
 client_certificate_step(Draft) ->
     #panel{body = [
@@ -928,8 +1027,25 @@ wizard_error(client_certificate_material_required) ->
     wizard_error_panel("Public client certificate PEM is required before continuing.");
 wizard_error(client_certificate_linked_to_other_device) ->
     wizard_error_panel("The selected Client Certificate is already linked to another Device.");
+wizard_error(relationships_not_applied) ->
+    wizard_error_panel("Apply all required relationships before continuing to Material Readiness.");
+wizard_error({relationship_preflight_failed, _Review}) ->
+    wizard_error_panel("Relationship preflight failed. Resolve conflicts or stale selections before applying the graph.");
+wizard_error({relationship_apply_failed, Key, Reason}) ->
+    wizard_error_panel(ias_html:join([<<"Relationship apply failed for ">>, Key, <<": ">>,
+                                      relationship_error_text(Reason)]));
+wizard_error({relationship_apply_incomplete, _Review}) ->
+    wizard_error_panel("Relationships were not fully applied. Review the graph and try again.");
 wizard_error(Reason) ->
     wizard_error_panel(Reason).
+
+relationship_error_text(#{message := Message}) -> ias_html:text(Message);
+relationship_error_text(Reason) when is_binary(Reason); is_atom(Reason);
+                                     is_integer(Reason); is_float(Reason);
+                                     is_list(Reason) ->
+    ias_html:text(Reason);
+relationship_error_text(Reason) ->
+    iolist_to_binary(io_lib:format("~tp", [Reason])).
 
 wizard_error_panel(Reason) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;color:#991b1b;">>,
@@ -999,6 +1115,11 @@ next_action(#{current_step := client_certificate} = Draft, WizardId) ->
                 _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
             end;
         _ -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
+    end;
+next_action(#{current_step := relationships} = Draft, WizardId) ->
+    case ias_provisioning_wizard_store:relationships_ready(Draft) of
+        true -> nav_action("Next", {wizard_next, WizardId});
+        false -> #span{style = disabled_action_style(), body = ias_html:text("Next")}
     end;
 next_action(_Draft, WizardId) ->
     nav_action("Next", {wizard_next, WizardId}).
