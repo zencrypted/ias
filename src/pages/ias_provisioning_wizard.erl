@@ -881,11 +881,20 @@ client_certificate_badge_items(Certificate, Material, Binding) ->
         {ok, #{material_type := client_certificate}} ->
             recommended_client_badges(Certificate, Binding);
         _ ->
-            [relationship_badge("Demo Certificate",
-                                <<"background:#f8fafc;color:#475569;border-color:#cbd5e1;">>),
-             relationship_badge("PEM Missing",
-                                <<"background:#fff7ed;color:#9a3412;border-color:#fdba74;">>)]
+            missing_pem_client_badges(Certificate)
     end.
+
+missing_pem_client_badges(Certificate) ->
+    DemoBadge = case demo_issued_certificate(Certificate) of
+        true ->
+            [relationship_badge("Demo Certificate",
+                                <<"background:#f8fafc;color:#475569;border-color:#cbd5e1;">>)];
+        false ->
+            []
+    end,
+    DemoBadge ++
+        [relationship_badge("PEM Missing",
+                            <<"background:#fff7ed;color:#9a3412;border-color:#fdba74;">>)].
 
 recommended_client_badges(Certificate, Binding) ->
     case compatible_client_binding(Binding) of
@@ -910,6 +919,9 @@ compatible_client_binding(_) -> false.
 cmp_issued_certificate(#{source := cmp_demo_enrollment}) -> true;
 cmp_issued_certificate(#{source := cmp_response}) -> true;
 cmp_issued_certificate(_) -> false.
+
+demo_issued_certificate(#{source := certificate_issue_demo}) -> true;
+demo_issued_certificate(_) -> false.
 
 issue_client_certificate_panel(WizardId) ->
     Users = ias_demo_store:users(),

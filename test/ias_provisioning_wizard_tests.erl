@@ -606,6 +606,22 @@ client_certificate_missing_body_renders_disabled_selection_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"PEM Required">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Select — PEM required">>)).
 
+client_certificate_generic_missing_pem_omits_demo_badge_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    _Certificate = ias_demo_store:add_certificate(
+        #{id => <<"wizard_generic_missing_pem_client">>, source => manual_certificate,
+          certificate_role => client_certificate, subject_cn => <<"generic-client">>}),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate}),
+
+    Html = render(ias_provisioning_wizard:content_for({draft, Step})),
+
+    ?assertEqual(nomatch, binary:match(Html, <<"Demo Certificate">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"PEM Missing">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"PEM Required">>)).
+
 client_certificate_cmp_material_renders_recommended_badges_test() ->
     ias_demo_state:clear(),
     ias_provisioning_wizard_store:clear(),
