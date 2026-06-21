@@ -153,13 +153,14 @@ invalid_wizard_id_test() ->
     Html = render(ias_provisioning_wizard:content_for({error, <<"missing_wizard">>})),
     ?assertMatch({_, _}, binary:match(Html, <<"Wizard draft not found">>)).
 
-drafts_are_not_exported_in_demo_state_test() ->
+drafts_are_exported_in_demo_state_test() ->
     ias_demo_state:clear(),
     ias_provisioning_wizard_store:clear(),
     {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
     Snapshot = ias_demo_state:export(),
-    ?assertEqual(nomatch, binary:match(Snapshot, maps:get(id, Draft))),
-    ?assertEqual(nomatch, binary:match(Snapshot, <<"provisioning_wizard_">>)).
+    ?assertMatch({_, _}, binary:match(Snapshot, maps:get(id, Draft))),
+    ?assertMatch({_, _}, binary:match(Snapshot, <<"wizard_drafts">>)),
+    ?assertMatch({_, _}, binary:match(Snapshot, <<"provisioning_wizard_">>)).
 
 portable_scheme_is_disabled_test() ->
     Html = render(ias_provisioning_wizard:content_for(start)),
