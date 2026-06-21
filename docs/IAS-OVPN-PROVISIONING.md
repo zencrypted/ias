@@ -20,6 +20,33 @@ Certificate or Device
 -> Component Status
 -> Assembly Readiness
 
+Manual Demo Device Creation
+---------------------------
+
+OVPN Import is not the only way to bootstrap a runtime Device in IAS. It remains
+the migration, onboarding and legacy-profile analysis workflow for existing
+OpenVPN configurations.
+
+Stage 23D adds live-runtime demo Device creation so an operator can start the
+forward IAS flow without importing an `.ovpn` file:
+
+```text
+Create Demo Device
+-> create/link Certificate
+-> link Security Profile
+-> link VPN Service
+-> load public certificate material
+-> create device-bound OVPN provisioning
+```
+
+The created object is node-local demo runtime metadata with
+`source = manual_device`. It is suitable for relationship linking, device
+readiness analysis and device-bound OVPN provisioning previews.
+
+This is not production device enrollment. It does not generate private keys,
+create CSRs, call CA/CMP, create certificates automatically, persist device
+records, start VPN connections or create relationships automatically.
+
 Material Contract
 -----------------
 
