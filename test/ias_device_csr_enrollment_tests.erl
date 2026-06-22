@@ -107,6 +107,25 @@ safe_device_csr_command_generation_test() ->
     ?assertMatch({_, _}, binary:match(Command, <<"-subj '/CN=laptop-one-">>)),
     ?assertMatch(<<"laptop-one-", _/binary>>, maps:get(common_name, Plan)).
 
+device_csr_command_does_not_require_existing_key_ref_test() ->
+    Device = maps:without([private_key_provider, private_key_ref],
+                          csr_command_device(<<"Fresh Laptop">>, <<"old.key">>)),
+    {ok, Plan} = ias_device_csr_command:generate(Device),
+    ?assertEqual(<<"device_file">>, maps:get(private_key_provider, Plan)),
+    ?assertMatch(<<"keys/fresh-laptop-", _/binary>>, maps:get(private_key_ref, Plan)),
+    ?assertNotMatch(<<"/", _/binary>>, maps:get(private_key_ref, Plan)),
+    ?assertEqual(nomatch, binary:match(maps:get(command, Plan), <<"old.key">>)).
+
+device_csr_command_does_not_reuse_existing_key_ref_test() ->
+    Device = csr_command_device(<<"Rotated Laptop">>, <<"keys/existing-client.key">>),
+    {ok, Plan} = ias_device_csr_command:generate(Device),
+    KeyRef = maps:get(private_key_ref, Plan),
+    Script = ias_device_csr_command:script(Plan),
+    ?assertMatch(<<"keys/rotated-laptop-", _/binary>>, KeyRef),
+    ?assertEqual(nomatch, binary:match(KeyRef, <<"existing-client.key">>)),
+    ?assertEqual(nomatch, binary:match(Script, <<"existing-client.key">>)),
+    ?assertEqual(nomatch, binary:match(Script, <<"BEGIN PRIVATE KEY">>)).
+
 unique_device_csr_cn_and_filename_generation_test() ->
     Device = csr_command_device(<<"Laptop Two">>, <<"keys/client.key">>),
     {ok, Plan1} = ias_device_csr_command:generate(Device),

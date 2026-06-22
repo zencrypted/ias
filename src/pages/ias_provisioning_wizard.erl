@@ -37,9 +37,11 @@ event({wizard_request_device_csr_certificate, WizardId}) ->
 event({wizard_download_device_csr_script, WizardId}) ->
     wizard_download_device_csr_script(WizardId);
 event({wizard_prepare_device_csr_plan, WizardId}) ->
-    redirect_after(ias_provisioning_wizard_store:prepare_device_csr_plan(WizardId));
+    redirect_after_device_csr_plan(
+        fun() -> ias_provisioning_wizard_store:prepare_device_csr_plan(WizardId) end);
 event({wizard_regenerate_device_csr_plan, WizardId}) ->
-    redirect_after(ias_provisioning_wizard_store:regenerate_device_csr_plan(WizardId));
+    redirect_after_device_csr_plan(
+        fun() -> ias_provisioning_wizard_store:regenerate_device_csr_plan(WizardId) end);
 event({wizard_apply_relationships, WizardId}) ->
     case ias_provisioning_wizard_store:apply_relationships(WizardId) of
         {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
@@ -1484,6 +1486,8 @@ device_csr_error_text(private_key_reference_required) ->
     <<"Confirm the relative Device private key reference before submitting the CSR.">>;
 device_csr_error_text({invalid_private_key_reference, Reason}) ->
     ias_html:join([<<"Device private key reference is invalid: ">>, ias_html:text(Reason)]);
+device_csr_error_text({csr_plan_failed, _Reason}) ->
+    <<"Device key and CSR plan could not be prepared. The wizard draft was preserved; retry the step or check the server log.">>;
 device_csr_error_text({invalid_certificate_chain, _Reason}) ->
     <<"Issued certificate does not validate against the configured CA trust anchor.">>;
 device_csr_error_text({configured_ca_unavailable, Reason}) ->
@@ -2166,6 +2170,21 @@ redirect_after({ok, Draft}) ->
     nitro:redirect(wizard_url(maps:get(id, Draft)));
 redirect_after({error, _Reason}) ->
     nitro:redirect(start_url()).
+
+redirect_after_device_csr_plan(Fun) ->
+    try Fun() of
+        {ok, Draft} ->
+            nitro:redirect(wizard_url(maps:get(id, Draft)));
+        {error, Reason} ->
+            nitro:update(wizard_feedback,
+                         wizard_error(device_csr_error_text(Reason)))
+    catch
+        Class:Reason:Stack ->
+            error_logger:error_msg("Provisioning wizard CSR plan preparation failed: ~p:~p~n~p~n",
+                                   [Class, Reason, Stack]),
+            nitro:update(wizard_feedback,
+                         wizard_error(device_csr_error_text({csr_plan_failed, Reason})))
+    end.
 
 wizard_url(WizardId) ->
     ias_html:join([start_url(), <<"?id=">>, ias_html:text(WizardId)]).

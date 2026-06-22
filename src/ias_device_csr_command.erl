@@ -1,24 +1,22 @@
 -module(ias_device_csr_command).
 -export([generate/1, script/1]).
 
-generate(Device) when is_map(Device) ->
-    case ias_device_key_ref:status(Device) of
-        {ok, #{private_key_provider := <<"device_file">>,
-               private_key_ref := _ExistingKeyRef}} ->
-            case device_stem(Device) of
-                {ok, Stem} ->
-                    Nonce = nonce(),
-                    Basename = ias_html:join([Stem, <<"-">>, Nonce]),
-                    CommonName = Basename,
-                    KeyRef = ias_html:join([<<"keys/">>, Basename, <<".key">>]),
-                    CsrFile = ias_html:join([Basename, <<".csr">>]),
-                    {ok, _SafeKeyRef} = ias_device_key_ref:validate(<<"device_file">>, KeyRef),
+generate(#{kind := device} = Device) ->
+    case device_stem(Device) of
+        {ok, Stem} ->
+            Nonce = nonce(),
+            Basename = ias_html:join([Stem, <<"-">>, Nonce]),
+            CommonName = Basename,
+            KeyRef = ias_html:join([<<"keys/">>, Basename, <<".key">>]),
+            CsrFile = ias_html:join([Basename, <<".csr">>]),
+            case ias_device_key_ref:validate(<<"device_file">>, KeyRef) of
+                {ok, #{private_key_ref := SafeKeyRef}} ->
                     {ok, #{private_key_provider => <<"device_file">>,
-                           private_key_ref => KeyRef,
-                           key_filename => KeyRef,
+                           private_key_ref => SafeKeyRef,
+                           key_filename => SafeKeyRef,
                            common_name => CommonName,
                            csr_filename => CsrFile,
-                           command => command(KeyRef, CsrFile, CommonName),
+                           command => command(SafeKeyRef, CsrFile, CommonName),
                            script_filename => script_filename(CommonName)}};
                 {error, Reason} ->
                     {error, Reason}

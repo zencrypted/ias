@@ -801,6 +801,44 @@ explicit_plan_preparation_stores_one_stable_plan_test() ->
     ?assertEqual(Csr, maps:get(pending_csr_filename, After)),
     ?assertEqual(Cn, maps:get(pending_enrollment_common_name, After)).
 
+initial_plan_preparation_without_existing_device_key_ref_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device0 = demo_device(<<"wizard_initial_keyless_device">>),
+    Device = maps:without([private_key_provider, private_key_ref], Device0),
+    ias_demo_store:put_runtime_object(Device),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate,
+                                device_id => maps:get(id, Device)}),
+    {ok, Prepared} = ias_provisioning_wizard_store:prepare_device_csr_plan(
+        maps:get(id, Step)),
+    Ref = maps:get(pending_private_key_reference, Prepared),
+    ?assertMatch(<<"keys/wizard-device-", _/binary>>, Ref),
+    ?assertEqual(nomatch, binary:match(Ref, <<"client.key">>)),
+    Html = render(ias_provisioning_wizard:content_for({draft, Prepared})),
+    ?assertMatch({_, _}, binary:match(Html, Ref)),
+    ?assertEqual(nomatch, binary:match(Html, <<"BEGIN PRIVATE KEY">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"/tmp/">>)).
+
+existing_device_key_ref_is_not_reused_for_initial_plan_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device0 = demo_device(<<"wizard_existing_ref_not_reused_device">>),
+    Device = maps:merge(Device0, #{private_key_ref => <<"keys/current-device.key">>}),
+    ias_demo_store:put_runtime_object(Device),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate,
+                                device_id => maps:get(id, Device)}),
+    {ok, Prepared} = ias_provisioning_wizard_store:prepare_device_csr_plan(
+        maps:get(id, Step)),
+    Ref = maps:get(pending_private_key_reference, Prepared),
+    ?assertMatch(<<"keys/wizard-device-", _/binary>>, Ref),
+    ?assertEqual(nomatch, binary:match(Ref, <<"current-device.key">>)),
+    Html = render(ias_provisioning_wizard:content_for({draft, Prepared})),
+    ?assertEqual(nomatch, binary:match(Html, <<"current-device.key">>)).
+
 explicit_plan_regeneration_replaces_existing_plan_test() ->
     ias_demo_state:clear(),
     ias_provisioning_wizard_store:clear(),
