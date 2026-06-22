@@ -758,9 +758,14 @@ client_certificate_step_shows_device_csr_command_with_key_ref_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Run this script on the selected Device">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Pending Private Key Reference">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"keys/wizard-device-">>)),
+    ?assertMatch({_, _}, binary:match(Html, maps:get(pending_csr_filename, Prepared))),
+    ?assertMatch({_, _}, binary:match(Html, <<"OPENSSL=&quot;${OPENSSL3:-openssl}&quot;">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"&gt;&amp;2">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Copy Script">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Download Key and CSR Script">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Generate Another Key and CSR Plan">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"navigator.clipboard">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"document.getElementById('wizard_device_csr_command')">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Upload only the generated .csr file to IAS">>)),
     ?assertMatch({_, _}, binary:match(Html, <<".csr">>)).
 
@@ -800,6 +805,33 @@ explicit_plan_preparation_stores_one_stable_plan_test() ->
     ?assertEqual(Ref, maps:get(pending_private_key_reference, After)),
     ?assertEqual(Csr, maps:get(pending_csr_filename, After)),
     ?assertEqual(Cn, maps:get(pending_enrollment_common_name, After)).
+
+prepared_plan_complete_client_certificate_step_renders_repeatedly_test() ->
+    ias_demo_state:clear(),
+    ias_provisioning_wizard_store:clear(),
+    Device = demo_device(<<"wizard_prepared_render_device">>),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Step} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{current_step => client_certificate,
+                                device_id => maps:get(id, Device)}),
+    {ok, Prepared} = ias_provisioning_wizard_store:prepare_device_csr_plan(
+        maps:get(id, Step)),
+    Ref = maps:get(pending_private_key_reference, Prepared),
+    Csr = maps:get(pending_csr_filename, Prepared),
+    Html1 = render(ias_provisioning_wizard:content_for({draft, Prepared})),
+    Html2 = render(ias_provisioning_wizard:content_for({draft, Prepared})),
+    ?assertMatch({_, _}, binary:match(Html1, <<"Device-bound Provisioning Wizard">>)),
+    ?assertMatch({_, _}, binary:match(Html1, <<"Request Certificate from CA using Device CSR">>)),
+    ?assertMatch({_, _}, binary:match(Html1, Ref)),
+    ?assertMatch({_, _}, binary:match(Html1, Csr)),
+    ?assertMatch({_, _}, binary:match(Html1, <<"Copy Script">>)),
+    ?assertMatch({_, _}, binary:match(Html1, <<"Download Key and CSR Script">>)),
+    ?assertMatch({_, _}, binary:match(Html1, <<"Generate Another Key and CSR Plan">>)),
+    ?assertMatch({_, _}, binary:match(Html2, Ref)),
+    ?assertMatch({_, _}, binary:match(Html2, Csr)),
+    {ok, After} = ias_provisioning_wizard_store:get(maps:get(id, Prepared)),
+    ?assertEqual(Ref, maps:get(pending_private_key_reference, After)),
+    ?assertEqual(Csr, maps:get(pending_csr_filename, After)).
 
 initial_plan_preparation_without_existing_device_key_ref_test() ->
     ias_demo_state:clear(),

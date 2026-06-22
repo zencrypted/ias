@@ -36,6 +36,8 @@ event({wizard_request_device_csr_certificate, WizardId}) ->
     end;
 event({wizard_download_device_csr_script, WizardId}) ->
     wizard_download_device_csr_script(WizardId);
+event({wizard_copy_device_csr_script, WizardId}) ->
+    wizard_copy_device_csr_script(WizardId);
 event({wizard_prepare_device_csr_plan, WizardId}) ->
     redirect_after_device_csr_plan(
         fun() -> ias_provisioning_wizard_store:prepare_device_csr_plan(WizardId) end);
@@ -163,13 +165,15 @@ content_for(start) ->
         scheme_panel(undefined)
     ]);
 content_for({draft, Draft}) ->
-    page([
-        #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-        #p{body = ias_html:text("Wizard draft is stored in runtime ETS. The derived Security Policy is shown with the selected profile, and relationships are committed automatically after the client certificate step when preflight succeeds.")},
-        draft_summary(Draft),
-        progress_panel(Draft),
-        step_panel(Draft)
-    ]);
+    safe_draft_page(Draft, fun() ->
+        page([
+            #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
+            #p{body = ias_html:text("Wizard draft is stored in runtime ETS. The derived Security Policy is shown with the selected profile, and relationships are committed automatically after the client certificate step when preflight succeeds.")},
+            draft_summary(Draft),
+            progress_panel(Draft),
+            step_panel(Draft)
+        ])
+    end);
 content_for({error, WizardId}) ->
     page([
         #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
@@ -186,6 +190,21 @@ content_for({error, WizardId}) ->
 
 page(Body) ->
     #panel{class = <<"ias-placeholder">>, body = Body}.
+
+safe_draft_page(Draft, Fun) ->
+    try
+        Page = Fun(),
+        _Rendered = iolist_to_binary(nitro:render(Page)),
+        Page
+    catch
+        Class:Reason:Stack ->
+            error_logger:error_msg("Provisioning wizard draft render failed for ~p: ~p:~p~n~p~n",
+                                   [maps:get(id, Draft, undefined), Class, Reason, Stack]),
+            page([
+                #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
+                wizard_error_panel("Provisioning wizard rendering failed. The runtime draft was preserved; retry the step or check the server log.")
+            ])
+    end.
 
 existing_wizard_drafts_panel() ->
     Drafts = lists:reverse(ias_provisioning_wizard_store:all()),
@@ -1133,11 +1152,11 @@ device_csr_generation_plan_panel(WizardId, Plan) ->
                ]},
                #pre{id = wizard_device_csr_command,
                     style = <<"margin:8px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;">>,
-                    body = ias_html:text(Script)},
+                    body = html_escape(Script)},
                #panel{style = <<"display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">>,
                       body = [
                           #link{class = [button, sgreen],
-                                url = copy_device_csr_command_js(),
+                                postback = {wizard_copy_device_csr_script, WizardId},
                                 body = ias_html:text("Copy Script")},
                           #link{class = [button, sgreen],
                                 body = ias_html:text("Download Key and CSR Script"),
@@ -1147,9 +1166,6 @@ device_csr_generation_plan_panel(WizardId, Plan) ->
                                 postback = {wizard_regenerate_device_csr_plan, WizardId}}
                       ]}
            ]}.
-
-copy_device_csr_command_js() ->
-    <<"javascript:(function(){var e=document.getElementById('wizard_device_csr_command');if(e&&navigator.clipboard){navigator.clipboard.writeText(e.textContent||'');}})();">>.
 
 device_csr_upload_js() ->
     <<
@@ -2114,6 +2130,30 @@ wizard_download_device_csr_script(WizardId) ->
             nitro:update(wizard_feedback, wizard_error(not_found))
     end.
 
+wizard_copy_device_csr_script(WizardId) ->
+    case ias_provisioning_wizard_store:get(WizardId) of
+        {ok, Draft} ->
+            case pending_device_csr_plan(Draft) of
+                {ok, Plan} ->
+                    Script = ias_device_csr_command:script(Plan),
+                    nitro:wire(copy_device_csr_command_js(Script));
+                not_found ->
+                    nitro:update(wizard_feedback, wizard_error(private_key_reference_required));
+                {error, Reason} ->
+                    nitro:update(wizard_feedback, wizard_error(device_csr_error_text(Reason)))
+            end;
+        not_found ->
+            nitro:update(wizard_feedback, wizard_error(not_found))
+    end.
+
+copy_device_csr_command_js(Script) ->
+    Escaped = js_string(Script),
+    ias_html:join([
+        <<"if(navigator.clipboard){navigator.clipboard.writeText('">>,
+        Escaped,
+        <<"');}">>
+    ]).
+
 wizard_device_bound_ovpn_ready(Filename, Content, KeyRef) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
@@ -2165,6 +2205,17 @@ js_string_char($') -> <<"\\'">>;
 js_string_char($\n) -> <<"\\n">>;
 js_string_char($\r) -> <<"\\r">>;
 js_string_char(Char) -> <<Char>>.
+
+html_escape(Value) ->
+    Text = ias_html:text(Value),
+    << <<(html_escape_char(Char))/binary>> || <<Char>> <= Text >>.
+
+html_escape_char($&) -> <<"&amp;">>;
+html_escape_char($<) -> <<"&lt;">>;
+html_escape_char($>) -> <<"&gt;">>;
+html_escape_char($") -> <<"&quot;">>;
+html_escape_char($') -> <<"&#39;">>;
+html_escape_char(Char) -> <<Char>>.
 
 redirect_after({ok, Draft}) ->
     nitro:redirect(wizard_url(maps:get(id, Draft)));
