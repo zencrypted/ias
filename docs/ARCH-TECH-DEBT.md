@@ -707,3 +707,11 @@ record the selected profile in enrollment lineage.
 ### Priority
 
 Medium
+
+### VPN runtime development authorization display
+
+The VPN status page now preserves an explicit `development_bypass` decision
+reported by the VPN runtime instead of re-evaluating it as an IAS policy denial.
+All peers in `policy` mode continue to be evaluated against IAS Device and
+Security Profile relationships. The bypass remains a development-only runtime
+contract and must never be inferred from a missing profile.

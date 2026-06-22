@@ -54,3 +54,40 @@ vpn_page_renders_create_service_form_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Security Policy">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"CA Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Managed VPN Services">>)).
+
+vpn_page_honors_runtime_development_bypass_test() ->
+    Summary = #{<<"counts">> => #{<<"configured">> => 1,
+                                   <<"running">> => 1,
+                                   <<"stopped">> => 0,
+                                   <<"certificates">> => 1},
+                <<"peers">> => [#{<<"id">> => <<"client_a">>,
+                                    <<"running">> => true,
+                                    <<"mode">> => <<"tun">>,
+                                    <<"ip">> => <<"10.20.30.1">>,
+                                    <<"remote_peer_id">> => <<"peer_b">>,
+                                    <<"authorization_mode">> => <<"development_bypass">>,
+                                    <<"authorized">> => true,
+                                    <<"authorization_reason">> => <<"development_bypass">>,
+                                    <<"certificate">> => #{<<"trusted">> => true,
+                                                               <<"key_match">> => true,
+                                                               <<"not_after">> => <<"270622203259Z">>}}]},
+
+    Html = iolist_to_binary(nitro:render(ias_vpn:content({ok, Summary}))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"client_a">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"development bypass">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"270622203259Z">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"vpn not permitted by profile">>)).
+
+vpn_page_keeps_ias_policy_evaluation_for_policy_mode_test() ->
+    Summary = #{<<"counts">> => #{},
+                <<"peers">> => [#{<<"id">> => <<"unmanaged_peer">>,
+                                    <<"running">> => true,
+                                    <<"authorization_mode">> => <<"policy">>,
+                                    <<"authorized">> => true,
+                                    <<"authorization_reason">> => <<"runtime allow must not override IAS">>}]},
+
+    Html = iolist_to_binary(nitro:render(ias_vpn:content({ok, Summary}))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn not permitted by profile">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"runtime allow must not override IAS">>)).

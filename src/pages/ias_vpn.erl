@@ -312,10 +312,45 @@ peer_row(Peer, Devices, Profiles) ->
          ias_vpn_runtime:field(Peer, [frames_rejected])]).
 
 policy_decision(Peer, Devices, Profiles) ->
-    PeerId = ias_vpn_runtime:field(Peer, [<<"id">>, id, peer, name]),
-    ProfileId = profile_id(PeerId, Devices),
-    Profile = profile(ProfileId, Profiles),
-    (ias_policy:evaluate_vpn(Profile))#{profile_id => ProfileId}.
+    case authorization_mode(Peer) of
+        development_bypass ->
+            #{profile_id => undefined,
+              authorized => runtime_authorized(Peer),
+              reason => runtime_authorization_reason(Peer),
+              authorization_mode => development_bypass};
+        policy ->
+            PeerId = ias_vpn_runtime:field(Peer, [<<"id">>, id, peer, name]),
+            ProfileId = profile_id(PeerId, Devices),
+            Profile = profile(ProfileId, Profiles),
+            (ias_policy:evaluate_vpn(Profile))#{profile_id => ProfileId,
+                                                authorization_mode => policy}
+    end.
+
+authorization_mode(Peer) ->
+    case ias_vpn_runtime:field(Peer, [authorization_mode]) of
+        development_bypass -> development_bypass;
+        <<"development_bypass">> -> development_bypass;
+        "development_bypass" -> development_bypass;
+        _ -> policy
+    end.
+
+runtime_authorized(Peer) ->
+    case ias_vpn_runtime:field(Peer, [authorized]) of
+        true -> true;
+        <<"true">> -> true;
+        "true" -> true;
+        _ -> false
+    end.
+
+runtime_authorization_reason(Peer) ->
+    case ias_vpn_runtime:field(Peer, [authorization_reason]) of
+        undefined -> <<"development bypass">>;
+        null -> <<"development bypass">>;
+        development_bypass -> <<"development bypass">>;
+        <<"development_bypass">> -> <<"development bypass">>;
+        "development_bypass" -> <<"development bypass">>;
+        Reason -> Reason
+    end.
 
 profile_id(undefined, _Devices) ->
     undefined;
