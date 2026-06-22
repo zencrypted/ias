@@ -1169,7 +1169,7 @@ device_csr_generation_plan_panel(WizardId, Plan) ->
                ]},
                #pre{id = wizard_device_csr_command,
                     style = <<"margin:8px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;">>,
-                    body = html_escape(Script)},
+                    body = nitro_html_escape(Script)},
                #panel{style = <<"display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">>,
                       body = [
                           #link{class = [button, sgreen],
@@ -2223,16 +2223,23 @@ js_string_char($\n) -> <<"\\n">>;
 js_string_char($\r) -> <<"\\r">>;
 js_string_char(Char) -> <<Char>>.
 
-html_escape(Value) ->
+%% Nitro DOM insertion serializes rendered HTML inside a JavaScript template
+%% literal. Escape both HTML metacharacters and characters that can alter that
+%% template literal; the browser decodes the numeric entities back to the
+%% original shell script when assigning innerHTML.
+nitro_html_escape(Value) ->
     Text = ias_html:text(Value),
-    << <<(html_escape_char(Char))/binary>> || <<Char>> <= Text >>.
+    << <<(nitro_html_escape_char(Char))/binary>> || <<Char>> <= Text >>.
 
-html_escape_char($&) -> <<"&amp;">>;
-html_escape_char($<) -> <<"&lt;">>;
-html_escape_char($>) -> <<"&gt;">>;
-html_escape_char($") -> <<"&quot;">>;
-html_escape_char($') -> <<"&#39;">>;
-html_escape_char(Char) -> <<Char>>.
+nitro_html_escape_char($&) -> <<"&amp;">>;
+nitro_html_escape_char($<) -> <<"&lt;">>;
+nitro_html_escape_char($>) -> <<"&gt;">>;
+nitro_html_escape_char($") -> <<"&quot;">>;
+nitro_html_escape_char($') -> <<"&#39;">>;
+nitro_html_escape_char($$) -> <<"&#36;">>;
+nitro_html_escape_char(92) -> <<"&#92;">>;
+nitro_html_escape_char($`) -> <<"&#96;">>;
+nitro_html_escape_char(Char) -> <<Char>>.
 
 redirect_after({ok, Draft}) ->
     nitro:redirect(wizard_url(maps:get(id, Draft)));
