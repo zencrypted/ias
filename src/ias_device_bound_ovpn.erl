@@ -97,7 +97,9 @@ build_artifact(Transaction) ->
                   fun(ClientPem) ->
                     with_key_reference(Device,
                       fun(KeyRef) ->
-                        case assembly_validation(Device, Service, KeyRef, CaPem, ClientPem) of
+                        CertificateId = maps:get(certificate_id, Transaction, not_found),
+                        case assembly_validation(Transaction, Device, Service, CertificateId,
+                                                 KeyRef, CaPem, ClientPem) of
                             {ok, Validation} ->
                                 {ok, Host, Port, Protocol} = endpoint(Service),
                                 Body = ovpn_body(Device, Host, Port, Protocol,
@@ -165,16 +167,49 @@ with_key_reference(Device, Fun) ->
             {error, <<"Device-owned private key reference is invalid.">>}
     end.
 
-assembly_validation(Device, Service, KeyRef, CaPem, ClientPem) ->
+assembly_validation(Transaction, Device, Service, CertificateId, KeyRef, CaPem, ClientPem) ->
     case ias_x509_validation:validate_pair(CaPem, ClientPem) of
         {ok, Validation} ->
             case ias_x509_validation:validate_ovpn_inputs(Device, Service, KeyRef) of
-                ok -> {ok, Validation};
+                ok ->
+                    case certificate_lineage_check(Transaction, CertificateId, Device, KeyRef) of
+                        ok -> {ok, Validation};
+                        {error, Reason} -> {error, Reason}
+                    end;
                 {error, Reason} -> {error, Reason}
             end;
         {error, Reason} ->
             {error, Reason}
     end.
+
+certificate_lineage_check(_Transaction, CertificateId, Device, KeyRef) ->
+    case ias_demo_store:get(CertificateId) of
+        {ok, #{kind := certificate} = Certificate} ->
+            DeviceId = maps:get(id, Device, undefined),
+            Checks = [
+                {same_id(maps:get(device_id, Certificate, undefined), DeviceId),
+                 <<"selected certificate was not issued for the selected Device">>},
+                {present(maps:get(csr_fingerprint, Certificate, undefined)),
+                 <<"selected certificate has no CSR lineage">>},
+                {present(maps:get(csr_public_key_fingerprint, Certificate, undefined)),
+                 <<"selected certificate has no CSR public-key lineage">>},
+                {same_id(maps:get(certificate_public_key_fingerprint, Certificate, undefined),
+                         maps:get(csr_public_key_fingerprint, Certificate, undefined)),
+                 <<"selected certificate public key does not match enrollment CSR">>},
+                {same_id(maps:get(private_key_reference, Certificate, undefined), KeyRef),
+                 <<"Device private key reference does not match certificate enrollment lineage">>}
+            ],
+            first_failed_lineage_check(Checks);
+        _ ->
+            {error, <<"selected client certificate is missing">>}
+    end.
+
+first_failed_lineage_check([]) ->
+    ok;
+first_failed_lineage_check([{true, _Reason} | Rest]) ->
+    first_failed_lineage_check(Rest);
+first_failed_lineage_check([{false, Reason} | _Rest]) ->
+    {error, Reason}.
 
 endpoint(Service) ->
     Host = first_present([maps:get(remote_host, Service, undefined),

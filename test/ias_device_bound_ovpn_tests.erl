@@ -11,7 +11,7 @@ successful_device_bound_assembly_test() ->
     ?assertMatch({_, _}, binary:match(Body, <<"remote vpn.example.com 1194">>)),
     ?assertMatch({_, _}, binary:match(Body, <<"BEGIN CERTIFICATE">>)),
     ?assertMatch({_, _}, binary:match(Body, <<"END CERTIFICATE">>)),
-    ?assertMatch({_, _}, binary:match(Body, <<"key client.key">>)),
+    ?assertMatch({_, _}, binary:match(Body, <<"key keys/laptop-rotation.key">>)),
     ?assertEqual(nomatch, binary:match(Body, <<"<key>">>)),
     ?assertEqual(nomatch, binary:match(Body, <<"BEGIN PRIVATE KEY">>)),
     ?assertEqual(nomatch, binary:match(Body, <<"...">>)).
@@ -99,7 +99,7 @@ download_response_test() ->
                  maps:get(content_type, Response)),
     ?assertMatch({_, _}, binary:match(maps:get(content_disposition, Response),
                                       maps:get(filename, Response))),
-    ?assertMatch({_, _}, binary:match(maps:get(body, Response), <<"key client.key">>)).
+    ?assertMatch({_, _}, binary:match(maps:get(body, Response), <<"key keys/laptop-rotation.key">>)).
 
 transaction_detail_shows_download_action_test() ->
     Transaction = setup_ready_transaction(),
@@ -187,7 +187,7 @@ setup_ready_wizard(DeviceOverrides) ->
                    source => manual_device, name => <<"Laptop">>,
                    type => <<"vpn-client">>, tunnel_device => <<"tun">>,
                    private_key_provider => <<"device_file">>,
-                   private_key_ref => <<"client.key">>},
+                   private_key_ref => <<"keys/laptop-rotation.key">>},
     Device = ias_demo_store:put_runtime_object(maps:merge(DeviceBase, DeviceOverrides)),
     Service = ias_demo_store:put_runtime_object(
         #{id => <<"device_bound_ovpn_service">>, kind => vpn_service,
@@ -204,7 +204,14 @@ setup_ready_wizard(DeviceOverrides) ->
           certificate_role => client_certificate, certificate_status => trusted,
           profile_id => administrator, profile => administrator,
           subject_cn => <<"vpn-client">>, private_key_stored => false,
-          certificate_body_stored => false}),
+          certificate_body_stored => false,
+          device_id => maps:get(id, Device),
+          csr_fingerprint => <<"demo-csr-fingerprint">>,
+          csr_public_key_fingerprint => client_public_key_fingerprint(),
+          certificate_public_key_fingerprint => client_public_key_fingerprint(),
+          public_key_fingerprint => client_public_key_fingerprint(),
+          private_key_reference => <<"keys/laptop-rotation.key">>,
+          key_rotation => new_key_pair}),
     {ok, _} = ias_relationship_link:create(uses_security_profile,
                                             maps:get(id, Device), administrator),
     {ok, _} = ias_relationship_link:create(uses_service,
@@ -291,3 +298,7 @@ other_ca_pem() ->
 
 render(Doc) ->
     iolist_to_binary(nitro:render(Doc)).
+
+client_public_key_fingerprint() ->
+    {ok, Metadata} = ias_x509_validation:validate_certificate(client_certificate, client_pem()),
+    maps:get(public_key_fingerprint, Metadata).

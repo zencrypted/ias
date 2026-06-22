@@ -29,7 +29,8 @@ event({wizard_select_client_certificate, WizardId, CertificateId}) ->
     redirect_after(ias_provisioning_wizard_store:select_existing_client_certificate(WizardId, CertificateId));
 event({wizard_request_device_csr_certificate, WizardId}) ->
     CsrPem = nitro:q(wizard_device_csr_pem),
-    case ias_device_csr_enrollment:enroll_for_wizard(WizardId, CsrPem) of
+    PrivateKeyRef = nitro:q(wizard_pending_private_key_ref),
+    case ias_device_csr_enrollment:enroll_for_wizard(WizardId, CsrPem, PrivateKeyRef) of
         {ok, Draft, _Certificate} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
         {error, Reason} -> nitro:update(wizard_feedback, wizard_error(device_csr_error_text(Reason)))
     end;
@@ -1021,7 +1022,7 @@ request_certificate_with_device_csr_panel(Draft) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Request Certificate from CA using Device CSR")},
         #p{style = <<"font-size:12px;color:#64748b;line-height:1.45;">>,
-           body = ias_html:text("Generate the CSR on the Device using the device-owned private key. IAS never generates, uploads, reads, or stores the private key.")},
+           body = ias_html:text("Generate a new key pair and CSR on the Device for each new enrollment. IAS receives only the CSR; the private key never leaves the Device. Existing Device keys must not be reused for new enrollment. Old keys and certificates are not deleted automatically.")},
         device_csr_generation_panel(Draft),
         #panel{style = <<"margin:8px 0;">>, body = [
             #label{for = wizard_device_csr_file,
@@ -1048,7 +1049,7 @@ request_certificate_with_device_csr_panel(Draft) ->
         #panel{style = <<"margin-top:12px;">>, body = [
             #link{class = [button, sgreen],
                   body = ias_html:text("Request Certificate from CA using Device CSR"),
-                  source = [wizard_device_csr_pem],
+                  source = [wizard_device_csr_pem, wizard_pending_private_key_ref],
                   postback = {wizard_request_device_csr_certificate, WizardId}}
         ]}
     ]}.
@@ -1058,7 +1059,8 @@ device_csr_generation_panel(Draft) ->
         {ok, Device} ->
             case ias_device_csr_command:generate(Device) of
                 {ok, Plan} ->
-                    device_csr_generation_plan_panel(maps:get(id, Draft), Plan);
+                    StoredPlan = store_pending_device_csr_plan(Draft, Plan),
+                    device_csr_generation_plan_panel(maps:get(id, Draft), StoredPlan);
                 {error, Reason} ->
                     wizard_error_panel(Reason)
             end;
@@ -1066,29 +1068,47 @@ device_csr_generation_panel(Draft) ->
             wizard_error_panel("Select a Device before generating a Device CSR command.")
     end.
 
+store_pending_device_csr_plan(Draft, Plan) ->
+    Updates = #{pending_private_key_reference => maps:get(private_key_ref, Plan),
+                pending_csr_filename => maps:get(csr_filename, Plan),
+                pending_enrollment_common_name => maps:get(common_name, Plan)},
+    case ias_provisioning_wizard_store:update(maps:get(id, Draft), Updates) of
+        {ok, _Updated} -> Plan;
+        {error, _Reason} -> Plan
+    end.
+
 device_csr_generation_plan_panel(WizardId, Plan) ->
-    Command = maps:get(command, Plan),
+    Script = ias_device_csr_command:script(Plan),
     CsrFile = maps:get(csr_filename, Plan),
     KeyRef = maps:get(private_key_ref, Plan),
     #panel{style = <<"margin:10px 0;padding:10px;border:1px solid rgba(15,23,42,0.12);border-radius:6px;background:#f8fafc;">>,
            body = [
-               #h3{style = <<"margin-top:0;">>, body = ias_html:text("Generate CSR on Device")},
+               #h3{style = <<"margin-top:0;">>, body = ias_html:text("Generate New Device Key and CSR")},
                #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
-                  body = ias_html:text("Run this command on the selected Device. The private key remains on the Device. Upload only the generated .csr file to IAS.")},
+                  body = ias_html:text("Run this script on the selected Device. It generates a fresh private key and CSR, refuses to overwrite existing files, and verifies the CSR signature. Upload only the generated .csr file to IAS.")},
                key_value_table([
-                   {"Private Key Reference", KeyRef},
+                   {"Pending Private Key Reference", KeyRef},
                    {"CSR File", CsrFile}
                ]),
+               #panel{style = <<"margin:8px 0;">>, body = [
+                   #label{for = wizard_pending_private_key_ref,
+                          style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
+                          body = ias_html:text("Confirm Device Private Key Reference")},
+                   #input{id = wizard_pending_private_key_ref,
+                          type = <<"text">>,
+                          value = KeyRef,
+                          style = <<"width:100%;box-sizing:border-box;">>}
+               ]},
                #pre{id = wizard_device_csr_command,
                     style = <<"margin:8px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;">>,
-                    body = ias_html:text(Command)},
+                    body = ias_html:text(Script)},
                #panel{style = <<"display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">>,
                       body = [
                           #link{class = [button, sgreen],
                                 url = copy_device_csr_command_js(),
-                                body = ias_html:text("Copy Command")},
+                                body = ias_html:text("Copy Script")},
                           #link{class = [button, sgreen],
-                                body = ias_html:text("Download CSR Generation Script"),
+                                body = ias_html:text("Download Key and CSR Script"),
                                 postback = {wizard_download_device_csr_script, WizardId}}
                       ]}
            ]}.
@@ -1423,8 +1443,14 @@ device_csr_error_text(csr_signature_invalid) ->
     <<"CSR signature verification failed. Regenerate the CSR on the Device.">>;
 device_csr_error_text(unsafe_subject) ->
     <<"CSR subject is missing or contains unsafe characters.">>;
+device_csr_error_text(unsafe_device_metadata) ->
+    <<"Selected Device metadata contains unsafe characters for CSR script generation. Rename the Device before generating a key and CSR script.">>;
 device_csr_error_text(certificate_csr_public_key_mismatch) ->
     <<"Issued certificate public key does not match the submitted CSR.">>;
+device_csr_error_text(private_key_reference_required) ->
+    <<"Confirm the relative Device private key reference before submitting the CSR.">>;
+device_csr_error_text({invalid_private_key_reference, Reason}) ->
+    ias_html:join([<<"Device private key reference is invalid: ">>, ias_html:text(Reason)]);
 device_csr_error_text({invalid_certificate_chain, _Reason}) ->
     <<"Issued certificate does not validate against the configured CA trust anchor.">>;
 device_csr_error_text({configured_ca_unavailable, Reason}) ->
@@ -1434,8 +1460,10 @@ device_csr_error_text({cmp_failed, ca_unavailable}) ->
     <<"CA/CMP service is unavailable.">>;
 device_csr_error_text({duplicate_csr, _Record}) ->
     <<"This CSR has already been submitted. Generate a new CSR on the Device and try again. Do not resubmit the same CSR.">>;
+device_csr_error_text({reused_public_key, _Record}) ->
+    <<"This public key has already been used for enrollment. Generate a new Device key and CSR, then try again.">>;
 device_csr_error_text({cmp_failed, cmp_unexpected_certificate_response}) ->
-    <<"CMP did not return the expected certificate response. The CSR may already have been used, or the CA rejected the request. Generate a new Device CSR and try again.">>;
+    <<"CMP did not return the expected certificate response. This may indicate key reuse or CA rejection. Generate a new Device key and CSR, then try again.">>;
 device_csr_error_text({cmp_failed, cmp_connection_failed}) ->
     <<"CMP connection failed. Check that the CA/CMP service is running and reachable.">>;
 device_csr_error_text({cmp_failed, cmp_timeout}) ->

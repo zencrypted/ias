@@ -2,7 +2,9 @@
 -compile({no_auto_import, [get/1]}).
 -export([ensure/0,
          get/1,
+         all/0,
          submitted/1,
+         public_key_available/2,
          mark_submitted/2,
          mark_issued/2,
          mark_failed/3,
@@ -27,6 +29,10 @@ get(Fingerprint0) ->
         [] -> not_found
     end.
 
+all() ->
+    ensure(),
+    [Record || {_Fingerprint, Record} <- ets:tab2list(?TABLE)].
+
 submitted(Fingerprint0) ->
     Fingerprint = ias_html:text(Fingerprint0),
     case get(Fingerprint) of
@@ -36,6 +42,17 @@ submitted(Fingerprint0) ->
             ok;
         {ok, Record} ->
             {error, {duplicate_csr, Record}}
+    end.
+
+public_key_available(DeviceId0, PublicKeyFingerprint0) ->
+    DeviceId = ias_html:text(DeviceId0),
+    PublicKeyFingerprint = ias_html:text(PublicKeyFingerprint0),
+    case [Record || Record <- all(),
+                    ias_html:text(maps:get(device_id, Record, undefined)) =:= DeviceId,
+                    ias_html:text(maps:get(public_key_fingerprint, Record, undefined)) =:= PublicKeyFingerprint,
+                    reusable_public_key_record(Record) =:= false] of
+        [] -> ok;
+        [Record | _] -> {error, {reused_public_key, Record}}
     end.
 
 mark_submitted(Fingerprint0, Metadata0) ->
@@ -90,6 +107,9 @@ safe_metadata(Metadata) when is_map(Metadata) ->
                   private_key_body, key_pem], Metadata);
 safe_metadata(_Metadata) ->
     #{}.
+
+reusable_public_key_record(#{status := failed, retryable := true}) -> true;
+reusable_public_key_record(_) -> false.
 
 created_at() ->
     iolist_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second),

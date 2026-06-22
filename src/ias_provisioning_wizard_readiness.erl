@@ -206,6 +206,8 @@ private_key_item(Components) ->
                  <<"Device-owned private key provider is unsupported.">>;
              invalid_private_key_ref ->
                  <<"Device-owned private key reference is invalid.">>;
+             pending_key_rotation ->
+                 <<"A new Device key rotation is pending. Complete CSR enrollment before provisioning.">>;
              _ -> <<"The device-owned private-key requirement is not satisfied.">>
          end).
 
@@ -274,22 +276,31 @@ observed_private_key(Draft) ->
     case {maps:get(scenario, Draft, undefined),
           ias_provisioning_wizard_store:selected_device(Draft)} of
         {device_bound, {ok, Device}} ->
-            case ias_device_key_ref:status(Device) of
-                {ok, Safe} ->
-                    #{status => available_on_device,
-                      provider => maps:get(private_key_provider, Safe),
-                      ref => maps:get(private_key_ref, Safe)};
-                {error, missing_private_key_ref} ->
-                    #{status => missing_private_key_ref};
-                {error, <<"Private Key Provider must be device_file">>} ->
-                    #{status => unsupported_private_key_provider};
-                {error, <<"Private Key Provider is required">>} ->
-                    #{status => unsupported_private_key_provider};
-                {error, _Reason} ->
-                    #{status => invalid_private_key_ref}
+            case maps:get(pending_private_key_reference, Draft, undefined) of
+                undefined -> observed_device_private_key(Device);
+                <<>> -> observed_device_private_key(Device);
+                PendingRef -> #{status => pending_key_rotation,
+                                provider => <<"device_file">>,
+                                ref => PendingRef}
             end;
         _ ->
             #{status => unavailable}
+    end.
+
+observed_device_private_key(Device) ->
+    case ias_device_key_ref:status(Device) of
+        {ok, Safe} ->
+            #{status => available_on_device,
+              provider => maps:get(private_key_provider, Safe),
+              ref => maps:get(private_key_ref, Safe)};
+        {error, missing_private_key_ref} ->
+            #{status => missing_private_key_ref};
+        {error, <<"Private Key Provider must be device_file">>} ->
+            #{status => unsupported_private_key_provider};
+        {error, <<"Private Key Provider is required">>} ->
+            #{status => unsupported_private_key_provider};
+        {error, _Reason} ->
+            #{status => invalid_private_key_ref}
     end.
 
 observed_tls_auth_status(Draft) ->

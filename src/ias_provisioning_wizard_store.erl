@@ -57,6 +57,9 @@ new(device_bound) ->
         vpn_service_id => undefined,
         ca_certificate_id => undefined,
         client_certificate_id => undefined,
+        pending_private_key_reference => undefined,
+        pending_csr_filename => undefined,
+        pending_enrollment_common_name => undefined,
         relationships_applied => false,
         provisioning_id => undefined,
         completed => false,
@@ -147,6 +150,9 @@ select_device(Id, DeviceId) ->
     case valid_device(DeviceId) of
         {ok, Device} ->
             update(Id, reset_completion(#{device_id => maps:get(id, Device),
+                                         pending_private_key_reference => undefined,
+                                         pending_csr_filename => undefined,
+                                         pending_enrollment_common_name => undefined,
                                          relationships_applied => false}));
         {error, Reason} ->
             {error, Reason}
@@ -760,6 +766,8 @@ clamp(Value, _Min, _Max) ->
 validate_restored_draft(Draft) ->
     Allowed = [id, scenario, current_step, device_id, security_profile_id,
                vpn_service_id, ca_certificate_id, client_certificate_id,
+               pending_private_key_reference, pending_csr_filename,
+               pending_enrollment_common_name,
                relationships_applied, provisioning_id, completed,
                completed_at, created_at, updated_at],
     Selected = maps:with(Allowed, Draft),
@@ -778,6 +786,9 @@ validate_restored_draft(Draft) ->
                  andalso valid_optional_reference(maps:get(vpn_service_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(ca_certificate_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(client_certificate_id, Safe, undefined))
+                 andalso valid_optional_private_key_ref(maps:get(pending_private_key_reference, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(pending_csr_filename, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(pending_enrollment_common_name, Safe, undefined))
                  andalso valid_optional_reference(maps:get(provisioning_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(completed_at, Safe, undefined))
                  andalso is_boolean(maps:get(relationships_applied, Safe, false))
@@ -799,6 +810,14 @@ valid_optional_reference(Id) -> usable_restore_id(Id).
 valid_optional_profile_reference(undefined) -> true;
 valid_optional_profile_reference(Id) when is_atom(Id) -> true;
 valid_optional_profile_reference(Id) -> usable_restore_id(Id).
+
+valid_optional_private_key_ref(undefined) -> true;
+valid_optional_private_key_ref(<<>>) -> true;
+valid_optional_private_key_ref(Ref) ->
+    case ias_device_key_ref:validate(<<"device_file">>, Ref) of
+        {ok, _Safe} -> true;
+        {error, _Reason} -> false
+    end.
 
 valid_completion_state(Draft) ->
     case maps:get(completed, Draft, false) of

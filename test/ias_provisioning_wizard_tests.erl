@@ -717,11 +717,11 @@ client_certificate_step_renders_selection_and_issue_test() ->
     Html = render(ias_provisioning_wizard:content_for({draft, Step})),
     ?assertMatch({_, _}, binary:match(Html, <<"Use Existing Client Certificate">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Request Certificate from CA using Device CSR">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Generate CSR on Device">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Copy Command">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Download CSR Generation Script">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Generate New Device Key and CSR">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Copy Script">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Download Key and CSR Script">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"CSR PEM">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"openssl req -new">>)).
+    ?assertMatch({_, _}, binary:match(Html, <<"OPENSSL">>)).
 
 client_certificate_step_links_to_ca_enrollment_with_wizard_context_test() ->
     ias_demo_state:clear(),
@@ -754,10 +754,33 @@ client_certificate_step_shows_device_csr_command_with_key_ref_test() ->
 
     Html = render(ias_provisioning_wizard:content_for({draft, Step})),
 
-    ?assertMatch({_, _}, binary:match(Html, <<"Run this command on the selected Device">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"keys/client.key">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Run this script on the selected Device">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Pending Private Key Reference">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"keys/wizard-device-">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Upload only the generated .csr file to IAS">>)),
     ?assertMatch({_, _}, binary:match(Html, <<".csr">>)).
+
+pending_key_reference_survives_wizard_draft_restore_test() ->
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft} = ias_provisioning_wizard_store:update(
+        maps:get(id, Draft0), #{pending_private_key_reference => <<"keys/laptop.key">>,
+                                pending_csr_filename => <<"laptop.csr">>,
+                                pending_enrollment_common_name => <<"laptop">>}),
+    ias_provisioning_wizard_store:clear(),
+    ?assertMatch({ok, _}, ias_provisioning_wizard_store:restore(Draft)),
+    {ok, Restored} = ias_provisioning_wizard_store:get(maps:get(id, Draft)),
+    ?assertEqual(<<"keys/laptop.key">>,
+                 maps:get(pending_private_key_reference, Restored)).
+
+absolute_pending_key_reference_is_rejected_on_restore_test() ->
+    ias_provisioning_wizard_store:clear(),
+    Draft = #{id => <<"restore_absolute_key_ref">>,
+              scenario => device_bound,
+              current_step => client_certificate,
+              pending_private_key_reference => <<"/tmp/laptop.key">>},
+    ?assertEqual({error, invalid_draft},
+                 ias_provisioning_wizard_store:restore(Draft)).
 
 certificate_enrollment_page_renders_wizard_return_context_test() ->
     Context = #{wizard_id => <<"wizard_return_context">>,

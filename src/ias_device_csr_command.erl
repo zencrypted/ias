@@ -4,63 +4,90 @@
 generate(Device) when is_map(Device) ->
     case ias_device_key_ref:status(Device) of
         {ok, #{private_key_provider := <<"device_file">>,
-               private_key_ref := KeyRef}} ->
-            Stem = device_stem(Device),
-            Nonce = nonce(),
-            CommonName = ias_html:join([Stem, <<"-">>, Nonce]),
-            CsrFile = ias_html:join([CommonName, <<".csr">>]),
-            {ok, #{private_key_provider => <<"device_file">>,
-                   private_key_ref => KeyRef,
-                   common_name => CommonName,
-                   csr_filename => CsrFile,
-                   command => command(KeyRef, CsrFile, CommonName),
-                   script_filename => script_filename(CommonName)}};
+               private_key_ref := _ExistingKeyRef}} ->
+            case device_stem(Device) of
+                {ok, Stem} ->
+                    Nonce = nonce(),
+                    Basename = ias_html:join([Stem, <<"-">>, Nonce]),
+                    CommonName = Basename,
+                    KeyRef = ias_html:join([<<"keys/">>, Basename, <<".key">>]),
+                    CsrFile = ias_html:join([Basename, <<".csr">>]),
+                    {ok, _SafeKeyRef} = ias_device_key_ref:validate(<<"device_file">>, KeyRef),
+                    {ok, #{private_key_provider => <<"device_file">>,
+                           private_key_ref => KeyRef,
+                           key_filename => KeyRef,
+                           common_name => CommonName,
+                           csr_filename => CsrFile,
+                           command => command(KeyRef, CsrFile, CommonName),
+                           script_filename => script_filename(CommonName)}};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
         {error, Reason} ->
             {error, Reason}
     end;
 generate(_Device) ->
     {error, device_required}.
 
-script(#{private_key_ref := KeyRef,
+script(#{key_filename := KeyRef,
          csr_filename := CsrFile,
          common_name := CommonName}) ->
     ias_html:join([
         <<"#!/bin/sh\n">>,
         <<"set -eu\n\n">>,
-        <<"KEY_REF=">>, shell_quote(KeyRef), <<"\n">>,
+        <<"OPENSSL=\"${OPENSSL3:-openssl}\"\n">>,
+        <<"KEY_FILE=">>, shell_quote(KeyRef), <<"\n">>,
         <<"CSR_OUT=">>, shell_quote(CsrFile), <<"\n">>,
         <<"SUBJECT_CN=">>, shell_quote(CommonName), <<"\n\n">>,
-        <<"if [ ! -f \"$KEY_REF\" ]; then\n">>,
-        <<"  echo \"Private key reference not found: $KEY_REF\" >&2\n">>,
+        <<"if [ -e \"$KEY_FILE\" ]; then\n">>,
+        <<"  echo \"Refusing to overwrite existing private key: $KEY_FILE\" >&2\n">>,
         <<"  exit 1\n">>,
         <<"fi\n\n">>,
         <<"if [ -e \"$CSR_OUT\" ]; then\n">>,
         <<"  echo \"Refusing to overwrite existing CSR: $CSR_OUT\" >&2\n">>,
         <<"  exit 1\n">>,
         <<"fi\n\n">>,
-        <<"openssl req -new \\\n">>,
-        <<"  -key \"$KEY_REF\" \\\n">>,
+        <<"\"$OPENSSL\" ecparam \\\n">>,
+        <<"  -name secp384r1 \\\n">>,
+        <<"  -genkey \\\n">>,
+        <<"  -noout \\\n">>,
+        <<"  -out \"$KEY_FILE\"\n\n">>,
+        <<"chmod 600 \"$KEY_FILE\"\n\n">>,
+        <<"\"$OPENSSL\" req \\\n">>,
+        <<"  -new \\\n">>,
+        <<"  -key \"$KEY_FILE\" \\\n">>,
         <<"  -out \"$CSR_OUT\" \\\n">>,
         <<"  -subj \"/CN=$SUBJECT_CN\"\n\n">>,
-        <<"echo \"$CSR_OUT\"\n">>
+        <<"\"$OPENSSL\" req -verify -noout -in \"$CSR_OUT\" >/dev/null\n\n">>,
+        <<"echo \"Private key: $KEY_FILE\"\n">>,
+        <<"echo \"CSR: $CSR_OUT\"\n">>
     ]).
 
 command(KeyRef, CsrFile, CommonName) ->
     ias_html:join([
-        <<"openssl req -new \\\n">>,
-        <<"  -key ">>, shell_quote(KeyRef), <<" \\\n">>,
-        <<"  -out ">>, shell_quote(CsrFile), <<" \\\n">>,
-        <<"  -subj ">>, shell_quote(ias_html:join([<<"/CN=">>, CommonName]))
+        <<"OPENSSL=\"${OPENSSL3:-openssl}\"\n">>,
+        <<"$OPENSSL ecparam -name secp384r1 -genkey -noout -out ">>,
+        shell_quote(KeyRef), <<"\n">>,
+        <<"chmod 600 ">>, shell_quote(KeyRef), <<"\n">>,
+        <<"$OPENSSL req -new -key ">>, shell_quote(KeyRef),
+        <<" -out ">>, shell_quote(CsrFile),
+        <<" -subj ">>, shell_quote(ias_html:join([<<"/CN=">>, CommonName]))
     ]).
 
 device_stem(Device) ->
     Raw = first_defined([maps:get(name, Device, undefined),
                          maps:get(id, Device, undefined),
                          <<"vpn-client">>]),
-    Safe0 = safe_token(ias_html:text(Raw)),
-    case Safe0 of
-        <<>> -> <<"vpn-client">>;
-        Safe -> Safe
+    Text = ias_html:text(Raw),
+    case unsafe_metadata(Text) of
+        true ->
+            {error, unsafe_device_metadata};
+        false ->
+            Safe0 = safe_token(Text),
+            case Safe0 of
+                <<>> -> {ok, <<"vpn-client">>};
+                Safe -> {ok, Safe}
+            end
     end.
 
 first_defined([]) -> <<"vpn-client">>;
@@ -85,6 +112,15 @@ collapse_dashes(Text) ->
 
 trim_dashes(Text) ->
     re:replace(Text, <<"^-+|-+$">>, <<>>, [global, {return, binary}]).
+
+unsafe_metadata(Text) ->
+    has_control(Text) orelse
+        binary:match(Text, [<<"'">>, <<"\"">>, <<"`">>, <<"$">>, <<";">>,
+                            <<"&">>, <<"|">>, <<"<">>, <<">">>]) =/= nomatch.
+
+has_control(Text) ->
+    lists:any(fun(Char) -> Char < 32 orelse Char =:= 127 end,
+              binary_to_list(Text)).
 
 nonce() ->
     {{Year, Month, Day}, {Hour, Minute, Second}} = calendar:universal_time(),

@@ -73,11 +73,15 @@ wizard_auto_selection_and_return_test() ->
     with_configured_ca(fun() ->
         ias_demo_state:clear(),
         Draft = client_ready_draft(),
+        {ok, DraftWithKey} = ias_provisioning_wizard_store:update(
+            maps:get(id, Draft), pending_key_updates()),
         {ok, Advanced, Certificate} = ias_device_csr_enrollment:complete_for_wizard(
-            maps:get(id, Draft), client_csr_pem(), cmp_result(client_cert_pem())),
+            maps:get(id, DraftWithKey), client_csr_pem(), cmp_result(client_cert_pem())),
         ?assertEqual(maps:get(id, Certificate), maps:get(client_certificate_id, Advanced)),
         ?assertEqual(material_readiness, maps:get(current_step, Advanced)),
-        ?assertEqual(true, maps:get(relationships_applied, Advanced))
+        ?assertEqual(true, maps:get(relationships_applied, Advanced)),
+        {ok, Device} = ias_demo_store:get(maps:get(device_id, Draft)),
+        ?assertEqual(<<"keys/device-new.key">>, maps:get(private_key_ref, Device))
     end).
 
 csr_and_private_key_bodies_absent_from_demo_state_test() ->
@@ -96,9 +100,10 @@ safe_device_csr_command_generation_test() ->
     Device = csr_command_device(<<"Laptop One">>, <<"client.key">>),
     {ok, Plan} = ias_device_csr_command:generate(Device),
     Command = maps:get(command, Plan),
-    ?assertMatch({_, _}, binary:match(Command, <<"openssl req -new">>)),
-    ?assertMatch({_, _}, binary:match(Command, <<"-key 'client.key'">>)),
-    ?assertMatch({_, _}, binary:match(Command, <<"-out 'laptop-one-">>)),
+    ?assertMatch({_, _}, binary:match(Command, <<"ecparam -name secp384r1 -genkey">>)),
+    ?assertMatch({_, _}, binary:match(Command, <<"keys/laptop-one-">>)),
+    ?assertMatch({_, _}, binary:match(Command, <<".key'">>)),
+    ?assertMatch({_, _}, binary:match(Command, <<".csr'">>)),
     ?assertMatch({_, _}, binary:match(Command, <<"-subj '/CN=laptop-one-">>)),
     ?assertMatch(<<"laptop-one-", _/binary>>, maps:get(common_name, Plan)).
 
@@ -111,19 +116,21 @@ unique_device_csr_cn_and_filename_generation_test() ->
 
 device_csr_command_sanitizes_shell_metadata_test() ->
     Device = csr_command_device(<<"bad; rm -rf /\nname">>, <<"client.key">>),
-    {ok, Plan} = ias_device_csr_command:generate(Device),
-    Command = maps:get(command, Plan),
-    ?assertEqual(nomatch, binary:match(Command, <<"rm -rf">>)),
-    ?assertEqual(nomatch, binary:match(Command, <<";">>)),
-    ?assertMatch(<<"bad-rm-rf-name-", _/binary>>, maps:get(common_name, Plan)).
+    ?assertEqual({error, unsafe_device_metadata},
+                 ias_device_csr_command:generate(Device)).
 
 downloadable_csr_script_is_device_only_test() ->
     Device = csr_command_device(<<"Laptop Script">>, <<"keys/client.key">>),
     {ok, Plan} = ias_device_csr_command:generate(Device),
     Script = ias_device_csr_command:script(Plan),
     ?assertMatch({_, _}, binary:match(Script, <<"set -eu">>)),
-    ?assertMatch({_, _}, binary:match(Script, <<"[ ! -f \"$KEY_REF\" ]">>)),
+    ?assertMatch({_, _}, binary:match(Script, <<"OPENSSL=\"${OPENSSL3:-openssl}\"">>)),
+    ?assertMatch({_, _}, binary:match(Script, <<"ecparam \\\n  -name secp384r1">>)),
+    ?assertMatch({_, _}, binary:match(Script, <<"[ -e \"$KEY_FILE\" ]">>)),
     ?assertMatch({_, _}, binary:match(Script, <<"[ -e \"$CSR_OUT\" ]">>)),
+    ?assertMatch({_, _}, binary:match(Script, <<"req -verify -noout -in \"$CSR_OUT\"">>)),
+    ?assertMatch({_, _}, binary:match(Script, <<"Private key: $KEY_FILE">>)),
+    ?assertMatch({_, _}, binary:match(Script, <<"CSR: $CSR_OUT">>)),
     ?assertMatch({_, _}, binary:match(Script, <<"Refusing to overwrite existing CSR">>)),
     ?assertEqual(nomatch, binary:match(Script, <<"BEGIN PRIVATE KEY">>)),
     ?assertEqual(nomatch, binary:match(Script, <<"PRIVATE KEY-----">>)).
@@ -139,7 +146,36 @@ duplicate_csr_is_rejected_before_cmp_invocation_test() ->
         CmpFun = fun(_Request) -> erlang:error(cmp_should_not_be_called) end,
         ?assertMatch({error, {duplicate_csr, _}},
                      ias_device_csr_enrollment:enroll_for_wizard_with(
+                         maps:get(id, Draft), client_csr_pem(),
+                         <<"keys/device-new.key">>, CmpFun))
+    end).
+
+legacy_manual_csr_requires_key_reference_confirmation_test() ->
+    with_configured_ca(fun() ->
+        ias_demo_state:clear(),
+        ias_csr_enrollment_state:clear(),
+        Draft = client_ready_draft(),
+        CmpFun = fun(_Request) -> erlang:error(cmp_should_not_be_called) end,
+        ?assertEqual({error, private_key_reference_required},
+                     ias_device_csr_enrollment:enroll_for_wizard_with(
                          maps:get(id, Draft), client_csr_pem(), CmpFun))
+    end).
+
+reused_public_key_is_rejected_before_cmp_invocation_test() ->
+    with_configured_ca(fun() ->
+        ias_demo_state:clear(),
+        ias_csr_enrollment_state:clear(),
+        Draft = client_ready_draft(),
+        {ok, Csr} = ias_csr_validation:validate(client_csr_pem()),
+        {ok, _} = ias_csr_enrollment_state:mark_issued(
+            <<"previous-csr-fingerprint">>,
+            #{device_id => maps:get(device_id, Draft),
+              public_key_fingerprint => maps:get(public_key_fingerprint, Csr)}),
+        CmpFun = fun(_Request) -> erlang:error(cmp_should_not_be_called) end,
+        ?assertMatch({error, {reused_public_key, _}},
+                     ias_device_csr_enrollment:enroll_for_wizard_with(
+                         maps:get(id, Draft), client_csr_pem(),
+                         <<"keys/device-new.key">>, CmpFun))
     end).
 
 separate_csr_fingerprints_are_accepted_test() ->
@@ -167,13 +203,46 @@ successful_enrollment_marks_csr_issued_and_auto_selects_certificate_test() ->
         ias_demo_state:clear(),
         ias_csr_enrollment_state:clear(),
         Draft = client_ready_draft(),
+        OldRef = current_device_key_ref(Draft),
         CmpFun = fun(_Request) -> {ok, cmp_result(client_cert_pem())} end,
         {ok, Advanced, Certificate} = ias_device_csr_enrollment:enroll_for_wizard_with(
-            maps:get(id, Draft), client_csr_pem(), CmpFun),
+            maps:get(id, Draft), client_csr_pem(), <<"keys/device-new.key">>, CmpFun),
         {ok, Csr} = ias_csr_validation:validate(client_csr_pem()),
         {ok, State} = ias_csr_enrollment_state:get(maps:get(csr_fingerprint, Csr)),
         ?assertEqual(issued, maps:get(status, State)),
-        ?assertEqual(maps:get(id, Certificate), maps:get(client_certificate_id, Advanced))
+        ?assertEqual(maps:get(id, Certificate), maps:get(client_certificate_id, Advanced)),
+        ?assertNotEqual(OldRef, current_device_key_ref(Advanced)),
+        ?assertEqual(<<"keys/device-new.key">>, current_device_key_ref(Advanced)),
+        ?assertEqual(<<"keys/device-new.key">>, maps:get(private_key_reference, Certificate)),
+        ?assertEqual(new_key_pair, maps:get(key_rotation, Certificate))
+    end).
+
+fresh_public_key_fingerprint_reaches_cmp_state_test() ->
+    with_configured_ca(fun() ->
+        ias_demo_state:clear(),
+        ias_csr_enrollment_state:clear(),
+        Draft = client_ready_draft(),
+        CmpFun = fun(_Request) -> {ok, cmp_result(client_cert_pem())} end,
+        {ok, _Advanced, _Certificate} = ias_device_csr_enrollment:enroll_for_wizard_with(
+            maps:get(id, Draft), client_csr_pem(), <<"keys/device-new.key">>, CmpFun),
+        {ok, Csr} = ias_csr_validation:validate(client_csr_pem()),
+        {ok, State} = ias_csr_enrollment_state:get(maps:get(csr_fingerprint, Csr)),
+        ?assertEqual(maps:get(public_key_fingerprint, Csr),
+                     maps:get(public_key_fingerprint, State))
+    end).
+
+failed_issuance_does_not_update_device_key_reference_test() ->
+    with_configured_ca(fun() ->
+        ias_demo_state:clear(),
+        ias_csr_enrollment_state:clear(),
+        Draft = client_ready_draft(),
+        OldRef = current_device_key_ref(Draft),
+        CmpFun = fun(_Request) -> {error, ca_unavailable} end,
+        ?assertMatch({error, {cmp_failed, cmp_connection_failed}},
+                     ias_device_csr_enrollment:enroll_for_wizard_with(
+                         maps:get(id, Draft), client_csr_pem(),
+                         <<"keys/device-new.key">>, CmpFun)),
+        ?assertEqual(OldRef, current_device_key_ref(Draft))
     end).
 
 standalone_enrollment_import_still_works_test() ->
@@ -340,3 +409,12 @@ csr_command_device(Name, KeyRef) ->
       type => <<"vpn-client">>,
       private_key_provider => <<"device_file">>,
       private_key_ref => KeyRef}.
+
+pending_key_updates() ->
+    #{pending_private_key_reference => <<"keys/device-new.key">>,
+      pending_csr_filename => <<"device-new.csr">>,
+      pending_enrollment_common_name => <<"device-new">>}.
+
+current_device_key_ref(Draft) ->
+    {ok, Device} = ias_demo_store:get(maps:get(device_id, Draft)),
+    maps:get(private_key_ref, Device).
