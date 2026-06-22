@@ -4,8 +4,7 @@
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
-    nitro:clear(stand),
-    nitro:insert_bottom(stand, content());
+    render_init();
 event(select_device_bound) ->
     {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
     nitro:redirect(wizard_url(maps:get(id, Draft)));
@@ -192,19 +191,37 @@ page(Body) ->
     #panel{class = <<"ias-placeholder">>, body = Body}.
 
 safe_draft_page(Draft, Fun) ->
-    try
-        Page = Fun(),
-        _Rendered = iolist_to_binary(nitro:render(Page)),
-        Page
+    try Fun()
     catch
         Class:Reason:Stack ->
-            error_logger:error_msg("Provisioning wizard draft render failed for ~p: ~p:~p~n~p~n",
+            error_logger:error_msg("Provisioning wizard draft construction failed for ~p: ~p:~p~n~p~n",
                                    [maps:get(id, Draft, undefined), Class, Reason, Stack]),
             page([
                 #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
-                wizard_error_panel("Provisioning wizard rendering failed. The runtime draft was preserved; retry the step or check the server log.")
+                wizard_error_panel("Provisioning wizard page construction failed. The runtime draft was preserved; retry the step or check the server log.")
             ])
     end.
+
+render_init() ->
+    nitro:clear(stand),
+    try nitro:insert_bottom(stand, content())
+    catch
+        Class:Reason:Stack ->
+            error_logger:error_msg("Provisioning wizard live render failed: ~p:~p~n~p~n",
+                                   [Class, Reason, Stack]),
+            nitro:clear(stand),
+            nitro:insert_bottom(stand, render_error_page())
+    end.
+
+render_error_page() ->
+    page([
+        #h2{body = ias_html:text("Device-bound Provisioning Wizard")},
+        #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(220,38,38,0.25);border-radius:6px;background:#fef2f2;color:#991b1b;">>,
+               body = [
+                   #h3{body = ias_html:text("Wizard rendering failed")},
+                   #p{body = ias_html:text("The runtime draft was preserved. Retry the page and check the server log for the underlying error.")}
+               ]}
+    ]).
 
 existing_wizard_drafts_panel() ->
     Drafts = lists:reverse(ias_provisioning_wizard_store:all()),
