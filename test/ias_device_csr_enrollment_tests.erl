@@ -147,6 +147,10 @@ downloadable_csr_script_is_device_only_test() ->
     ?assertMatch({_, _}, binary:match(Script, <<"ecparam \\\n  -name secp384r1">>)),
     ?assertMatch({_, _}, binary:match(Script, <<"[ -e \"$KEY_FILE\" ]">>)),
     ?assertMatch({_, _}, binary:match(Script, <<"[ -e \"$CSR_OUT\" ]">>)),
+    ?assertMatch(
+        {_, _},
+        binary:match(Script, <<"mkdir -p \"$KEY_DIR\"">>)
+    ),
     ?assertMatch({_, _}, binary:match(Script, <<"req -verify -noout -in \"$CSR_OUT\"">>)),
     ?assertMatch({_, _}, binary:match(Script, <<"Private key: $KEY_FILE">>)),
     ?assertMatch({_, _}, binary:match(Script, <<"CSR: $CSR_OUT">>)),
