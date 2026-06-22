@@ -576,15 +576,16 @@ Awaiting Real Material
 The object kind is `ovpn_provisioning`. It references the selected subject,
 certificate, device, VPN service and CA certificate and records either
 `portable` or `device_bound` mode. It also records authorization, expiry,
-material status, artifact status, delivery status and the future one-time
-`downloaded` flag.
+derived material status, artifact status, delivery status and the future
+one-time `downloaded` flag.
 
 This object is not a secret container. It contains no CA body, client certificate
 body, CSR or private key. Portable mode records the future
-`one_time_in_memory` key policy; device-bound mode records `device_owned`.
-Until real material assembly is implemented, the transaction remains
-`awaiting_material`, its artifact is `skeleton_only`, and delivery is
-`not_ready`.
+`one_time_in_memory` key policy; device-bound mode records `device_owned`. A
+device-bound transaction remains `awaiting_material` while public material,
+lineage or the key reference is unresolved. When all current preflight checks
+pass, it derives `ready_for_delivery`, `public_bundle_ready` and
+`ready_for_device_import` and can assemble the public OVPN body on demand.
 
 ### OVPN Provisioning Artifact
 
@@ -647,6 +648,21 @@ private keys are generated and kept on the device or peer side. IAS/CA signs a
 CSR and stores certificate metadata, lifecycle state, trust state, and policy
 state. Development-mode demos may use local files under `priv/certs`, but that
 is not the production provisioning model.
+
+The implemented Device CSR path records non-secret lineage between:
+
+```text
+Device id
+-> private-key reference
+-> CSR fingerprint and public-key fingerprint
+-> CMP-issued certificate public-key fingerprint
+-> certificate id
+```
+
+The issued certificate is accepted only when its public key matches the uploaded
+CSR and its chain validates against the configured CA. Device-bound OVPN
+readiness requires the selected certificate lineage to match both the selected
+Device and its current relative key reference.
 
 The VPN runtime boundary is therefore:
 

@@ -140,16 +140,19 @@ A device-bound certificate may be authorized for VPN provisioning while still
 being denied specifically for `portable` provisioning. In that case the
 operator must create the transaction from the approved Device object.
 
-The transaction stores references and lifecycle metadata only. An authorized
-transaction has `status = awaiting_material`, `material_status =
-pending_real_material`, `artifact_status = skeleton_only`, and
-`delivery_status = not_ready`. It includes an expiry and a future `downloaded`
-flag, but Stage 23A does not yet perform a one-time secret download.
+The transaction stores references and lifecycle metadata only. While required
+material or lineage is unresolved, an authorized transaction remains
+`awaiting_material` with a blocked artifact. For a valid device-bound flow, IAS
+derives `ready_for_delivery`, `public_bundle_ready` and
+`ready_for_device_import` and assembles the public OVPN body on demand. The
+future `downloaded` flag still lacks authoritative delivery-audit semantics.
 
-The transaction never stores private-key, client certificate or CA bodies. The
-current **Download OVPN Skeleton** action remains a non-secret operator preview.
-The next production-oriented stage must assemble real material and enforce the
-one-time delivery transition.
+The transaction never stores private-key, client certificate or CA bodies.
+Public certificate PEM lives in the separate volatile material store. The device
+detail **Download OVPN Skeleton** action remains a non-secret technical preview,
+while the completed Provisioning Wizard transaction can generate the real
+device-bound public bundle with a relative `key` reference. Portable one-time
+secret delivery is still future work.
 
 ### Manual VPN Service Provisioning Metadata
 
@@ -163,19 +166,20 @@ VPN Service
 -> CA Certificate
 ```
 
-The CA Certificate relationship represents the trust anchor that will later be
-used for the `<ca>` section of an exported OVPN profile. The relationship is
-metadata-only at this stage: IAS still does not export private keys or embed
-real certificate bodies into generated demo artifacts.
+The CA Certificate relationship represents the trust anchor used for the `<ca>`
+section of an exported OVPN profile. The relationship itself remains metadata,
+while the public PEM body is resolved from the separate volatile material store
+at assembly time. IAS does not export private keys; device-bound bundles embed
+only public CA/client certificate material and reference the Device-owned key.
 
 OVPN Import and OVPN Export have different roles:
 
 - OVPN Import is a migration, onboarding, and legacy profile analysis workflow.
 - OVPN Export is the primary provisioning artifact for IAS-managed VPN access.
 
-Device-owned keys remain outside the exported profile. IAS may display the
-`<key>` section shape for operator review, but the private key body is not
-exported by IAS.
+Device-owned keys remain outside the exported profile. A device-bound bundle
+uses `key <safe-relative-reference>` and never emits an inline `<key>` block or
+private-key body.
 
 In the standard VPN profile, the user receives an OVPN profile and chooses the
 client device where it will be installed. Device binding is not mandatory in
@@ -217,7 +221,7 @@ trust, and authorization service for VPN peers.
 IAS should provide a provisioning result for a peer instead of exposing the
 full object graph to the VPN runtime.
 
-Planned provisioning flow:
+Implemented device-bound provisioning flow:
 
 ```text
 Device / VPN Peer
@@ -231,8 +235,11 @@ Device / VPN Peer
 ```
 
 The preferred production model is CSR-based. Private keys stay on the peer or
-device side. IAS stores certificate metadata and lifecycle state, not private
-key material.
+device side. The Provisioning Wizard now prepares a fresh key/CSR plan, accepts
+only the Device-generated CSR, validates the CMP-issued certificate against the
+CSR and configured CA, records lineage and updates the Device's safe relative
+key reference. IAS stores certificate metadata, public certificate material in a
+separate volatile store and lifecycle state, not private-key material.
 
 Development-only flows may use local certificate and key files such as
 `priv/certs/peer_a.crt` and `priv/certs/peer_a.key`, but those paths represent

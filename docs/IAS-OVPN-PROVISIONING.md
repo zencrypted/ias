@@ -4,21 +4,22 @@ OVPN Provisioning Material Contract
 Purpose
 -------
 
-OVPN provisioning is the forward IAS workflow that will eventually assemble a
-user- or device-deliverable OpenVPN profile from IAS-managed objects. It is
-separate from OVPN Import, which analyzes an existing configuration and maps it
-into demo IAS metadata.
+OVPN provisioning is the forward IAS workflow that assembles a device-bound
+OpenVPN profile from IAS-managed objects when current authorization, graph,
+certificate, lineage and material checks pass. Portable one-time delivery remains
+future work. OVPN provisioning is separate from OVPN Import, which analyzes an
+existing configuration and maps it into demo IAS metadata.
 
 Current Flow
 ------------
 
 Certificate or Device
 -> Provisioning Authorization
+-> Device key/CSR enrollment when required
 -> Portable or Device-bound Transaction
--> Material Requirements
--> Material Sources
--> Component Status
+-> Material and lineage checks
 -> Assembly Readiness
+-> Device-bound OVPN generation
 
 Manual Demo Device Creation
 ---------------------------
@@ -165,10 +166,10 @@ provisioning transaction itself remains a normal sanitized runtime object.
 
 Material observation is independent from authorization. The wizard reads CA and
 client certificate availability directly from the public certificate material
-store and reports a device-bound private key as `available_on_device` when the
-selected Device exists. An authorization denial still blocks assembly and the
-final readiness decision, but it must not relabel already stored public PEM as
-missing or unavailable.
+store and reports a device-bound private key as `available_on_device` only when
+the selected Device has a validated `device_file` reference. An authorization
+denial still blocks assembly and the final readiness decision, but it must not
+relabel already stored public PEM as missing or unavailable.
 
 Stage 24K makes Material Readiness an active remediation surface. Entering or
 refreshing the step re-runs relationship preflight, applies missing compatible
@@ -191,14 +192,25 @@ available only when the Device has validated metadata:
 
 ```erlang
 private_key_provider = <<"device_file">>
-private_key_ref = <<"client.key">>
+private_key_ref = <<"keys/client.key">>
 ```
 
 The reference is a safe relative path on the approved device. IAS does not
-generate, read, store or export the private key body. Material Readiness blocks
-device-bound provisioning when the reference is missing, invalid or uses an
-unsupported provider, and the wizard links the operator back to the Device detail
-page to configure it.
+generate, read, store or export the private key body. The Provisioning Wizard
+prepares a stable key-rotation plan only after an explicit operator action. The
+plan contains a unique common name, CSR filename and relative key reference;
+refreshing the page does not regenerate it, while an explicit regeneration
+action replaces it. Sanitized pending filenames and references may survive Demo
+State export/import, but no CSR or private-key body crosses that boundary.
+
+The downloadable Device script:
+
+- creates the relative `keys/` directory when needed;
+- generates a fresh `secp384r1` private key for every enrollment;
+- refuses to overwrite an existing key or CSR;
+- sets private-key permissions to `0600`;
+- generates and verifies the CSR;
+- prints only resulting file paths, never private-key contents.
 
 Stage 25B adds device-bound OVPN bundle assembly. IAS assembles the public bundle
 on demand from a provisioning transaction, the current VPN Service endpoint, the
@@ -208,23 +220,52 @@ resulting profile embeds real public PEM blocks and uses an OpenVPN `key`
 directive that points to the device-local key path. IAS never emits a `<key>`
 block and never stores, exports or downloads a private-key body.
 
+Stage 25C completes the production-aligned Device CSR enrollment path:
+
+```text
+Prepare key rotation plan
+-> run script on Device
+-> upload CSR only
+-> reject duplicate CSR or reused public key
+-> submit CSR to external CA through CMP
+-> validate issued certificate against CSR and configured CA
+-> record Device/CSR/certificate/key-reference lineage
+-> update Device private-key reference
+-> select the issued certificate in the wizard
+-> clear the pending rotation
+-> assemble the device-bound OVPN bundle
+```
+
+The certificate object records the Device id, CSR fingerprint, CSR public-key
+fingerprint, certificate public-key fingerprint, relative private-key reference,
+`issued_via = cmp` and `key_rotation = new_key_pair`. OVPN readiness requires
+that this lineage matches the selected Device and current key reference. Failed
+CMP issuance or certificate validation does not update the Device key reference.
+
+A local end-to-end run confirmed that the SHA-256 fingerprint of the public key
+derived from the generated Device private key equals the fingerprint of the
+public key embedded in the CMP-issued certificate. This validates the full
+key -> CSR -> certificate -> OVPN reference chain without exposing the private
+key to IAS.
+
 Material Contract
 -----------------
 
 Every Stage 23B transaction records the following sanitized metadata:
 
-| Material | Requirement | Expected source | Current Stage 23B status |
+| Material | Requirement | Expected source | Current semantics |
 | --- | --- | --- | --- |
-| CA certificate PEM | required | CA certificate store | `missing_body` when referenced |
-| Client certificate PEM | required | certificate store | `missing_body` when referenced |
-| Private key, portable | required later | provisioning transaction | `pending_one_time_generation` |
-| Private key, device-bound | validated reference | approved device | `available_on_device` only with `device_file` reference |
-| TLS-auth | optional | VPN service | `not_configured` |
+| CA certificate PEM | required | volatile certificate-material store | `missing_body` or `available` |
+| Client certificate PEM | required | volatile certificate-material store | `missing_body` or `available` |
+| Private key, portable | required later | one-time provisioning operation | `pending_one_time_generation` |
+| Private key, device-bound | validated reference and matching lineage | approved Device | `available_on_device` only with a safe `device_file` reference |
+| TLS-auth | optional | VPN service | `not_configured` until supported |
 
 Assembly Readiness
 ------------------
 
-An authorized transaction remains:
+An authorized transaction remains blocked while public material, lineage or the
+Device key reference is incomplete:
 
 ```text
 status = awaiting_material
@@ -234,22 +275,42 @@ artifact_status = skeleton_only
 delivery_status = not_ready
 ```
 
-The assembly reason lists the missing public certificate material and, for
-portable mode, the pending one-time private-key generation step. The next step
-points the operator toward a future CA/CMP response or certificate material
-store.
+After successful Device CSR enrollment, public CA/client PEM availability,
+relationship preflight and lineage validation, the derived state becomes:
+
+```text
+status = ready_for_delivery
+material_status = public_material_available
+assembly_status = public_bundle_ready
+artifact_status = public_bundle_ready
+delivery_status = ready_for_device_import
+```
+
+Portable mode still remains blocked on future one-time private-key generation.
+Device-bound mode can generate a real public `.ovpn` body on demand, but the
+private key remains a separate Device-owned file referenced through `key`.
 
 Security Boundary
 -----------------
 
-Stage 23B/25B does not:
+The current device-bound flow:
 
-* generate a private key;
-* call CA/CMP;
-* store CA or client certificate PEM bodies in Demo State metadata;
-* store CSR, TLS-auth, TLS-crypt or shared-secret material;
-* store assembled OVPN bodies in Demo State;
-* mark a transaction as deliverable unless the current preflight still passes.
+* never generates, reads, stores or renders the Device private-key body in IAS;
+* generates the private key only when the operator runs the downloaded script on
+  the Device;
+* sends only the uploaded CSR to the external CA/CMP service;
+* retains CSR and public-key fingerprints, not the CSR body, as lineage metadata;
+* stores issued public certificate PEM only in the volatile public-material store,
+  outside Demo State metadata;
+* never emits an inline `<key>` block;
+* generates assembled OVPN bodies on demand and does not store them in Demo State;
+* marks a transaction deliverable only while current authorization, graph, public
+  material, certificate chain, lineage and key-reference preflight still pass.
+
+IAS can verify that the issued certificate matches the uploaded CSR. It cannot
+cryptographically prove that a particular local filename still contains the
+matching private key; that final check belongs to the Device and can be performed
+by comparing public-key fingerprints.
 
 The Demo State export/import boundary continues to contain sanitized metadata
 only.
@@ -257,9 +318,11 @@ only.
 Future Direction
 ----------------
 
-The next implementation stages should provide public certificate material first,
-then implement device-bound assembly, and only afterwards introduce portable
-one-time private-key generation and one-time delivery.
+Stage 26 should add artifact delivery and audit semantics: artifact SHA-256,
+generation/download timestamps and explicit `generated`, `downloaded`,
+`delivered` and `imported` states without persisting the OVPN body. A real VPN
+connection test additionally requires a non-placeholder VPN Service endpoint.
+Portable one-time private-key generation remains a separate future flow.
 
 ## Stage 23C — Public Certificate Material Store
 

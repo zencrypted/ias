@@ -121,13 +121,13 @@ eventing, integration and authorization semantics belong to Live Runtime Mode.
 | Live VPN peer status | no | yes |
 | Request validation semantics | preview only | authoritative |
 | Policy evaluation semantics | preview only | authoritative |
-| Certificate issuance | no | future |
+| Certificate issuance | no | yes, external CMP development/device CSR flows |
 | LDAP identity/profile lookup | no | future |
 | NS/discovery integration | no | future |
 | OVPN paste/file parse and mapping preview | no | yes |
 | OVPN sanitized demo ETS store | no | yes, demo only |
 | OVPN provisioning transaction metadata | no | yes, demo only |
-| User-deliverable OVPN profile | no | future |
+| User-deliverable OVPN profile | no | yes, device-bound public bundle |
 | Production OVPN import and VPN activation | no | future |
 
 Features that depend on backend state, external services or untrusted input must
@@ -223,28 +223,34 @@ remain explicit.
 
 ### OVPN Export and Provisioning Transactions
 
-OVPN Export is the primary future user-delivery workflow for IAS-managed VPN
-access. Stage 23A introduces an explicit provisioning transaction boundary in
-Live Runtime Mode without pretending that the current skeleton is a usable VPN
-profile.
+OVPN Export is the live-runtime delivery workflow for IAS-managed VPN access.
+The transaction boundary was introduced as metadata-only in Stage 23A and now
+supports a real device-bound public bundle while portable key delivery remains
+future work.
 
-The current transaction flow is:
+The current device-bound flow is:
 
 ```text
-Certificate or Device
--> OVPN provisioning authorization
--> choose portable or device-bound mode
--> create volatile provisioning transaction
--> await real CA/client certificate/private-key material
+Device
+-> Provisioning Wizard
+-> authorization and relationship preflight
+-> stable Device key/CSR plan
+-> local Device key generation
+-> CSR upload and external CMP enrollment
+-> issued certificate/CSR/CA validation
+-> certificate lineage and Device key-reference update
+-> volatile provisioning transaction
+-> on-demand device-bound OVPN assembly
 ```
 
-Provisioning Wizard drafts are also live-runtime orchestration metadata. Demo
-State may preserve their scenario, current step, selected object identifiers and
-timestamps, but never certificate material, private keys, CSR bodies, TLS
-secrets, temporary form values or process/session identifiers. Import restores
-stale references deliberately so the wizard can require a new selection.
+Provisioning Wizard drafts are live-runtime orchestration metadata. Demo State
+may preserve their scenario, current step, selected object identifiers, safe
+pending filenames/key references and timestamps, but never certificate bodies,
+private keys, CSR bodies, TLS secrets, temporary form values or process/session
+identifiers. Import restores stale references deliberately so the wizard can
+require a new selection.
 
-A Stage 23A transaction records only sanitized metadata:
+A provisioning transaction records sanitized metadata:
 
 - provisioning id;
 - subject kind and id;
@@ -252,36 +258,22 @@ A Stage 23A transaction records only sanitized metadata:
 - portable or device-bound delivery mode;
 - authorization result and reason;
 - transaction expiry;
-- material, artifact and delivery status;
+- derived material, artifact and delivery status;
 - private-key ownership policy;
-- `downloaded = false` for the future one-time delivery lifecycle.
+- `downloaded = false` until a future delivery-audit stage updates it.
 
-The transaction status is `awaiting_material` after authorization. Its artifact
-status remains `skeleton_only` and delivery status remains `not_ready`. No CA
-body, client certificate body or private key is generated or stored by this
-stage. Transactions are node-local volatile ETS demo objects and may be included
-in Demo State export/import as sanitized metadata.
-
-Portable mode declares a future `one_time_in_memory` private-key policy. This
-means a later stage may generate a complete profile within a short-lived
-provisioning operation and discard the key after one-time delivery. It does not
-mean that Stage 23A currently generates a key. Portable mode is valid only when
+Portable mode declares a future `one_time_in_memory` private-key policy and
+remains blocked on one-time key generation and delivery. It is valid only when
 the resolved security profile does not require device lock.
 
-Device-bound mode keeps the `device_owned` policy and continues to require local
-key generation on the approved device. When device lock is enabled, portable
-provisioning is denied even if the certificate already has a valid Device
-relationship; the operator must create device-bound provisioning from that
-approved Device object.
+Device-bound mode uses the `device_owned` policy. The Device script generates a
+fresh local key and CSR, creates the relative `keys/` directory, refuses to
+overwrite existing files and uploads only the CSR. IAS validates the CSR, rejects
+duplicate/reused public keys, submits it through CMP, validates the issued
+certificate against the CSR and configured CA, and updates the Device key
+reference only after success.
 
-The existing downloadable file is deliberately labelled **OVPN Skeleton**. It
-is an operator preview only and must not be delivered to a user as a working VPN
-configuration. A future stage must supply real CA and client certificate material
-and implement the chosen private-key delivery boundary before changing the
-transaction to a user-deliverable state.
-
-Stage 23B adds an explicit material assembly contract to each provisioning
-transaction. The contract separates four concerns:
+Stage 23B introduced the material assembly contract:
 
 ```text
 material requirement
@@ -292,19 +284,22 @@ material requirement
 
 The current required components are:
 
-- CA certificate PEM from the CA certificate store;
-- client certificate PEM from the IAS certificate store;
-- a private key generated one time in memory for portable mode, or owned by the
-  approved device for device-bound mode;
+- CA certificate PEM from the volatile certificate-material store;
+- client certificate PEM from the same public-material boundary;
+- a validated Device-owned private-key reference;
+- matching Device/CSR/certificate lineage;
 - optional TLS-auth material from the VPN service configuration.
 
-Stage 23B still stores metadata only. Referenced CA and client certificates are
-reported as `missing_body`, portable private keys as
-`pending_one_time_generation`, and device-bound private keys as
-`available_on_device`. Assembly remains `blocked` until a later stage provides
-real public certificate material and implements the selected private-key flow.
-No PEM, CSR, private key, TLS-auth body or shared secret is generated or stored
-by this stage.
+When any requirement is unresolved, the transaction remains blocked. When all
+current authorization, graph, endpoint, public material, certificate-chain,
+lineage and key-reference checks pass, the derived state becomes
+`ready_for_delivery` / `public_bundle_ready` / `ready_for_device_import`. IAS
+then assembles a real `.ovpn` body on demand with public `<ca>` and `<cert>` blocks
+and a relative `key` directive. The private key is neither embedded nor stored.
+
+Assembled OVPN bodies remain outside Demo State. The next lifecycle stage must
+record generation/download/delivery/import audit metadata without persisting the
+artifact body. Actual VPN activation remains outside IAS.
 
 ### Public Certificate Material Store
 

@@ -49,6 +49,34 @@ Device
 
 Пристрій генерує пару ключів локально та передає до CA лише CSR. Приватний ключ не покидає пристрій і не зберігається в IAS.
 
+Device-bound OVPN provisioning
+------------------------------
+
+Поточний live-runtime wizard реалізує production-aligned device-bound flow:
+
+```text
+Prepare Device key/CSR plan
+  -> run generated script on Device
+      -> keys/<unique>.key
+      -> <unique>.csr
+  -> upload CSR only
+  -> CMP enrollment through external CA
+  -> validate certificate public key and CA chain
+  -> update Device private-key reference
+  -> assemble OVPN with public CA/client PEM and `key keys/<unique>.key`
+```
+
+Згенерований shell script створює каталог `keys/`, генерує новий ключ
+`secp384r1`, відмовляється перезаписувати наявний key/CSR та перевіряє CSR
+перед завантаженням. IAS зберігає лише безпечний відносний key reference,
+CSR/certificate fingerprints і lineage metadata. Тіло приватного ключа ніколи
+не передається IAS і не вбудовується в `.ovpn`.
+
+Наскрізний flow перевірено локально: SHA-256 public key, отриманого з
+Device private key, збігається з SHA-256 public key у CMP-issued certificate.
+Для імпорту готовий `.ovpn` має бути доступний разом із відносним каталогом
+`keys/`, на який посилається директива `key`.
+
 Життєвий цикл
 -------------
 

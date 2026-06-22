@@ -528,3 +528,181 @@ bundles is closed.
 ### Priority
 
 Medium
+
+---
+
+## TD-011: Nitro Template-Literal Safety Is Page-Local
+
+**Status:** Open
+
+**Area:** Nitro Rendering / Dynamic Script And Configuration Text
+
+### Problem
+
+Nitro DOM insertion serializes rendered HTML inside a JavaScript template
+literal. HTML escaping does not neutralize raw `${...}`, backticks or shell line
+continuation backslashes. A generated Device CSR script previously caused the
+client-side Nitro command to fail parsing while every server callback returned
+normally, leaving the static loading placeholder visible.
+
+The immediate CSR page fix uses a local `nitro_html_escape/1` helper, but the same
+class of bug can recur on any page that renders generated scripts or configs.
+
+### Desired Direction
+
+Move this policy into a shared, explicitly named helper with tests for HTML and
+Nitro template-literal contexts. Audit existing websocket-rendered multiline
+text and prohibit ad-hoc raw insertion. Keep browser-side regression coverage for
+`${...}`, backticks and backslashes.
+
+### Priority
+
+High
+
+---
+
+## TD-012: OVPN Artifact Delivery Audit Is Missing
+
+**Status:** Open
+
+**Area:** OVPN Provisioning Artifact Lifecycle
+
+### Problem
+
+IAS can derive `public_bundle_ready` and generate a device-bound `.ovpn` on
+demand, but the transaction still does not distinguish artifact generation,
+download, delivery to the Device and successful import. The existing
+`downloaded` field remains historical scaffolding rather than an authoritative
+audit event.
+
+### Desired Direction
+
+Record non-secret lifecycle metadata such as artifact SHA-256, generation time,
+download time and explicit `generated`, `downloaded`, `delivered` and `imported`
+states. Do not persist the OVPN body or any private-key material.
+
+### Priority
+
+High
+
+---
+
+## TD-013: Placeholder VPN Endpoints Are Exportable
+
+**Status:** Open
+
+**Area:** VPN Service / Device-bound OVPN Assembly
+
+### Problem
+
+A syntactically safe endpoint such as `vpn.example.com:1194` can pass assembly
+validation and produce a structurally correct artifact even though it cannot be
+used for a real deployment.
+
+### Desired Direction
+
+Mark known demo placeholders explicitly. In strict/production mode, block final
+delivery until the VPN Service has a non-placeholder endpoint. Development mode
+may keep preview/export behavior with a visible warning.
+
+### Priority
+
+Medium
+
+---
+
+## TD-014: Device Enrollment Completion Is Not Atomic
+
+**Status:** Open
+
+**Area:** CMP Enrollment / Wizard Orchestration
+
+### Problem
+
+Successful enrollment currently spans several writes: import certificate and
+public material, update the Device key reference, select the certificate in the
+wizard and clear pending rotation metadata. A later failure can leave a partially
+completed state.
+
+### Desired Direction
+
+Introduce an atomic orchestration boundary or compensating rollback/recovery for
+all enrollment-completion writes. Make retries idempotent and preserve enough
+lineage state to resume safely after process or node failure.
+
+### Priority
+
+High
+
+---
+
+## TD-015: Generic Wizard Errors Lose Context
+
+**Status:** Open
+
+**Area:** Provisioning Wizard Error Handling
+
+### Problem
+
+The generic `redirect_after({error, _Reason}) -> start_url()` path discards the
+current wizard context and hides actionable failure reasons. CSR plan actions now
+have contextual handling, but other wizard actions can still redirect to the
+start page without a visible explanation.
+
+### Desired Direction
+
+Adopt one wizard error boundary that preserves the draft id, renders a safe
+operator-facing error panel and logs the full server-side reason and stack. Avoid
+silent fallback redirects for domain or validation failures.
+
+### Priority
+
+Medium
+
+---
+
+## TD-016: Device CSR Plan Has Duplicate Command Representations
+
+**Status:** Open
+
+**Area:** Device CSR Script Generation
+
+### Problem
+
+A key/CSR plan still carries a compact `command` value while the wizard, copy and
+download flows use `ias_device_csr_command:script/1` as the real implementation.
+Maintaining two command generators risks security and behavior drift.
+
+### Desired Direction
+
+Keep a single source of truth for generated Device instructions. Remove the
+unused command representation or derive every representation from one structured
+plan and one renderer.
+
+### Priority
+
+Low
+
+---
+
+## TD-017: Client Certificate EKU Is Broader Than Required
+
+**Status:** Open
+
+**Area:** CA Certificate Profile
+
+### Problem
+
+The current local CA profile may issue a VPN client certificate containing both
+`clientAuth` and `serverAuth`. Device-bound OVPN validation correctly requires
+`clientAuth`, but the issued identity has more purpose than the client flow needs.
+
+### Desired Direction
+
+Introduce a dedicated VPN client issuance profile with only the required key
+usage and Extended Key Usage values. Keep CA-side profile selection explicit and
+record the selected profile in enrollment lineage.
+
+### Priority
+
+Medium
