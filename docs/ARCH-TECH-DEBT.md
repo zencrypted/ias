@@ -663,21 +663,22 @@ Medium
 
 ## TD-016: Device CSR Plan Has Duplicate Command Representations
 
-**Status:** Open
+**Status:** Partially Addressed
 
 **Area:** Device CSR Script Generation
 
 ### Problem
 
-A key/CSR plan still carries a compact `command` value while the wizard, copy and
-download flows use `ias_device_csr_command:script/1` as the real implementation.
-Maintaining two command generators risks security and behavior drift.
+A key/CSR plan still carries a legacy compact `command` value. The wizard now
+renders the shared VPN helper invocation from the structured plan and keeps
+`ias_device_csr_command:script/1` only as an explicit standalone fallback.
+The unused legacy `command` field still risks behavior drift.
 
 ### Desired Direction
 
-Keep a single source of truth for generated Device instructions. Remove the
-unused command representation or derive every representation from one structured
-plan and one renderer.
+Remove the unused legacy `command` field. Keep the structured plan as the single
+source of truth, with separate renderers only for the shared helper invocation
+and the documented standalone fallback.
 
 ### Priority
 

@@ -203,14 +203,21 @@ refreshing the page does not regenerate it, while an explicit regeneration
 action replaces it. Sanitized pending filenames and references may survive Demo
 State export/import, but no CSR or private-key body crosses that boundary.
 
-The downloadable Device script:
+The wizard now recommends the shared VPN-side `generate-device-csr.sh`
+helper. IAS renders a short invocation containing the exact common name, CSR
+filename and relative key reference from the stable enrollment plan. The helper
+path is operator-editable for the current Device, but changing that path does not
+change the plan or the future OVPN key reference.
 
-- creates the relative `keys/` directory when needed;
-- generates a fresh `secp384r1` private key for every enrollment;
-- refuses to overwrite an existing key or CSR;
-- sets private-key permissions to `0600`;
-- generates and verifies the CSR;
-- prints only resulting file paths, never private-key contents.
+The existing downloadable Device script remains available as an explicit
+fallback when the shared helper is not installed. Both representations:
+
+- create the relative `keys/` directory when needed;
+- generate a fresh `secp384r1` private key for every enrollment;
+- refuse to overwrite an existing key or CSR;
+- set private-key permissions to `0600`;
+- generate and verify the CSR;
+- print only resulting file paths, never private-key contents.
 
 Stage 25B adds device-bound OVPN bundle assembly. IAS assembles the public bundle
 on demand from a provisioning transaction, the current VPN Service endpoint, the

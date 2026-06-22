@@ -107,6 +107,25 @@ safe_device_csr_command_generation_test() ->
     ?assertMatch({_, _}, binary:match(Command, <<"-subj '/CN=laptop-one-">>)),
     ?assertMatch(<<"laptop-one-", _/binary>>, maps:get(common_name, Plan)).
 
+vpn_csr_helper_invocation_uses_stable_plan_test() ->
+    Device = csr_command_device(<<"Helper Laptop">>, <<"keys/client.key">>),
+    {ok, Plan} = ias_device_csr_command:generate(Device),
+    {ok, Invocation} = ias_device_csr_command:helper_invocation(
+        Plan, <<"~/vpn/generate-device-csr.sh">>),
+    ?assertMatch({_, _}, binary:match(Invocation, <<"~/vpn/generate-device-csr.sh">>)),
+    ?assertMatch({_, _}, binary:match(Invocation, <<"--common-name '">>)),
+    ?assertMatch({_, _}, binary:match(Invocation, maps:get(common_name, Plan))),
+    ?assertMatch({_, _}, binary:match(Invocation, maps:get(private_key_ref, Plan))),
+    ?assertMatch({_, _}, binary:match(Invocation, maps:get(csr_filename, Plan))),
+    ?assertEqual(nomatch, binary:match(Invocation, <<"ecparam">>)).
+
+vpn_csr_helper_invocation_rejects_shell_syntax_test() ->
+    Device = csr_command_device(<<"Helper Laptop">>, <<"keys/client.key">>),
+    {ok, Plan} = ias_device_csr_command:generate(Device),
+    ?assertEqual({error, invalid_csr_helper_command},
+                 ias_device_csr_command:helper_invocation(
+                     Plan, <<"./generate-device-csr.sh; rm -rf /">>)).
+
 device_csr_command_does_not_require_existing_key_ref_test() ->
     Device = maps:without([private_key_provider, private_key_ref],
                           csr_command_device(<<"Fresh Laptop">>, <<"old.key">>)),

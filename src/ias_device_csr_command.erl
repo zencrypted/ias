@@ -1,5 +1,5 @@
 -module(ias_device_csr_command).
--export([generate/1, script/1]).
+-export([generate/1, script/1, helper_invocation/2, default_helper_command/0]).
 
 generate(#{kind := device} = Device) ->
     case device_stem(Device) of
@@ -26,6 +26,25 @@ generate(#{kind := device} = Device) ->
     end;
 generate(_Device) ->
     {error, device_required}.
+
+
+default_helper_command() ->
+    <<"./generate-device-csr.sh">>.
+
+helper_invocation(#{key_filename := KeyRef,
+                    csr_filename := CsrFile,
+                    common_name := CommonName}, HelperCommand0) ->
+    case validate_helper_command(HelperCommand0) of
+        {ok, HelperCommand} ->
+            {ok, ias_html:join([
+                HelperCommand, <<" \\\n">>,
+                <<"  --common-name ">>, shell_quote(CommonName), <<" \\\n">>,
+                <<"  --key-file ">>, shell_quote(KeyRef), <<" \\\n">>,
+                <<"  --csr-file ">>, shell_quote(CsrFile)
+            ])};
+        {error, Reason} ->
+            {error, Reason}
+    end.
 
 script(#{key_filename := KeyRef,
          csr_filename := CsrFile,
@@ -135,3 +154,15 @@ shell_quote(Value) ->
     Text = ias_html:text(Value),
     Escaped = binary:replace(Text, <<"\'">>, <<"'\''">>, [global]),
     ias_html:join([<<"'">>, Escaped, <<"'">>]).
+
+
+validate_helper_command(undefined) ->
+    {ok, default_helper_command()};
+validate_helper_command(<<>>) ->
+    {ok, default_helper_command()};
+validate_helper_command(Value) ->
+    Command = ias_html:text(Value),
+    case re:run(Command, <<"^[A-Za-z0-9_./~-]+$">>, [{capture, none}]) of
+        match -> {ok, Command};
+        nomatch -> {error, invalid_csr_helper_command}
+    end.

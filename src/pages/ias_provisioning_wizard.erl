@@ -35,6 +35,8 @@ event({wizard_request_device_csr_certificate, WizardId}) ->
     end;
 event({wizard_download_device_csr_script, WizardId}) ->
     wizard_download_device_csr_script(WizardId);
+event({wizard_copy_device_csr_helper, WizardId}) ->
+    wizard_copy_device_csr_helper(WizardId);
 event({wizard_copy_device_csr_script, WizardId}) ->
     wizard_copy_device_csr_script(WizardId);
 event({wizard_prepare_device_csr_plan, WizardId}) ->
@@ -1147,13 +1149,15 @@ device_csr_prepare_panel(WizardId) ->
 
 device_csr_generation_plan_panel(WizardId, Plan) ->
     Script = ias_device_csr_command:script(Plan),
+    HelperCommand = ias_device_csr_command:default_helper_command(),
+    {ok, HelperInvocation} = ias_device_csr_command:helper_invocation(Plan, HelperCommand),
     CsrFile = maps:get(csr_filename, Plan),
     KeyRef = maps:get(private_key_ref, Plan),
     #panel{style = <<"margin:10px 0;padding:10px;border:1px solid rgba(15,23,42,0.12);border-radius:6px;background:#f8fafc;">>,
            body = [
                #h3{style = <<"margin-top:0;">>, body = ias_html:text("Generate New Device Key and CSR")},
                #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
-                  body = ias_html:text("Run this script on the selected Device. It generates a fresh private key and CSR, refuses to overwrite existing files, and verifies the CSR signature. Upload only the generated .csr file to IAS.")},
+                  body = ias_html:text("Run the VPN CSR helper on the selected Device. IAS supplies the exact common name and filenames from this stable enrollment plan. Upload only the generated .csr file to IAS.")},
                key_value_table([
                    {"Pending Private Key Reference", KeyRef},
                    {"CSR File", CsrFile}
@@ -1167,16 +1171,39 @@ device_csr_generation_plan_panel(WizardId, Plan) ->
                           value = KeyRef,
                           style = <<"width:100%;box-sizing:border-box;">>}
                ]},
+               #h3{style = <<"margin:14px 0 4px;font-size:14px;">>,
+                   body = ias_html:text("Recommended: VPN CSR Helper")},
+               #p{style = <<"font-size:12px;color:#64748b;line-height:1.45;margin:0 0 8px;">>,
+                  body = ias_html:text("Set the helper path for this Device. The path changes only the copied command; it does not change the enrollment plan or private-key reference.")},
+               #label{for = wizard_device_csr_helper_command,
+                      style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
+                      body = ias_html:text("CSR Helper Command")},
+               #input{id = wizard_device_csr_helper_command,
+                      type = <<"text">>,
+                      value = HelperCommand,
+                      style = <<"width:100%;box-sizing:border-box;">>},
+               #pre{id = wizard_device_csr_helper_invocation,
+                    style = <<"margin:8px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;">>,
+                    body = nitro_html_escape(HelperInvocation)},
+               #panel{style = <<"display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">>, body = [
+                   #link{class = [button, sgreen],
+                         postback = {wizard_copy_device_csr_helper, WizardId},
+                         body = ias_html:text("Copy Helper Command")}
+               ]},
+               #h3{style = <<"margin:16px 0 4px;font-size:14px;">>,
+                   body = ias_html:text("Fallback: Standalone Script")},
+               #p{style = <<"font-size:12px;color:#64748b;line-height:1.45;margin:0 0 8px;">>,
+                  body = ias_html:text("Use this self-contained script only when the VPN helper is not available on the Device.")},
                #pre{id = wizard_device_csr_command,
                     style = <<"margin:8px 0;font-family:monospace;font-size:12px;white-space:pre-wrap;overflow-wrap:anywhere;">>,
                     body = nitro_html_escape(Script)},
                #panel{style = <<"display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">>,
                       body = [
-                          #link{class = [button, sgreen],
+                          #link{class = [button, more],
                                 postback = {wizard_copy_device_csr_script, WizardId},
-                                body = ias_html:text("Copy Script")},
-                          #link{class = [button, sgreen],
-                                body = ias_html:text("Download Key and CSR Script"),
+                                body = ias_html:text("Copy Standalone Script")},
+                          #link{class = [button, more],
+                                body = ias_html:text("Download Standalone Script"),
                                 postback = {wizard_download_device_csr_script, WizardId}},
                           #link{class = [button, more],
                                 body = ias_html:text("Generate Another Key and CSR Plan"),
@@ -1513,6 +1540,8 @@ device_csr_error_text(unsafe_subject) ->
     <<"CSR subject is missing or contains unsafe characters.">>;
 device_csr_error_text(unsafe_device_metadata) ->
     <<"Selected Device metadata contains unsafe characters for CSR script generation. Rename the Device before generating a key and CSR script.">>;
+device_csr_error_text(invalid_csr_helper_command) ->
+    <<"CSR helper command must be a single path using only letters, digits, dot, slash, underscore, tilde or dash.">>;
 device_csr_error_text(certificate_csr_public_key_mismatch) ->
     <<"Issued certificate public key does not match the submitted CSR.">>;
 device_csr_error_text(private_key_reference_required) ->
@@ -2138,6 +2167,28 @@ wizard_download_device_csr_script(WizardId) ->
                     Filename = maps:get(script_filename, Plan),
                     nitro:wire(wizard_download_js(
                         Filename, Script, <<"text/x-shellscript">>));
+                not_found ->
+                    nitro:update(wizard_feedback, wizard_error(private_key_reference_required));
+                {error, Reason} ->
+                    nitro:update(wizard_feedback, wizard_error(device_csr_error_text(Reason)))
+            end;
+        not_found ->
+            nitro:update(wizard_feedback, wizard_error(not_found))
+    end.
+
+wizard_copy_device_csr_helper(WizardId) ->
+    case ias_provisioning_wizard_store:get(WizardId) of
+        {ok, Draft} ->
+            case pending_device_csr_plan(Draft) of
+                {ok, Plan} ->
+                    HelperCommand = nitro:q(wizard_device_csr_helper_command),
+                    case ias_device_csr_command:helper_invocation(Plan, HelperCommand) of
+                        {ok, Invocation} ->
+                            nitro:wire(copy_device_csr_command_js(Invocation));
+                        {error, Reason} ->
+                            nitro:update(wizard_feedback,
+                                         wizard_error(device_csr_error_text(Reason)))
+                    end;
                 not_found ->
                     nitro:update(wizard_feedback, wizard_error(private_key_reference_required));
                 {error, Reason} ->
