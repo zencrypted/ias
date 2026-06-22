@@ -131,7 +131,11 @@ configured_ca_auto_selects_and_advances_wizard_test() ->
             {ok, Advanced} = ias_provisioning_wizard_store:select_existing_ca_certificate(
                 maps:get(id, CaStep), maps:get(id, Certificate)),
             ?assertEqual(maps:get(id, Certificate), maps:get(ca_certificate_id, Advanced)),
-            ?assertEqual(client_certificate, maps:get(current_step, Advanced))
+            ?assertEqual(client_certificate, maps:get(current_step, Advanced)),
+            Html = iolist_to_binary(nitro:render(
+                ias_provisioning_wizard:content_for({draft, Advanced}))),
+            ?assertMatch({_, _}, binary:match(Html, <<"Request Certificate from CA using Device CSR">>)),
+            ?assertEqual(nomatch, binary:match(Html, <<"Loading live device-bound provisioning wizard">>))
         end)
     end).
 

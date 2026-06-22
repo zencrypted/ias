@@ -25,6 +25,8 @@
          select_client_certificate/2,
          select_existing_client_certificate/2,
          selected_client_certificate/1,
+         prepare_device_csr_plan/1,
+         regenerate_device_csr_plan/1,
          relationship_review/1,
          apply_relationships/1,
          relationships_ready/1,
@@ -290,6 +292,36 @@ selected_client_certificate(Draft) when is_map(Draft) ->
                     end;
                 Error -> Error
             end
+    end.
+
+prepare_device_csr_plan(Id) ->
+    prepare_or_replace_device_csr_plan(Id).
+
+regenerate_device_csr_plan(Id) ->
+    prepare_or_replace_device_csr_plan(Id).
+
+prepare_or_replace_device_csr_plan(Id) ->
+    case get(Id) of
+        {ok, Draft} ->
+            case selected_device(Draft) of
+                {ok, Device} ->
+                    case ias_device_csr_command:generate(Device) of
+                        {ok, Plan} ->
+                            update(Id, #{
+                                pending_private_key_reference => maps:get(private_key_ref, Plan),
+                                pending_csr_filename => maps:get(csr_filename, Plan),
+                                pending_enrollment_common_name => maps:get(common_name, Plan)
+                            });
+                        {error, Reason} ->
+                            {error, Reason}
+                    end;
+                not_selected ->
+                    {error, device_required};
+                {error, _Reason} ->
+                    {error, selected_device_missing}
+            end;
+        not_found ->
+            {error, not_found}
     end.
 
 relationship_review(Draft) when is_map(Draft) ->

@@ -36,6 +36,10 @@ event({wizard_request_device_csr_certificate, WizardId}) ->
     end;
 event({wizard_download_device_csr_script, WizardId}) ->
     wizard_download_device_csr_script(WizardId);
+event({wizard_prepare_device_csr_plan, WizardId}) ->
+    redirect_after(ias_provisioning_wizard_store:prepare_device_csr_plan(WizardId));
+event({wizard_regenerate_device_csr_plan, WizardId}) ->
+    redirect_after(ias_provisioning_wizard_store:regenerate_device_csr_plan(WizardId));
 event({wizard_apply_relationships, WizardId}) ->
     case ias_provisioning_wizard_store:apply_relationships(WizardId) of
         {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
@@ -144,18 +148,10 @@ content() ->
             content_for(start);
         WizardId ->
             case ias_provisioning_wizard_store:get(WizardId) of
-                {ok, Draft} -> content_for({draft, prepared_draft(WizardId, Draft)});
+                {ok, Draft} -> content_for({draft, Draft});
                 not_found -> content_for({error, WizardId})
             end
     end.
-
-prepared_draft(WizardId, #{current_step := material_readiness} = Draft) ->
-    case ias_provisioning_wizard_store:remediate_readiness(WizardId) of
-        {ok, Updated} -> Updated;
-        {error, _Reason} -> Draft
-    end;
-prepared_draft(_WizardId, Draft) ->
-    Draft.
 
 content_for(start) ->
     page([
@@ -1023,7 +1019,7 @@ request_certificate_with_device_csr_panel(Draft) ->
         #h3{body = ias_html:text("Request Certificate from CA using Device CSR")},
         #p{style = <<"font-size:12px;color:#64748b;line-height:1.45;">>,
            body = ias_html:text("Generate a new key pair and CSR on the Device for each new enrollment. IAS receives only the CSR; the private key never leaves the Device. Existing Device keys must not be reused for new enrollment. Old keys and certificates are not deleted automatically.")},
-        device_csr_generation_panel(Draft),
+        safe_device_csr_generation_panel(Draft),
         #panel{style = <<"margin:8px 0;">>, body = [
             #label{for = wizard_device_csr_file,
                    style = <<"display:block;font-weight:600;color:#334155;margin-bottom:4px;">>,
@@ -1054,28 +1050,62 @@ request_certificate_with_device_csr_panel(Draft) ->
         ]}
     ]}.
 
+safe_device_csr_generation_panel(Draft) ->
+    try device_csr_generation_panel(Draft)
+    catch
+        Class:Reason:Stack ->
+            error_logger:error_msg("Provisioning wizard CSR render failed: ~p:~p~n~p~n",
+                                   [Class, Reason, Stack]),
+            wizard_error_panel("Device CSR generation panel is unavailable. The wizard draft was preserved; retry the step or regenerate the plan.")
+    end.
+
 device_csr_generation_panel(Draft) ->
     case ias_provisioning_wizard_store:selected_device(Draft) of
-        {ok, Device} ->
-            case ias_device_csr_command:generate(Device) of
+        {ok, _Device} ->
+            case pending_device_csr_plan(Draft) of
                 {ok, Plan} ->
-                    StoredPlan = store_pending_device_csr_plan(Draft, Plan),
-                    device_csr_generation_plan_panel(maps:get(id, Draft), StoredPlan);
+                    device_csr_generation_plan_panel(maps:get(id, Draft), Plan);
+                not_found ->
+                    device_csr_prepare_panel(maps:get(id, Draft));
                 {error, Reason} ->
-                    wizard_error_panel(Reason)
+                    wizard_error_panel(device_csr_error_text(Reason))
             end;
         _ ->
             wizard_error_panel("Select a Device before generating a Device CSR command.")
     end.
 
-store_pending_device_csr_plan(Draft, Plan) ->
-    Updates = #{pending_private_key_reference => maps:get(private_key_ref, Plan),
-                pending_csr_filename => maps:get(csr_filename, Plan),
-                pending_enrollment_common_name => maps:get(common_name, Plan)},
-    case ias_provisioning_wizard_store:update(maps:get(id, Draft), Updates) of
-        {ok, _Updated} -> Plan;
-        {error, _Reason} -> Plan
+pending_device_csr_plan(Draft) ->
+    case {maps:get(pending_private_key_reference, Draft, undefined),
+          maps:get(pending_csr_filename, Draft, undefined),
+          maps:get(pending_enrollment_common_name, Draft, undefined)} of
+        {undefined, _, _} -> not_found;
+        {<<>>, _, _} -> not_found;
+        {KeyRef, CsrFile, CommonName} ->
+            case ias_device_key_ref:validate(<<"device_file">>, KeyRef) of
+                {ok, #{private_key_ref := SafeKeyRef}} ->
+                    {ok, #{private_key_provider => <<"device_file">>,
+                           private_key_ref => SafeKeyRef,
+                           key_filename => SafeKeyRef,
+                           csr_filename => ias_html:text(CsrFile),
+                           common_name => ias_html:text(CommonName),
+                           script_filename => ias_html:join([
+                               ias_html:text(CommonName), <<"-generate-csr.sh">>])}};
+                {error, Reason} ->
+                    {error, {invalid_private_key_reference, Reason}}
+            end
     end.
+
+device_csr_prepare_panel(WizardId) ->
+    #panel{style = <<"margin:10px 0;padding:10px;border:1px solid rgba(15,23,42,0.12);border-radius:6px;background:#f8fafc;">>,
+           body = [
+               #h3{style = <<"margin-top:0;">>,
+                   body = ias_html:text("Generate New Device Key and CSR")},
+               #p{style = <<"font-size:12px;color:#475569;line-height:1.45;">>,
+                  body = ias_html:text("No key rotation plan exists yet. Prepare one explicitly to create stable filenames and a relative Device private-key reference. Refreshing this page will not generate or change a plan.")},
+               #link{class = [button, sgreen],
+                     body = ias_html:text("Prepare New Device Key and CSR"),
+                     postback = {wizard_prepare_device_csr_plan, WizardId}}
+           ]}.
 
 device_csr_generation_plan_panel(WizardId, Plan) ->
     Script = ias_device_csr_command:script(Plan),
@@ -1109,7 +1139,10 @@ device_csr_generation_plan_panel(WizardId, Plan) ->
                                 body = ias_html:text("Copy Script")},
                           #link{class = [button, sgreen],
                                 body = ias_html:text("Download Key and CSR Script"),
-                                postback = {wizard_download_device_csr_script, WizardId}}
+                                postback = {wizard_download_device_csr_script, WizardId}},
+                          #link{class = [button, more],
+                                body = ias_html:text("Generate Another Key and CSR Plan"),
+                                postback = {wizard_regenerate_device_csr_plan, WizardId}}
                       ]}
            ]}.
 
@@ -2062,19 +2095,16 @@ wizard_download_device_bound_ovpn({error, Reason}) ->
 wizard_download_device_csr_script(WizardId) ->
     case ias_provisioning_wizard_store:get(WizardId) of
         {ok, Draft} ->
-            case ias_provisioning_wizard_store:selected_device(Draft) of
-                {ok, Device} ->
-                    case ias_device_csr_command:generate(Device) of
-                        {ok, Plan} ->
-                            Script = ias_device_csr_command:script(Plan),
-                            Filename = maps:get(script_filename, Plan),
-                            nitro:wire(wizard_download_js(
-                                Filename, Script, <<"text/x-shellscript">>));
-                        {error, Reason} ->
-                            nitro:update(wizard_feedback, wizard_error(Reason))
-                    end;
-                _ ->
-                    nitro:update(wizard_feedback, wizard_error(device_required))
+            case pending_device_csr_plan(Draft) of
+                {ok, Plan} ->
+                    Script = ias_device_csr_command:script(Plan),
+                    Filename = maps:get(script_filename, Plan),
+                    nitro:wire(wizard_download_js(
+                        Filename, Script, <<"text/x-shellscript">>));
+                not_found ->
+                    nitro:update(wizard_feedback, wizard_error(private_key_reference_required));
+                {error, Reason} ->
+                    nitro:update(wizard_feedback, wizard_error(device_csr_error_text(Reason)))
             end;
         not_found ->
             nitro:update(wizard_feedback, wizard_error(not_found))
