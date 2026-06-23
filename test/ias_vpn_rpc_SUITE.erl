@@ -315,18 +315,34 @@ vpn_process_loop(Port, Log, OsPid) ->
     end.
 
 terminate_stale_vpn_ct_processes() ->
+    %% Match actual BEAM processes by the executable column. This avoids
+    %% depending on argument order and avoids matching the cleanup shell itself.
     FindPids =
-        "pgrep -f '[b]eam\.smp.*vpn_ct@127\.0\.0\.1' 2>/dev/null || true",
+        "ps -eo pid=,comm=,args= | "
+        "awk '$2 == \"beam.smp\" && index($0, \"vpn_ct@127.0.0.1\") {print $1}'",
+    TestUdpPorts = "5556/udp 5560/udp 5561/udp",
     Command =
         "for pid in $(" ++ FindPids ++ "); do "
         "kill -TERM $pid 2>/dev/null || true; "
         "done; "
+        "if command -v fuser >/dev/null 2>&1; then "
+        "fuser -k -TERM " ++ TestUdpPorts ++ " >/dev/null 2>&1 || true; "
+        "fi; "
         "sleep 1; "
         "for pid in $(" ++ FindPids ++ "); do "
         "kill -KILL $pid 2>/dev/null || true; "
-        "done",
-    case run_command(Command, 5000) of
+        "done; "
+        "if command -v fuser >/dev/null 2>&1; then "
+        "fuser -k -KILL " ++ TestUdpPorts ++ " >/dev/null 2>&1 || true; "
+        "sleep 1; "
+        "for port in " ++ TestUdpPorts ++ "; do "
+        "fuser -s $port && exit 23 || true; "
+        "done; "
+        "fi",
+    case run_command(Command, 7000) of
         {ok, _Output} -> ok;
+        {error, 23, Output} ->
+            ct:fail({stale_vpn_ct_ports_still_in_use, TestUdpPorts, Output});
         {error, Status, Output} ->
             ct:fail({stale_vpn_ct_cleanup_failed, Status, Output})
     end.
