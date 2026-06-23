@@ -315,15 +315,16 @@ vpn_process_loop(Port, Log, OsPid) ->
     end.
 
 terminate_stale_vpn_ct_processes() ->
+    FindPids =
+        "ps -eo pid=,args= | "
+        "awk '$0 ~ /beam\.smp/ && $0 ~ /vpn_ct@127\.0\.0\.1/ {print $1}'",
     Command =
-        "for pid in $(pgrep -f 'vpn_ct@127\.0\.0\.1' 2>/dev/null || true); do "
-        "cmd=$(tr '\000' ' ' </proc/$pid/cmdline 2>/dev/null || true); "
-        "case \"$cmd\" in *beam.smp*) kill -TERM $pid 2>/dev/null || true;; esac; "
+        "for pid in $(" ++ FindPids ++ "); do "
+        "kill -TERM $pid 2>/dev/null || true; "
         "done; "
         "sleep 1; "
-        "for pid in $(pgrep -f 'vpn_ct@127\.0\.0\.1' 2>/dev/null || true); do "
-        "cmd=$(tr '\000' ' ' </proc/$pid/cmdline 2>/dev/null || true); "
-        "case \"$cmd\" in *beam.smp*) kill -KILL $pid 2>/dev/null || true;; esac; "
+        "for pid in $(" ++ FindPids ++ "); do "
+        "kill -KILL $pid 2>/dev/null || true; "
         "done",
     case run_command(Command, 5000) of
         {ok, _Output} -> ok;
