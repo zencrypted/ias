@@ -591,13 +591,12 @@ previous_epoch_expires_after_grace_window(Config) ->
                                   5000),
     ?assertEqual(StaleBefore, maps:get(stale_epoch_drops, StatsDuringGrace, 0)),
 
-    {ok, ExpiredState} =
-        wait_for_previous_epoch_expiry(VpnNode,
-                                       peer_b,
-                                       GraceRemaining + 3000),
-    ?assertEqual(undefined, maps:get(previous_epoch, ExpiredState)),
-    ?assertEqual(undefined,
-                 maps:get(previous_epoch_expires_in_ms, ExpiredState)),
+    %% The previous epoch can remain visible in a debug snapshot until the
+    %% next frame is evaluated, and automatic rekeys may replace it with a
+    %% newer previous epoch.  The security contract is therefore tested at
+    %% the dataplane boundary: wait past the advertised grace period and
+    %% require the captured epoch to be rejected as stale.
+    timer:sleep(GraceRemaining + 500),
 
     {ok, StatsBeforeExpiredReplay} = peer_link_stats(VpnNode, peer_b),
     StaleBeforeExpiredReplay =
@@ -642,37 +641,6 @@ peer_link_stats(VpnNode, PeerId) ->
     end.
 
 
-wait_for_previous_epoch_expiry(VpnNode, PeerId, TimeoutMs) ->
-    wait_for_previous_epoch_expiry(VpnNode,
-                                   PeerId,
-                                   TimeoutMs,
-                                   erlang:monotonic_time(millisecond),
-                                   not_started).
-
-wait_for_previous_epoch_expiry(VpnNode, PeerId, TimeoutMs, StartedAt, LastResult) ->
-    Result = rpc:call(VpnNode,
-                      vpn_manager,
-                      debug_session_state,
-                      [PeerId],
-                      ?RPC_TIMEOUT_MS),
-    case Result of
-        {ok, #{previous_epoch := undefined} = SessionState} ->
-            {ok, SessionState};
-        _ ->
-            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
-            case Elapsed >= TimeoutMs of
-                true ->
-                    ct:fail({vpn_previous_epoch_not_expired, PeerId, LastResult, Result});
-                false ->
-                    timer:sleep(100),
-                    wait_for_previous_epoch_expiry(VpnNode,
-                                                   PeerId,
-                                                   TimeoutMs,
-                                                   StartedAt,
-                                                   Result)
-            end
-    end.
-
 wait_for_stale_epoch_rejection(VpnNode,
                                PeerId,
                                ExpectedStaleDrops,
@@ -692,7 +660,7 @@ wait_for_stale_epoch_rejection(VpnNode,
                                ExpectedRejected,
                                TimeoutMs,
                                StartedAt,
-                               LastResult) ->
+                               _LastResult) ->
     Result = peer_link_stats(VpnNode, PeerId),
     case Result of
         {ok, Stats} ->
