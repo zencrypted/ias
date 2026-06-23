@@ -404,11 +404,7 @@ dataplane_recovers_after_peer_restart(Config) ->
                             debug_restart_peer,
                             [client_a],
                             ?RPC_TIMEOUT_MS),
-    {ok, NewPid} = rpc:call(VpnNode,
-                            vpn_manager,
-                            debug_wait_for_peer_restart,
-                            [client_a, OldPid, 5000],
-                            7000),
+    {ok, NewPid} = wait_for_peer_restart(VpnNode, client_a, OldPid, 5000),
     ?assert(OldPid =/= NewPid),
     ?assertEqual(true,
                  rpc:call(VpnNode, erlang, is_process_alive, [NewPid], ?RPC_TIMEOUT_MS)),
@@ -465,6 +461,39 @@ deliver_upsert_after_runtime_revision(VpnNode, DeviceId, PeerId) ->
     Command = Command0#{revision => RuntimeRevision + 1},
     ias_vpn_provisioning_delivery:deliver(Command).
 
+
+wait_for_peer_restart(VpnNode, PeerId, OldPid, TimeoutMs) ->
+    wait_for_peer_restart(VpnNode,
+                          PeerId,
+                          OldPid,
+                          TimeoutMs,
+                          erlang:monotonic_time(millisecond),
+                          not_started).
+
+wait_for_peer_restart(VpnNode, PeerId, OldPid, TimeoutMs, StartedAt, LastResult) ->
+    Result = rpc:call(VpnNode,
+                      vpn_manager,
+                      debug_peer_pid,
+                      [PeerId],
+                      ?RPC_TIMEOUT_MS),
+    case Result of
+        {ok, NewPid} when is_pid(NewPid), NewPid =/= OldPid ->
+            {ok, NewPid};
+        _ ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= TimeoutMs of
+                true ->
+                    ct:fail({vpn_peer_not_restarted, PeerId, LastResult, Result});
+                false ->
+                    timer:sleep(100),
+                    wait_for_peer_restart(VpnNode,
+                                          PeerId,
+                                          OldPid,
+                                          TimeoutMs,
+                                          StartedAt,
+                                          Result)
+            end
+    end.
 
 wait_for_session_established(VpnNode, PeerId, TimeoutMs) ->
     wait_for_session_established(VpnNode,
