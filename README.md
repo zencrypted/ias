@@ -112,3 +112,41 @@ IAS орієнтований на адміністраторів, операто
 
 * Максим Сохацький
 * Юрій Масловський
+
+## IAS to VPN Common Test
+
+The IAS repository contains an opt-in Common Test suite that starts a real VPN
+node from a separate checkout and verifies the revisioned IAS provisioning
+lifecycle over distributed Erlang RPC.
+
+By default, the suite expects the repositories to be siblings:
+
+```text
+../ias
+../vpn
+```
+
+The VPN checkout can be selected explicitly with `VPN_REPO`:
+
+```bash
+VPN_REPO=/absolute/path/to/vpn \
+  rebar3 ct --suite test/ias_vpn_rpc_SUITE
+```
+
+The suite prepares the VPN debug OVPN identity, compiles the VPN debug profile,
+starts `vpn_ct@127.0.0.1`, and verifies:
+
+- the initial upsert is applied and starts the peer;
+- the repeated revision is unchanged;
+- disable stops the peer;
+- enable starts it again;
+- revoke stops and locks the peer;
+- enable after revoke is rejected;
+- the IAS and runtime certificate fingerprints match;
+- the IAS delivery history does not contain private key, OVPN, session-key, or
+  ECDH material.
+
+The test uses the fixed debug TUN interfaces and UDP ports from the VPN debug
+configuration. Stop any manually running `vpn@127.0.0.1` node before running
+the suite. The VPN process log is written under
+`_build/test/logs/ias_vpn_rpc/vpn.log`.
