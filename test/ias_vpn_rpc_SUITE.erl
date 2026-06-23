@@ -9,7 +9,8 @@
          provisioning_lifecycle/1,
          provisioning_identity_and_revision_guards/1,
          provisioned_peer_transfers_dataplane_payload/1,
-         dataplane_survives_authenticated_rekey/1]).
+         dataplane_survives_authenticated_rekey/1,
+         dataplane_recovers_after_peer_restart/1]).
 
 -define(VPN_NODE, 'vpn_ct@127.0.0.1').
 -define(COOKIE, ias_vpn_ct_cookie).
@@ -20,7 +21,8 @@ all() ->
     [provisioning_lifecycle,
      provisioning_identity_and_revision_guards,
      provisioned_peer_transfers_dataplane_payload,
-     dataplane_survives_authenticated_rekey].
+     dataplane_survives_authenticated_rekey,
+     dataplane_recovers_after_peer_restart].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -352,6 +354,103 @@ dataplane_survives_authenticated_rekey(Config) ->
     ?assertEqual(1, length(AfterMatches)),
     ok.
 
+
+dataplane_recovers_after_peer_restart(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_restart_">>),
+    BeforePayload = <<"ias-vpn-before-peer-restart">>,
+    AfterPayload = <<"ias-vpn-after-peer-restart">>,
+
+    ok = reset_ias_state(),
+    allow = prepare_authorized_peer(DeviceId, client_a, ActualFingerprint),
+    {ok, UpsertDelivery} =
+        deliver_upsert_after_runtime_revision(VpnNode,
+                                              DeviceId,
+                                              client_a),
+    ?assertEqual(applied, maps:get(delivery_status, UpsertDelivery)),
+    timer:sleep(500),
+    ?assert(lists:member(client_a, running_peers(VpnNode))),
+
+    {ok, RegistryBeforeRestart} = rpc:call(VpnNode,
+                                           vpn_peer_registry,
+                                           get,
+                                           [client_a],
+                                           ?RPC_TIMEOUT_MS),
+    RevisionBeforeRestart = maps:get(revision, RegistryBeforeRestart),
+    DeliveryHistoryBeforeRestart = ias_vpn_provisioning_delivery:history(DeviceId),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_clear_received_payloads,
+                  [peer_b],
+                  ?RPC_TIMEOUT_MS),
+    {ok, _SentBeforeRestart} = rpc:call(VpnNode,
+                                        vpn_manager,
+                                        debug_send_payload,
+                                        [client_a, BeforePayload],
+                                        ?RPC_TIMEOUT_MS),
+    {ok, _ReceivedBeforeRestart} =
+        wait_for_received_payload(VpnNode, peer_b, BeforePayload, 5000),
+
+    {ok, OldPid} = rpc:call(VpnNode,
+                            vpn_manager,
+                            debug_peer_pid,
+                            [client_a],
+                            ?RPC_TIMEOUT_MS),
+    {ok, OldPid} = rpc:call(VpnNode,
+                            vpn_manager,
+                            debug_restart_peer,
+                            [client_a],
+                            ?RPC_TIMEOUT_MS),
+    {ok, NewPid} = rpc:call(VpnNode,
+                            vpn_manager,
+                            debug_wait_for_peer_restart,
+                            [client_a, OldPid, 5000],
+                            7000),
+    ?assert(OldPid =/= NewPid),
+    ?assertEqual(true,
+                 rpc:call(VpnNode, erlang, is_process_alive, [NewPid], ?RPC_TIMEOUT_MS)),
+
+    {ok, ClientRecoveredState} =
+        wait_for_session_established(VpnNode, client_a, 5000),
+    {ok, PeerRecoveredState} =
+        wait_for_session_established(VpnNode, peer_b, 5000),
+    ?assertEqual(established, maps:get(handshake_status, ClientRecoveredState)),
+    ?assertEqual(established, maps:get(handshake_status, PeerRecoveredState)),
+
+    {ok, _SentAfterRestart} = rpc:call(VpnNode,
+                                       vpn_manager,
+                                       debug_send_payload,
+                                       [client_a, AfterPayload],
+                                       ?RPC_TIMEOUT_MS),
+    {ok, ReceivedAfterRestart} =
+        wait_for_received_payload(VpnNode, peer_b, AfterPayload, 5000),
+    ?assertEqual(AfterPayload, maps:get(payload, ReceivedAfterRestart)),
+
+    {ok, RegistryAfterRestart} = rpc:call(VpnNode,
+                                          vpn_peer_registry,
+                                          get,
+                                          [client_a],
+                                          ?RPC_TIMEOUT_MS),
+    ?assertEqual(RevisionBeforeRestart, maps:get(revision, RegistryAfterRestart)),
+    ?assertEqual(DeliveryHistoryBeforeRestart,
+                 ias_vpn_provisioning_delivery:history(DeviceId)),
+
+    {ok, ReceivedHistory} = rpc:call(VpnNode,
+                                     vpn_manager,
+                                     debug_received_payloads,
+                                     [peer_b],
+                                     ?RPC_TIMEOUT_MS),
+    BeforeMatches = [Entry || Entry <- ReceivedHistory,
+                              maps:get(payload, Entry, undefined) =:= BeforePayload],
+    AfterMatches = [Entry || Entry <- ReceivedHistory,
+                             maps:get(payload, Entry, undefined) =:= AfterPayload],
+    ?assertEqual(1, length(BeforeMatches)),
+    ?assertEqual(1, length(AfterMatches)),
+    ok.
+
 deliver_upsert_after_runtime_revision(VpnNode, DeviceId, PeerId) ->
     {ok, Command0} = ias_vpn_provisioning_command:build(DeviceId, upsert),
     RuntimeRevision =
@@ -365,6 +464,35 @@ deliver_upsert_after_runtime_revision(VpnNode, DeviceId, PeerId) ->
         end,
     Command = Command0#{revision => RuntimeRevision + 1},
     ias_vpn_provisioning_delivery:deliver(Command).
+
+
+wait_for_session_established(VpnNode, PeerId, TimeoutMs) ->
+    wait_for_session_established(VpnNode,
+                                 PeerId,
+                                 TimeoutMs,
+                                 erlang:monotonic_time(millisecond)).
+
+wait_for_session_established(VpnNode, PeerId, TimeoutMs, StartedAt) ->
+    case rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_session_state,
+                  [PeerId],
+                  ?RPC_TIMEOUT_MS) of
+        {ok, #{handshake_status := established} = SessionState} ->
+            {ok, SessionState};
+        LastResult ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= TimeoutMs of
+                true ->
+                    ct:fail({vpn_session_not_reestablished, PeerId, LastResult});
+                false ->
+                    timer:sleep(100),
+                    wait_for_session_established(VpnNode,
+                                                 PeerId,
+                                                 TimeoutMs,
+                                                 StartedAt)
+            end
+    end.
 
 wait_for_received_payload(VpnNode, PeerId, Payload, TimeoutMs) ->
     wait_for_received_payload(VpnNode,
@@ -695,7 +823,10 @@ wait_for_vpn_ready(Node, Process, Monitor, TimeoutMs, StartedAt, LastReason) ->
 
 vpn_test_api_ready(Node) ->
     RequiredExports = [{debug_session_state, 1},
-                       {debug_wait_for_epoch, 3}],
+                       {debug_wait_for_epoch, 3},
+                       {debug_peer_pid, 1},
+                       {debug_restart_peer, 1},
+                       {debug_wait_for_peer_restart, 3}],
     case rpc:call(Node,
                   vpn_manager,
                   module_info,

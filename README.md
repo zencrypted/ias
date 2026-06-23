@@ -152,6 +152,9 @@ without invoking a second `rebar3` build, and verifies:
   and duplicate-count assertions;
 - authenticated rekey advances both peers to the next key epoch while dataplane
   payload delivery continues before and after the key transition;
+- a supervised `client_a` peer restart produces a new process, re-establishes
+  the authenticated session, preserves the provisioning revision, and restores
+  dataplane payload delivery without another IAS provisioning command;
 - rejected guard checks are retained in the IAS delivery history;
 - the IAS delivery history does not contain private key, OVPN, session-key, or
   ECDH material.
