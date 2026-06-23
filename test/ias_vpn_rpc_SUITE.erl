@@ -547,14 +547,28 @@ vpn_ebin_paths(VpnRepo) ->
         filename:join([VpnRepo, "_build", "default", "lib", "*", "ebin"]),
         filename:join([VpnRepo, "_build", "default", "deps", "*", "ebin"])
     ],
-    Paths = lists:usort(lists:append([filelib:wildcard(Pattern) || Pattern <- Patterns])),
+    Paths = unique_paths(lists:append([filelib:wildcard(Pattern) || Pattern <- Patterns])),
     case Paths of
         [] -> erlang:error({vpn_code_path_not_found, Patterns});
         _ -> Paths
     end.
 
+unique_paths(Paths) ->
+    lists:reverse(
+      lists:foldl(fun(Path, Acc) ->
+                          case lists:member(Path, Acc) of
+                              true -> Acc;
+                              false -> [Path | Acc]
+                          end
+                  end,
+                  [],
+                  Paths)).
+
 code_path_args(Paths) ->
-    lists:append([["-pa", Path] || Path <- Paths]).
+    %% erl processes repeated -pa options by prepending each path. Pass lower
+    %% priority fallback profiles first so the freshly compiled debug profile
+    %% remains ahead of any stale default-profile beams.
+    lists:append([["-pa", Path] || Path <- lists:reverse(Paths)]).
 
 vpn_start_expression() ->
     "case application:ensure_all_started(vpn) of "
@@ -648,7 +662,7 @@ wait_for_vpn_ready(Node, Process, Monitor, TimeoutMs, StartedAt, LastReason) ->
                                           ?RPC_TIMEOUT_MS) of
                                 Apps when is_list(Apps) ->
                                     case lists:keymember(vpn, 1, Apps) of
-                                        true -> ok;
+                                        true -> vpn_test_api_ready(Node);
                                         false -> {error, vpn_application_not_started}
                                     end;
                                 {badrpc, AppProbeReason} ->
@@ -676,6 +690,26 @@ wait_for_vpn_ready(Node, Process, Monitor, TimeoutMs, StartedAt, LastReason) ->
                                            ReadyReason)
                     end
             end
+    end.
+
+
+vpn_test_api_ready(Node) ->
+    RequiredExports = [{debug_session_state, 1},
+                       {debug_wait_for_epoch, 3}],
+    case rpc:call(Node,
+                  vpn_manager,
+                  module_info,
+                  [exports],
+                  ?RPC_TIMEOUT_MS) of
+        Exports when is_list(Exports) ->
+            Missing = [Export || Export <- RequiredExports,
+                                 not lists:member(Export, Exports)],
+            case Missing of
+                [] -> ok;
+                _ -> {error, {vpn_test_api_missing, Missing}}
+            end;
+        {badrpc, Reason} ->
+            {error, {vpn_test_api_probe_failed, Reason}}
     end.
 
 wait_for_node_down(Node, TimeoutMs) ->
