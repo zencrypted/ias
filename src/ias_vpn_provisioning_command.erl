@@ -98,7 +98,9 @@ authorization_reason(Decision, _Operation) ->
 normalize_reason(Reason) when is_atom(Reason) -> Reason;
 normalize_reason(Reason) ->
     Text = ias_html:text(Reason),
-    binary:replace(binary:lowercase(Text), <<" ">>, <<"_">>, [global]).
+    Lowercase = unicode:characters_to_binary(
+                  string:lowercase(unicode:characters_to_list(Text))),
+    binary:replace(Lowercase, <<" ">>, <<"_">>, [global]).
 
 certificate_fingerprint({ok, Certificate}) ->
     first_present([maps:get(fingerprint_sha256, Certificate, undefined),

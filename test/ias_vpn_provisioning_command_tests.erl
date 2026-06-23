@@ -70,6 +70,26 @@ summary_is_sanitized_test_() ->
           ?_assertEqual(false, maps:is_key(private_key, Summary))]
      end}.
 
+normalizes_binary_authorization_reason_test_() ->
+    {setup,
+     fun() ->
+         ias_demo_store:clear(),
+         ias_vpn_provisioning_state:reset(),
+         ias_demo_store:add_device(#{id => <<"vpn_unverified_device">>,
+                                     source => manual_device})
+     end,
+     fun(_Device) ->
+         ias_demo_store:clear(),
+         ias_vpn_provisioning_state:reset()
+     end,
+     fun(Device) ->
+         {ok, Command} = ias_vpn_provisioning_command:build(
+                           maps:get(id, Device), disable),
+         Desired = maps:get(desired_state, Command),
+         Reason = maps:get(authorization_reason, Desired),
+         [?_assertEqual(<<"certificate_not_verified">>, Reason)]
+     end}.
+
 setup() ->
     ias_demo_store:clear(),
     ias_vpn_provisioning_state:reset(),
