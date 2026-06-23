@@ -23,11 +23,12 @@ init_per_suite(Config) ->
     VpnRepo = vpn_repo(Config),
     ok = validate_vpn_repo(VpnRepo),
     ok = ensure_no_conflicting_vpn_node(),
+    ok = ensure_vpn_test_ports_available(),
     LogPath = filename:join([cwd(), "_build", "test", "logs", "ias_vpn_rpc", "vpn.log"]),
     ok = filelib:ensure_dir(LogPath),
     ok = prepare_vpn(VpnRepo),
     {ok, VpnProcess} = start_vpn(VpnRepo, LogPath),
-    case wait_for_vpn_ready(?VPN_NODE, ?STARTUP_TIMEOUT_MS) of
+    case wait_for_vpn_ready(?VPN_NODE, VpnProcess, ?STARTUP_TIMEOUT_MS) of
         ok ->
             application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
             application:set_env(ias, vpn_provisioning_vpn_node, ?VPN_NODE),
@@ -199,7 +200,7 @@ ensure_no_conflicting_vpn_node() ->
                 {error, Reason} -> ct:fail({stale_vpn_ct_node, Reason})
             end
     end,
-    ok = terminate_stale_vpn_ct_processes().
+    ok.
 
 prepare_vpn(VpnRepo) ->
     Command = "cd " ++ shell_quote(VpnRepo) ++
@@ -314,37 +315,31 @@ vpn_process_loop(Port, Log, OsPid) ->
             ok
     end.
 
-terminate_stale_vpn_ct_processes() ->
-    %% Match actual BEAM processes by the executable column. This avoids
-    %% depending on argument order and avoids matching the cleanup shell itself.
-    FindPids =
-        "ps -eo pid=,comm=,args= | "
-        "awk '$2 == \"beam.smp\" && index($0, \"vpn_ct@127.0.0.1\") {print $1}'",
-    TestUdpPorts = "5556/udp 5560/udp 5561/udp",
-    Command =
-        "for pid in $(" ++ FindPids ++ "); do "
-        "kill -TERM $pid 2>/dev/null || true; "
-        "done; "
-        "if command -v fuser >/dev/null 2>&1; then "
-        "fuser -k -TERM " ++ TestUdpPorts ++ " >/dev/null 2>&1 || true; "
-        "fi; "
-        "sleep 1; "
-        "for pid in $(" ++ FindPids ++ "); do "
-        "kill -KILL $pid 2>/dev/null || true; "
-        "done; "
-        "if command -v fuser >/dev/null 2>&1; then "
-        "fuser -k -KILL " ++ TestUdpPorts ++ " >/dev/null 2>&1 || true; "
-        "sleep 1; "
-        "for port in " ++ TestUdpPorts ++ "; do "
-        "fuser -s $port && exit 23 || true; "
-        "done; "
-        "fi",
-    case run_command(Command, 7000) of
-        {ok, _Output} -> ok;
-        {error, 23, Output} ->
-            ct:fail({stale_vpn_ct_ports_still_in_use, TestUdpPorts, Output});
-        {error, Status, Output} ->
-            ct:fail({stale_vpn_ct_cleanup_failed, Status, Output})
+ensure_vpn_test_ports_available() ->
+    Ports = [5556, 5560, 5561],
+    case [Port || Port <- Ports, not udp_port_available(Port)] of
+        [] ->
+            ok;
+        BusyPorts ->
+            ct:fail({vpn_test_ports_in_use,
+                     BusyPorts,
+                     "Another VPN instance may still be running in a terminal. "
+                     "Stop it and rerun the Common Test suite."})
+    end.
+
+udp_port_available(Port) ->
+    case gen_udp:open(Port,
+                      [binary,
+                       {active, false},
+                       {ip, {127, 0, 0, 1}},
+                       {reuseaddr, false}]) of
+        {ok, Socket} ->
+            ok = gen_udp:close(Socket),
+            true;
+        {error, eaddrinuse} ->
+            false;
+        {error, Reason} ->
+            ct:fail({vpn_test_port_probe_failed, Port, Reason})
     end.
 
 terminate_os_process(undefined) ->
@@ -357,11 +352,19 @@ terminate_os_process(OsPid) when is_integer(OsPid) ->
     _ = run_command(Command, 3000),
     ok.
 
-wait_for_vpn_ready(Node, TimeoutMs) ->
+wait_for_vpn_ready(Node, Process, TimeoutMs) ->
+    Monitor = erlang:monitor(process, Process),
     StartedAt = erlang:monotonic_time(millisecond),
-    wait_for_vpn_ready(Node, TimeoutMs, StartedAt, not_connected).
+    Result = wait_for_vpn_ready(Node,
+                                Process,
+                                Monitor,
+                                TimeoutMs,
+                                StartedAt,
+                                not_connected),
+    erlang:demonitor(Monitor, [flush]),
+    Result.
 
-wait_for_vpn_ready(Node, TimeoutMs, StartedAt, LastReason) ->
+wait_for_vpn_ready(Node, Process, Monitor, TimeoutMs, StartedAt, LastReason) ->
     Ready = case net_adm:ping(Node) of
                 pang ->
                     {error, not_connected};
@@ -395,8 +398,17 @@ wait_for_vpn_ready(Node, TimeoutMs, StartedAt, LastReason) ->
             case Elapsed >= TimeoutMs of
                 true -> {error, {timeout, ReadyReason, LastReason}};
                 false ->
-                    timer:sleep(250),
-                    wait_for_vpn_ready(Node, TimeoutMs, StartedAt, ReadyReason)
+                    receive
+                        {'DOWN', Monitor, process, Process, ExitReason} ->
+                            {error, {vpn_process_exited, ExitReason}}
+                    after 250 ->
+                        wait_for_vpn_ready(Node,
+                                           Process,
+                                           Monitor,
+                                           TimeoutMs,
+                                           StartedAt,
+                                           ReadyReason)
+                    end
             end
     end.
 
