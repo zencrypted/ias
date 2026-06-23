@@ -316,8 +316,7 @@ vpn_process_loop(Port, Log, OsPid) ->
 
 terminate_stale_vpn_ct_processes() ->
     FindPids =
-        "ps -eo pid=,args= | "
-        "awk '$0 ~ /beam\.smp/ && $0 ~ /vpn_ct@127\.0\.0\.1/ {print $1}'",
+        "pgrep -f '[b]eam\.smp.*vpn_ct@127\.0\.0\.1' 2>/dev/null || true",
     Command =
         "for pid in $(" ++ FindPids ++ "); do "
         "kill -TERM $pid 2>/dev/null || true; "
