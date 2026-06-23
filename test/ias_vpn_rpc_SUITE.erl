@@ -6,7 +6,8 @@
 -export([all/0,
          init_per_suite/1,
          end_per_suite/1,
-         provisioning_lifecycle/1]).
+         provisioning_lifecycle/1,
+         provisioning_identity_and_revision_guards/1]).
 
 -define(VPN_NODE, 'vpn_ct@127.0.0.1').
 -define(COOKIE, ias_vpn_ct_cookie).
@@ -14,7 +15,8 @@
 -define(RPC_TIMEOUT_MS, 5000).
 
 all() ->
-    [provisioning_lifecycle].
+    [provisioning_lifecycle,
+     provisioning_identity_and_revision_guards].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -135,6 +137,61 @@ provisioning_lifecycle(Config) ->
     ?assertEqual(6, maps:get(attempts, Status)),
     ?assertEqual(5, maps:get(current_revision, Status)),
     ?assertEqual(rejected, maps:get(last_delivery_status, Status)),
+    ok.
+
+provisioning_identity_and_revision_guards(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+
+    MismatchedDeviceId = unique_id(<<"ias_ct_bad_fingerprint_">>),
+    ok = reset_ias_state(),
+    allow = prepare_authorized_device(MismatchedDeviceId,
+                                      <<"00:11:22:33:44:55:66:77">>),
+    {ok, MismatchResult} =
+        ias_vpn_provisioning_delivery:build_and_deliver(MismatchedDeviceId, upsert),
+    ?assertEqual(rejected, delivery_status(MismatchResult)),
+    ?assertEqual({error, certificate_fingerprint_mismatch},
+                 maps:get(vpn_result, maps:get(delivery, MismatchResult))),
+    ?assertNot(lists:member(MismatchedDeviceId, running_peers(VpnNode))),
+
+    DeviceId = unique_id(<<"ias_ct_revision_guard_">>),
+    ok = reset_ias_state(),
+    allow = prepare_authorized_device(DeviceId, ActualFingerprint),
+
+    {ok, UpsertResult} = ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+    UpsertCommand = maps:get(command, UpsertResult),
+    ?assertEqual(applied, delivery_status(UpsertResult)),
+    ?assertEqual(1, command_revision(UpsertResult)),
+    timer:sleep(300),
+    ?assert(lists:member(DeviceId, running_peers(VpnNode))),
+
+    {ok, DisableResult} = ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, disable),
+    ?assertEqual(applied, delivery_status(DisableResult)),
+    ?assertEqual(2, command_revision(DisableResult)),
+    timer:sleep(300),
+    ?assertNot(lists:member(DeviceId, running_peers(VpnNode))),
+
+    {ok, StaleDelivery} = ias_vpn_provisioning_delivery:deliver(UpsertCommand),
+    ?assertEqual(rejected, maps:get(delivery_status, StaleDelivery)),
+    ?assertEqual({error, stale_revision}, maps:get(vpn_result, StaleDelivery)),
+
+    {ok, RegistryAfterStale} = rpc:call(VpnNode,
+                                        vpn_peer_registry,
+                                        get,
+                                        [DeviceId],
+                                        ?RPC_TIMEOUT_MS),
+    ?assertEqual(2, maps:get(revision, RegistryAfterStale)),
+    ?assertEqual(false, maps:get(enabled, RegistryAfterStale)),
+    ?assertNot(lists:member(DeviceId, running_peers(VpnNode))),
+
+    History = ias_vpn_provisioning_delivery:history(DeviceId),
+    ?assertEqual(3, length(History)),
+    [Latest | _] = History,
+    ?assertEqual(rejected, maps:get(delivery_status, Latest)),
+    ?assertEqual(1, maps:get(revision, Latest)),
+    ?assertEqual(false, history_contains(History, <<"private_key">>)),
+    ?assertEqual(false, history_contains(History, <<"session_key">>)),
     ok.
 
 ensure_distributed_controller() ->
@@ -524,6 +581,14 @@ prepare_authorized_device(DeviceId, Fingerprint) ->
                              key_match => true}),
     Decision = ias_authorization_decision:device_decision(DeviceId, access_vpn),
     maps:get(decision, Decision).
+
+actual_vpn_fingerprint(VpnNode) ->
+    {ok, ClientAEntry} = rpc:call(VpnNode,
+                                  vpn_peer_registry,
+                                  get,
+                                  [client_a],
+                                  ?RPC_TIMEOUT_MS),
+    maps:get(certificate_fingerprint, ClientAEntry).
 
 running_peers(VpnNode) ->
     rpc:call(VpnNode, vpn_manager, running_peers, [], ?RPC_TIMEOUT_MS).

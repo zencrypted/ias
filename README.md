@@ -144,6 +144,10 @@ without invoking a second `rebar3` build, and verifies:
 - revoke stops and locks the peer;
 - enable after revoke is rejected;
 - the IAS and runtime certificate fingerprints match;
+- a mismatched IAS certificate fingerprint is rejected before a peer starts;
+- a stale provisioning revision is rejected without rolling the runtime state
+  back or restarting the peer;
+- rejected guard checks are retained in the IAS delivery history;
 - the IAS delivery history does not contain private key, OVPN, session-key, or
   ECDH material.
 
