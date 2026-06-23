@@ -7,7 +7,8 @@
          init_per_suite/1,
          end_per_suite/1,
          provisioning_lifecycle/1,
-         provisioning_identity_and_revision_guards/1]).
+         provisioning_identity_and_revision_guards/1,
+         provisioned_peer_transfers_dataplane_payload/1]).
 
 -define(VPN_NODE, 'vpn_ct@127.0.0.1').
 -define(COOKIE, ias_vpn_ct_cookie).
@@ -16,7 +17,8 @@
 
 all() ->
     [provisioning_lifecycle,
-     provisioning_identity_and_revision_guards].
+     provisioning_identity_and_revision_guards,
+     provisioned_peer_transfers_dataplane_payload].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -193,6 +195,92 @@ provisioning_identity_and_revision_guards(Config) ->
     ?assertEqual(false, history_contains(History, <<"private_key">>)),
     ?assertEqual(false, history_contains(History, <<"session_key">>)),
     ok.
+
+provisioned_peer_transfers_dataplane_payload(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_dataplane_">>),
+    Payload = <<"ias-vpn-dataplane-probe">>,
+    ExpectedDigest = crypto:hash(sha256, Payload),
+
+    ok = reset_ias_state(),
+    allow = prepare_authorized_peer(DeviceId, client_a, ActualFingerprint),
+    {ok, UpsertResult} =
+        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+    ?assertEqual(applied, delivery_status(UpsertResult)),
+    ?assertEqual(1, command_revision(UpsertResult)),
+    timer:sleep(500),
+    ?assert(lists:member(client_a, running_peers(VpnNode))),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_clear_received_payloads,
+                  [peer_b],
+                  ?RPC_TIMEOUT_MS),
+    {ok, Sent} = rpc:call(VpnNode,
+                          vpn_manager,
+                          debug_send_payload,
+                          [client_a, Payload],
+                          ?RPC_TIMEOUT_MS),
+    ?assertEqual(true, maps:get(sent, Sent)),
+    ?assertEqual(byte_size(Payload), maps:get(bytes, Sent)),
+    ?assertEqual(ExpectedDigest, maps:get(sha256, Sent)),
+
+    {ok, Received} = wait_for_received_payload(VpnNode, peer_b, Payload, 5000),
+    ?assertEqual(Payload, maps:get(payload, Received)),
+    ?assertEqual(byte_size(Payload), maps:get(bytes, Received)),
+    ?assertEqual(ExpectedDigest, maps:get(sha256, Received)),
+    ?assertEqual(client_a, maps:get(peer_id, Received)),
+    ?assertEqual(maps:get(key_epoch, Sent), maps:get(key_epoch, Received)),
+    ?assertEqual(maps:get(seq, Sent), maps:get(seq, Received)),
+
+    {ok, ReceivedHistory} = rpc:call(VpnNode,
+                                     vpn_manager,
+                                     debug_received_payloads,
+                                     [peer_b],
+                                     ?RPC_TIMEOUT_MS),
+    Matching = [Entry || Entry <- ReceivedHistory,
+                         maps:get(payload, Entry, undefined) =:= Payload],
+    ?assertEqual(1, length(Matching)),
+    ok.
+
+wait_for_received_payload(VpnNode, PeerId, Payload, TimeoutMs) ->
+    wait_for_received_payload(VpnNode,
+                              PeerId,
+                              Payload,
+                              TimeoutMs,
+                              erlang:monotonic_time(millisecond)).
+
+wait_for_received_payload(VpnNode, PeerId, Payload, TimeoutMs, StartedAt) ->
+    case rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_received_payloads,
+                  [PeerId],
+                  ?RPC_TIMEOUT_MS) of
+        {ok, Entries} when is_list(Entries) ->
+            case [Entry || Entry <- Entries,
+                          maps:get(payload, Entry, undefined) =:= Payload] of
+                [Entry | _] ->
+                    {ok, Entry};
+                [] ->
+                    wait_for_received_payload_retry(
+                      VpnNode, PeerId, Payload, TimeoutMs, StartedAt, no_payload)
+            end;
+        Other ->
+            wait_for_received_payload_retry(
+              VpnNode, PeerId, Payload, TimeoutMs, StartedAt, Other)
+    end.
+
+wait_for_received_payload_retry(VpnNode, PeerId, Payload, TimeoutMs, StartedAt, LastResult) ->
+    Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+    case Elapsed >= TimeoutMs of
+        true ->
+            ct:fail({dataplane_payload_not_received, PeerId, LastResult});
+        false ->
+            timer:sleep(100),
+            wait_for_received_payload(VpnNode, PeerId, Payload, TimeoutMs, StartedAt)
+    end.
 
 ensure_distributed_controller() ->
     case node() of
@@ -545,12 +633,17 @@ reset_ias_state() ->
     ok.
 
 prepare_authorized_device(DeviceId, Fingerprint) ->
+    prepare_authorized_peer(DeviceId, DeviceId, Fingerprint).
+
+prepare_authorized_peer(DeviceId, PeerId, Fingerprint) ->
     [Profile] = [Candidate || Candidate <- ias_demo_data:profiles(),
                               maps:get(id, Candidate) =:= default_user],
     Claims = ias_policy:certificate_claims(Profile),
     CertificateId = unique_id(<<"ias_ct_certificate_">>),
     ServiceId = unique_id(<<"ias_ct_service_">>),
-    Device = ias_demo_store:add_device(#{id => DeviceId, source => manual_device}),
+    Device = ias_demo_store:add_device(#{id => DeviceId,
+                                           peer_id => PeerId,
+                                           source => manual_device}),
     Certificate = ias_demo_store:add_certificate(#{id => CertificateId,
                                                    profile_id => default_user,
                                                    profile => Profile,

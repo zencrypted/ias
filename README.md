@@ -146,6 +146,7 @@ without invoking a second `rebar3` build, and verifies:
 - the IAS and runtime certificate fingerprints match;
 - a mismatched IAS certificate fingerprint is rejected before a peer starts;
 - a stale provisioning revision is rejected without rolling the runtime state
+- an IAS-provisioned `client_a` sends a deterministic payload through the real encrypted UDP dataplane to `peer_b`, with payload, digest, epoch, sequence, and duplicate-count assertions
   back or restarting the peer;
 - rejected guard checks are retained in the IAS delivery history;
 - the IAS delivery history does not contain private key, OVPN, session-key, or
