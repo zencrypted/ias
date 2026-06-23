@@ -12,7 +12,8 @@
          dataplane_survives_authenticated_rekey/1,
          dataplane_recovers_after_peer_restart/1,
          replayed_dataplane_frame_is_rejected/1,
-         previous_epoch_expires_after_grace_window/1]).
+         previous_epoch_expires_after_grace_window/1,
+         out_of_order_frames_within_replay_window_are_accepted/1]).
 
 -define(VPN_NODE, 'vpn_ct@127.0.0.1').
 -define(COOKIE, ias_vpn_ct_cookie).
@@ -26,7 +27,8 @@ all() ->
      dataplane_survives_authenticated_rekey,
      dataplane_recovers_after_peer_restart,
      replayed_dataplane_frame_is_rejected,
-     previous_epoch_expires_after_grace_window].
+     previous_epoch_expires_after_grace_window,
+     out_of_order_frames_within_replay_window_are_accepted].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -626,6 +628,115 @@ previous_epoch_expires_after_grace_window(Config) ->
     ?assertEqual(1, length(Matches)),
     ok.
 
+out_of_order_frames_within_replay_window_are_accepted(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_out_of_order_">>),
+    FirstPayload = <<"ias-vpn-sequence-first">>,
+    DelayedPayload = <<"ias-vpn-sequence-delayed">>,
+    AheadPayload = <<"ias-vpn-sequence-ahead">>,
+    Payloads = [FirstPayload, DelayedPayload, AheadPayload],
+    SendOrder = [1, 3, 2],
+
+    ok = reset_ias_state(),
+    allow = prepare_authorized_peer(DeviceId, client_a, ActualFingerprint),
+    {ok, UpsertDelivery} =
+        deliver_upsert_after_runtime_revision(VpnNode,
+                                              DeviceId,
+                                              client_a),
+    ?assertEqual(applied, maps:get(delivery_status, UpsertDelivery)),
+    {ok, _ClientSession} =
+        wait_for_session_established(VpnNode, client_a, 5000),
+    {ok, _PeerSession} =
+        wait_for_session_established(VpnNode, peer_b, 5000),
+
+    {ok, RegistryBefore} = rpc:call(VpnNode,
+                                    vpn_peer_registry,
+                                    get,
+                                    [client_a],
+                                    ?RPC_TIMEOUT_MS),
+    RevisionBefore = maps:get(revision, RegistryBefore),
+    DeliveryHistoryBefore = ias_vpn_provisioning_delivery:history(DeviceId),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_clear_received_payloads,
+                  [peer_b],
+                  ?RPC_TIMEOUT_MS),
+    {ok, StatsBefore} = peer_link_stats(VpnNode, peer_b),
+    FramesAcceptedBefore = maps:get(frames_accepted, StatsBefore, 0),
+    FramesRejectedBefore = maps:get(frames_rejected, StatsBefore, 0),
+    ReplayDropsBefore = maps:get(replay_drops, StatsBefore, 0),
+    DuplicateFramesBefore = maps:get(duplicate_frames, StatsBefore, 0),
+    ReplayBefore = maps:get(replay, StatsBefore),
+    CurrentReplayBefore = maps:get(current, ReplayBefore),
+    ReplayAcceptedBefore = maps:get(accepted, CurrentReplayBefore, 0),
+    ReplayDuplicatesBefore = maps:get(duplicates, CurrentReplayBefore, 0),
+    ReplayTooOldBefore = maps:get(too_old, CurrentReplayBefore, 0),
+
+    {ok, SentBatch} = rpc:call(VpnNode,
+                               vpn_manager,
+                               debug_send_payloads,
+                               [client_a, Payloads, SendOrder],
+                               ?RPC_TIMEOUT_MS),
+    ?assertEqual(3, maps:get(sent, SentBatch)),
+    [FirstFrame, DelayedFrame, AheadFrame] = maps:get(frames, SentBatch),
+    KeyEpoch = maps:get(key_epoch, SentBatch),
+    FirstSeq = maps:get(seq, FirstFrame),
+    DelayedSeq = maps:get(seq, DelayedFrame),
+    AheadSeq = maps:get(seq, AheadFrame),
+    ?assertEqual(FirstSeq + 1, DelayedSeq),
+    ?assertEqual(FirstSeq + 2, AheadSeq),
+    ?assertEqual([FirstSeq, AheadSeq, DelayedSeq],
+                 maps:get(send_order, SentBatch)),
+
+    {ok, Received} =
+        wait_for_received_payloads(VpnNode, peer_b, Payloads, 5000),
+    ?assertEqual([FirstPayload, AheadPayload, DelayedPayload],
+                 [maps:get(payload, Entry) || Entry <- Received]),
+    ?assertEqual([FirstSeq, AheadSeq, DelayedSeq],
+                 [maps:get(seq, Entry) || Entry <- Received]),
+    ?assertEqual([KeyEpoch, KeyEpoch, KeyEpoch],
+                 [maps:get(key_epoch, Entry) || Entry <- Received]),
+
+    {ok, StatsAfter} = peer_link_stats(VpnNode, peer_b),
+    ?assertEqual(FramesAcceptedBefore + 3,
+                 maps:get(frames_accepted, StatsAfter, 0)),
+    ?assertEqual(FramesRejectedBefore,
+                 maps:get(frames_rejected, StatsAfter, 0)),
+    ?assertEqual(ReplayDropsBefore,
+                 maps:get(replay_drops, StatsAfter, 0)),
+    ?assertEqual(DuplicateFramesBefore,
+                 maps:get(duplicate_frames, StatsAfter, 0)),
+    CurrentReplayAfter = maps:get(current, maps:get(replay, StatsAfter)),
+    ?assertEqual(AheadSeq, maps:get(highest, CurrentReplayAfter)),
+    ?assertEqual(ReplayAcceptedBefore + 3,
+                 maps:get(accepted, CurrentReplayAfter, 0)),
+    ?assertEqual(ReplayDuplicatesBefore,
+                 maps:get(duplicates, CurrentReplayAfter, 0)),
+    ?assertEqual(ReplayTooOldBefore,
+                 maps:get(too_old, CurrentReplayAfter, 0)),
+
+    {ok, SessionAfter} = rpc:call(VpnNode,
+                                  vpn_manager,
+                                  debug_session_state,
+                                  [peer_b],
+                                  ?RPC_TIMEOUT_MS),
+    ?assertEqual(established, maps:get(handshake_status, SessionAfter)),
+    ?assertEqual(KeyEpoch, maps:get(current_epoch, SessionAfter)),
+
+    {ok, RegistryAfter} = rpc:call(VpnNode,
+                                   vpn_peer_registry,
+                                   get,
+                                   [client_a],
+                                   ?RPC_TIMEOUT_MS),
+    ?assertEqual(RevisionBefore, maps:get(revision, RegistryAfter)),
+    ?assertEqual(DeliveryHistoryBefore,
+                 ias_vpn_provisioning_delivery:history(DeviceId)),
+    ok.
+
+
 peer_link_stats(VpnNode, PeerId) ->
     case rpc:call(VpnNode,
                   vpn_manager,
@@ -861,6 +972,67 @@ wait_for_session_established(VpnNode, PeerId, TimeoutMs, StartedAt) ->
                                                  TimeoutMs,
                                                  StartedAt)
             end
+    end.
+
+wait_for_received_payloads(VpnNode, PeerId, Payloads, TimeoutMs) ->
+    wait_for_received_payloads(VpnNode,
+                               PeerId,
+                               Payloads,
+                               TimeoutMs,
+                               erlang:monotonic_time(millisecond)).
+
+wait_for_received_payloads(VpnNode, PeerId, Payloads, TimeoutMs, StartedAt) ->
+    case rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_received_payloads,
+                  [PeerId],
+                  ?RPC_TIMEOUT_MS) of
+        {ok, Entries} when is_list(Entries) ->
+            Matches = [Entry || Entry <- Entries,
+                                lists:member(maps:get(payload,
+                                                      Entry,
+                                                      undefined),
+                                             Payloads)],
+            case length(Matches) >= length(Payloads) of
+                true ->
+                    {ok, Matches};
+                false ->
+                    wait_for_received_payloads_retry(VpnNode,
+                                                     PeerId,
+                                                     Payloads,
+                                                     TimeoutMs,
+                                                     StartedAt,
+                                                     Entries)
+            end;
+        Other ->
+            wait_for_received_payloads_retry(VpnNode,
+                                             PeerId,
+                                             Payloads,
+                                             TimeoutMs,
+                                             StartedAt,
+                                             Other)
+    end.
+
+wait_for_received_payloads_retry(VpnNode,
+                                 PeerId,
+                                 Payloads,
+                                 TimeoutMs,
+                                 StartedAt,
+                                 LastResult) ->
+    Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+    case Elapsed >= TimeoutMs of
+        true ->
+            ct:fail({dataplane_payloads_not_received,
+                     PeerId,
+                     Payloads,
+                     LastResult});
+        false ->
+            timer:sleep(100),
+            wait_for_received_payloads(VpnNode,
+                                       PeerId,
+                                       Payloads,
+                                       TimeoutMs,
+                                       StartedAt)
     end.
 
 wait_for_received_payload(VpnNode, PeerId, Payload, TimeoutMs) ->
@@ -1197,6 +1369,7 @@ vpn_test_api_ready(Node) ->
                        {debug_restart_peer, 1},
                        {debug_wait_for_peer_restart, 3},
                        {debug_send_payload, 2},
+                       {debug_send_payloads, 3},
                        {debug_received_payloads, 1},
                        {debug_clear_received_payloads, 1},
                        {debug_replay_frame, 3},
