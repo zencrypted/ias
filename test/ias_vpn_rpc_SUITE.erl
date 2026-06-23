@@ -257,9 +257,11 @@ dataplane_survives_authenticated_rekey(Config) ->
 
     ok = reset_ias_state(),
     allow = prepare_authorized_peer(DeviceId, client_a, ActualFingerprint),
-    {ok, UpsertResult} =
-        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
-    ?assertEqual(applied, delivery_status(UpsertResult)),
+    {ok, UpsertDelivery} =
+        deliver_upsert_after_runtime_revision(VpnNode,
+                                              DeviceId,
+                                              client_a),
+    ?assertEqual(applied, maps:get(delivery_status, UpsertDelivery)),
     timer:sleep(500),
     ?assert(lists:member(client_a, running_peers(VpnNode))),
     ?assert(lists:member(peer_b, running_peers(VpnNode))),
@@ -349,6 +351,20 @@ dataplane_survives_authenticated_rekey(Config) ->
     ?assertEqual(1, length(BeforeMatches)),
     ?assertEqual(1, length(AfterMatches)),
     ok.
+
+deliver_upsert_after_runtime_revision(VpnNode, DeviceId, PeerId) ->
+    {ok, Command0} = ias_vpn_provisioning_command:build(DeviceId, upsert),
+    RuntimeRevision =
+        case rpc:call(VpnNode,
+                      vpn_peer_registry,
+                      get,
+                      [PeerId],
+                      ?RPC_TIMEOUT_MS) of
+            {ok, RegistryEntry} -> maps:get(revision, RegistryEntry, 0);
+            not_found -> 0
+        end,
+    Command = Command0#{revision => RuntimeRevision + 1},
+    ias_vpn_provisioning_delivery:deliver(Command).
 
 wait_for_received_payload(VpnNode, PeerId, Payload, TimeoutMs) ->
     wait_for_received_payload(VpnNode,
