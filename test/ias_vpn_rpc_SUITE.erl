@@ -198,7 +198,8 @@ ensure_no_conflicting_vpn_node() ->
                 ok -> ok;
                 {error, Reason} -> ct:fail({stale_vpn_ct_node, Reason})
             end
-    end.
+    end,
+    ok = terminate_stale_vpn_ct_processes().
 
 prepare_vpn(VpnRepo) ->
     Command = "cd " ++ shell_quote(VpnRepo) ++
@@ -246,8 +247,12 @@ vpn_process_owner(Parent, VpnRepo, LogPath) ->
                                   exit_status,
                                   stderr_to_stdout,
                                   use_stdio]),
+                OsPid = case erlang:port_info(Port, os_pid) of
+                            {os_pid, Pid} -> Pid;
+                            undefined -> undefined
+                        end,
                 Parent ! {vpn_process_started, self()},
-                vpn_process_loop(Port, Log)
+                vpn_process_loop(Port, Log, OsPid)
             catch
                 Class:Reason:Stacktrace ->
                     Parent ! {vpn_process_failed,
@@ -290,11 +295,11 @@ vpn_start_expression() ->
     "{error, Reason} -> io:format(standard_error, "
     "\"VPN startup failed: ~p~n\", [Reason]), halt(1) end.".
 
-vpn_process_loop(Port, Log) ->
+vpn_process_loop(Port, Log, OsPid) ->
     receive
         {Port, {data, Data}} ->
             ok = file:write(Log, Data),
-            vpn_process_loop(Port, Log);
+            vpn_process_loop(Port, Log, OsPid);
         {Port, {exit_status, Status}} ->
             ok = file:write(Log,
                             iolist_to_binary(io_lib:format("~nVPN exited with status ~p~n",
@@ -302,10 +307,39 @@ vpn_process_loop(Port, Log) ->
             ok;
         stop ->
             _ = catch port_close(Port),
+            _ = terminate_os_process(OsPid),
             ok;
         {'EXIT', Port, _Reason} ->
+            _ = terminate_os_process(OsPid),
             ok
     end.
+
+terminate_stale_vpn_ct_processes() ->
+    Command =
+        "for pid in $(pgrep -f 'vpn_ct@127\.0\.0\.1' 2>/dev/null || true); do "
+        "cmd=$(tr '\000' ' ' </proc/$pid/cmdline 2>/dev/null || true); "
+        "case \"$cmd\" in *beam.smp*) kill -TERM $pid 2>/dev/null || true;; esac; "
+        "done; "
+        "sleep 1; "
+        "for pid in $(pgrep -f 'vpn_ct@127\.0\.0\.1' 2>/dev/null || true); do "
+        "cmd=$(tr '\000' ' ' </proc/$pid/cmdline 2>/dev/null || true); "
+        "case \"$cmd\" in *beam.smp*) kill -KILL $pid 2>/dev/null || true;; esac; "
+        "done",
+    case run_command(Command, 5000) of
+        {ok, _Output} -> ok;
+        {error, Status, Output} ->
+            ct:fail({stale_vpn_ct_cleanup_failed, Status, Output})
+    end.
+
+terminate_os_process(undefined) ->
+    ok;
+terminate_os_process(OsPid) when is_integer(OsPid) ->
+    Command = "kill -TERM " ++ integer_to_list(OsPid) ++
+              " 2>/dev/null || true; sleep 1; " ++
+              "kill -KILL " ++ integer_to_list(OsPid) ++
+              " 2>/dev/null || true",
+    _ = run_command(Command, 3000),
+    ok.
 
 wait_for_vpn_ready(Node, TimeoutMs) ->
     StartedAt = erlang:monotonic_time(millisecond),
