@@ -230,11 +230,17 @@ vpn_process_owner(Parent, VpnRepo, LogPath) ->
     case file:open(LogPath, [write, raw, binary]) of
         {ok, Log} ->
             try
-                Port = open_port({spawn_executable, "/bin/bash"},
-                                 [{args, ["-lc",
-                                          "exec env ERL_FLAGS=\"-name vpn_ct@127.0.0.1 " ++
-                                          "-setcookie ias_vpn_ct_cookie\" " ++
-                                          "rebar3 as debug shell"]},
+                Erl = require_executable("erl"),
+                EbinPaths = vpn_ebin_paths(VpnRepo),
+                Args = ["-noshell",
+                        "-noinput",
+                        "-name", "vpn_ct@127.0.0.1",
+                        "-setcookie", "ias_vpn_ct_cookie",
+                        "-config", filename:join(VpnRepo, "config/sys.debug")]
+                       ++ code_path_args(EbinPaths)
+                       ++ ["-eval", vpn_start_expression()],
+                Port = open_port({spawn_executable, Erl},
+                                 [{args, Args},
                                   {cd, VpnRepo},
                                   binary,
                                   exit_status,
@@ -255,6 +261,28 @@ vpn_process_owner(Parent, VpnRepo, LogPath) ->
                       self(),
                       {vpn_log_open_failed, LogPath, Reason}}
     end.
+
+require_executable(Name) ->
+    case os:find_executable(Name) of
+        false -> erlang:error({executable_not_found, Name});
+        Path -> Path
+    end.
+
+vpn_ebin_paths(VpnRepo) ->
+    Pattern = filename:join([VpnRepo, "_build", "debug", "lib", "*", "ebin"]),
+    case filelib:wildcard(Pattern) of
+        [] -> erlang:error({vpn_debug_code_path_not_found, Pattern});
+        Paths -> Paths
+    end.
+
+code_path_args(Paths) ->
+    lists:append([["-pa", Path] || Path <- Paths]).
+
+vpn_start_expression() ->
+    "case application:ensure_all_started(vpn) of "
+    "{ok, _} -> receive after infinity -> ok end; "
+    "{error, Reason} -> io:format(standard_error, "
+    "\"VPN startup failed: ~p~n\", [Reason]), halt(1) end.".
 
 vpn_process_loop(Port, Log) ->
     receive

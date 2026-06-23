@@ -133,8 +133,9 @@ VPN_REPO=/absolute/path/to/vpn \
   rebar3 ct --suite test/ias_vpn_rpc_SUITE
 ```
 
-The suite prepares the VPN debug OVPN identity, compiles the VPN debug profile,
-starts `vpn_ct@127.0.0.1`, and verifies:
+The suite prepares the VPN debug OVPN identity, compiles the VPN debug profile
+once, then starts `vpn_ct@127.0.0.1` directly from the compiled debug code path
+without invoking a second `rebar3` build, and verifies:
 
 - the initial upsert is applied and starts the peer;
 - the repeated revision is unchanged;
