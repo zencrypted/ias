@@ -35,6 +35,15 @@ IAS відповідає за:
 Центр сертифікації (CA) відповідає за підписування сертифікатів.
 VPN використовує сертифікати та результати авторизації, підготовлені через IAS.
 
+VPN provisioning delivery
+-------------------------
+
+IAS формує канонічні revisioned provisioning commands і може доставляти їх до
+VPN runtime через configurable distributed Erlang RPC. Деталі flow, transport
+configuration, normalized statuses, retry semantics, cookie/node naming, and
+development startup steps are documented in
+`docs/IAS-VPN-PROVISIONING-DELIVERY.md`.
+
 Керування ключами
 -----------------
 
