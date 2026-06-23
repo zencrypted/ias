@@ -10,7 +10,8 @@
          provisioning_identity_and_revision_guards/1,
          provisioned_peer_transfers_dataplane_payload/1,
          dataplane_survives_authenticated_rekey/1,
-         dataplane_recovers_after_peer_restart/1]).
+         dataplane_recovers_after_peer_restart/1,
+         replayed_dataplane_frame_is_rejected/1]).
 
 -define(VPN_NODE, 'vpn_ct@127.0.0.1').
 -define(COOKIE, ias_vpn_ct_cookie).
@@ -22,7 +23,8 @@ all() ->
      provisioning_identity_and_revision_guards,
      provisioned_peer_transfers_dataplane_payload,
      dataplane_survives_authenticated_rekey,
-     dataplane_recovers_after_peer_restart].
+     dataplane_recovers_after_peer_restart,
+     replayed_dataplane_frame_is_rejected].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -447,6 +449,159 @@ dataplane_recovers_after_peer_restart(Config) ->
     ?assertEqual(1, length(AfterMatches)),
     ok.
 
+
+replayed_dataplane_frame_is_rejected(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_replay_">>),
+    Payload = <<"ias-vpn-replay-probe">>,
+
+    ok = reset_ias_state(),
+    allow = prepare_authorized_peer(DeviceId, client_a, ActualFingerprint),
+    {ok, UpsertDelivery} =
+        deliver_upsert_after_runtime_revision(VpnNode,
+                                              DeviceId,
+                                              client_a),
+    ?assertEqual(applied, maps:get(delivery_status, UpsertDelivery)),
+    timer:sleep(500),
+    ?assert(lists:member(client_a, running_peers(VpnNode))),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_clear_received_payloads,
+                  [peer_b],
+                  ?RPC_TIMEOUT_MS),
+    {ok, Sent} = rpc:call(VpnNode,
+                          vpn_manager,
+                          debug_send_payload,
+                          [client_a, Payload],
+                          ?RPC_TIMEOUT_MS),
+    KeyEpoch = maps:get(key_epoch, Sent),
+    Seq = maps:get(seq, Sent),
+    {ok, FirstReceipt} =
+        wait_for_received_payload(VpnNode, peer_b, Payload, 5000),
+    ?assertEqual(KeyEpoch, maps:get(key_epoch, FirstReceipt)),
+    ?assertEqual(Seq, maps:get(seq, FirstReceipt)),
+
+    {ok, PeerStatsBefore} = peer_link_stats(VpnNode, peer_b),
+    DuplicateBefore = maps:get(duplicate_frames, PeerStatsBefore, 0),
+    ReplayDropsBefore = maps:get(replay_drops, PeerStatsBefore, 0),
+    RejectedBefore = maps:get(frames_rejected, PeerStatsBefore, 0),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_replay_frame,
+                  [client_a, KeyEpoch, Seq],
+                  ?RPC_TIMEOUT_MS),
+    {ok, PeerStatsAfter} =
+        wait_for_replay_rejection(VpnNode,
+                                  peer_b,
+                                  DuplicateBefore + 1,
+                                  ReplayDropsBefore + 1,
+                                  5000),
+    ?assertEqual(DuplicateBefore + 1,
+                 maps:get(duplicate_frames, PeerStatsAfter, 0)),
+    ?assertEqual(ReplayDropsBefore + 1,
+                 maps:get(replay_drops, PeerStatsAfter, 0)),
+    ?assert(maps:get(frames_rejected, PeerStatsAfter, 0) >= RejectedBefore + 1),
+
+    {ok, ReceivedHistory} = rpc:call(VpnNode,
+                                     vpn_manager,
+                                     debug_received_payloads,
+                                     [peer_b],
+                                     ?RPC_TIMEOUT_MS),
+    Matches = [Entry || Entry <- ReceivedHistory,
+                        maps:get(payload, Entry, undefined) =:= Payload],
+    ?assertEqual(1, length(Matches)),
+    ok.
+
+peer_link_stats(VpnNode, PeerId) ->
+    case rpc:call(VpnNode,
+                  vpn_manager,
+                  peer_stats,
+                  [PeerId],
+                  ?RPC_TIMEOUT_MS) of
+        #{link := LinkStats} when is_map(LinkStats) ->
+            {ok, LinkStats};
+        Other ->
+            {error, Other}
+    end.
+
+wait_for_replay_rejection(VpnNode,
+                          PeerId,
+                          ExpectedDuplicates,
+                          ExpectedReplayDrops,
+                          TimeoutMs) ->
+    wait_for_replay_rejection(VpnNode,
+                              PeerId,
+                              ExpectedDuplicates,
+                              ExpectedReplayDrops,
+                              TimeoutMs,
+                              erlang:monotonic_time(millisecond),
+                              not_started).
+
+wait_for_replay_rejection(VpnNode,
+                          PeerId,
+                          ExpectedDuplicates,
+                          ExpectedReplayDrops,
+                          TimeoutMs,
+                          StartedAt,
+                          _LastResult) ->
+    Result = peer_link_stats(VpnNode, PeerId),
+    case Result of
+        {ok, Stats} ->
+            Duplicates = maps:get(duplicate_frames, Stats, 0),
+            ReplayDrops = maps:get(replay_drops, Stats, 0),
+            case Duplicates >= ExpectedDuplicates andalso
+                 ReplayDrops >= ExpectedReplayDrops of
+                true ->
+                    {ok, Stats};
+                false ->
+                    wait_for_replay_rejection_retry(VpnNode,
+                                                    PeerId,
+                                                    ExpectedDuplicates,
+                                                    ExpectedReplayDrops,
+                                                    TimeoutMs,
+                                                    StartedAt,
+                                                    Result)
+            end;
+        _ ->
+            wait_for_replay_rejection_retry(VpnNode,
+                                            PeerId,
+                                            ExpectedDuplicates,
+                                            ExpectedReplayDrops,
+                                            TimeoutMs,
+                                            StartedAt,
+                                            Result)
+    end.
+
+wait_for_replay_rejection_retry(VpnNode,
+                                PeerId,
+                                ExpectedDuplicates,
+                                ExpectedReplayDrops,
+                                TimeoutMs,
+                                StartedAt,
+                                LastResult) ->
+    Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+    case Elapsed >= TimeoutMs of
+        true ->
+            ct:fail({vpn_replay_not_rejected,
+                     PeerId,
+                     ExpectedDuplicates,
+                     ExpectedReplayDrops,
+                     LastResult});
+        false ->
+            timer:sleep(100),
+            wait_for_replay_rejection(VpnNode,
+                                      PeerId,
+                                      ExpectedDuplicates,
+                                      ExpectedReplayDrops,
+                                      TimeoutMs,
+                                      StartedAt,
+                                      LastResult)
+    end.
+
 deliver_upsert_after_runtime_revision(VpnNode, DeviceId, PeerId) ->
     {ok, Command0} = ias_vpn_provisioning_command:build(DeviceId, upsert),
     RuntimeRevision =
@@ -855,7 +1010,12 @@ vpn_test_api_ready(Node) ->
                        {debug_wait_for_epoch, 3},
                        {debug_peer_pid, 1},
                        {debug_restart_peer, 1},
-                       {debug_wait_for_peer_restart, 3}],
+                       {debug_wait_for_peer_restart, 3},
+                       {debug_send_payload, 2},
+                       {debug_received_payloads, 1},
+                       {debug_clear_received_payloads, 1},
+                       {debug_replay_frame, 3},
+                       {peer_stats, 1}],
     case rpc:call(Node,
                   vpn_manager,
                   module_info,

@@ -155,6 +155,8 @@ without invoking a second `rebar3` build, and verifies:
 - a supervised `client_a` peer restart produces a new process, re-establishes
   the authenticated session, preserves the provisioning revision, and restores
   dataplane payload delivery without another IAS provisioning command;
+- replaying the exact retained encrypted frame increments duplicate and replay
+  drop counters while the plaintext payload remains recorded only once;
 - rejected guard checks are retained in the IAS delivery history;
 - the IAS delivery history does not contain private key, OVPN, session-key, or
   ECDH material.
