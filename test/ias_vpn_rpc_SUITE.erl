@@ -269,10 +269,16 @@ require_executable(Name) ->
     end.
 
 vpn_ebin_paths(VpnRepo) ->
-    Pattern = filename:join([VpnRepo, "_build", "debug", "lib", "*", "ebin"]),
-    case filelib:wildcard(Pattern) of
-        [] -> erlang:error({vpn_debug_code_path_not_found, Pattern});
-        Paths -> Paths
+    Patterns = [
+        filename:join([VpnRepo, "_build", "debug", "lib", "*", "ebin"]),
+        filename:join([VpnRepo, "_build", "debug", "deps", "*", "ebin"]),
+        filename:join([VpnRepo, "_build", "default", "lib", "*", "ebin"]),
+        filename:join([VpnRepo, "_build", "default", "deps", "*", "ebin"])
+    ],
+    Paths = lists:usort(lists:append([filelib:wildcard(Pattern) || Pattern <- Patterns])),
+    case Paths of
+        [] -> erlang:error({vpn_code_path_not_found, Patterns});
+        _ -> Paths
     end.
 
 code_path_args(Paths) ->
