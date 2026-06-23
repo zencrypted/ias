@@ -91,13 +91,16 @@ setup() ->
     {ok, _} = ias_relationship_link:create(uses_security_policy,
                                             maps:get(id, Certificate),
                                             <<"high_security">>),
+    [Profile] = [Candidate || Candidate <- ias_demo_data:profiles(),
+                               maps:get(id, Candidate) =:= default_user],
+    Claims = ias_policy:certificate_claims(Profile),
     {ok, _} = ias_certificate_verification:verify(
         Certificate#{certificate_id => maps:get(id, Certificate),
                      subject_cn => maps:get(id, Certificate),
                      issuer_cn => <<"Zencrypted Dev CA">>,
-                     profile => default_user,
+                     profile => Profile,
                      profile_id => default_user,
-                     claims => #{},
+                     claims => Claims,
                      trusted => true,
                      key_match => true}),
     #{device => Device, certificate => Certificate}.

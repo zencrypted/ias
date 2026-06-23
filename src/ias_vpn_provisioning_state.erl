@@ -25,7 +25,7 @@ prepare(DeviceId, Command0) when is_map(Command0) ->
     Key = normalize_id(DeviceId),
     Fingerprint = command_fingerprint(Command0),
     case ets:lookup(?TABLE, Key) of
-        [{Key, #{revision := Revision, fingerprint := Fingerprint, command := Command}}] ->
+        [{Key, #{revision := _Revision, fingerprint := Fingerprint, command := Command}}] ->
             {ok, Command, unchanged};
         [{Key, #{revision := Revision}}] ->
             store(Key, Revision + 1, Fingerprint, Command0);
