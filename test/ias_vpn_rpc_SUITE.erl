@@ -19,7 +19,7 @@ all() ->
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
     true = erlang:set_cookie(node(), ?COOKIE),
-    ok = ensure_ias_started(),
+    ok = ensure_ias_test_runtime(),
     VpnRepo = vpn_repo(Config),
     ok = validate_vpn_repo(VpnRepo),
     ok = ensure_no_conflicting_vpn_node(),
@@ -148,12 +148,25 @@ ensure_distributed_controller() ->
             ok
     end.
 
-ensure_ias_started() ->
-    case application:ensure_all_started(ias) of
-        {ok, _Apps} -> ok;
-        {error, {already_started, ias}} -> ok;
-        {error, Reason} -> ct:fail({ias_start_failed, Reason})
+ensure_ias_test_runtime() ->
+    %% The CT controller exercises IAS modules directly. Starting the full IAS
+    %% application also starts BPE, which expects its production KVS schema and
+    %% is unrelated to this provisioning contract test. Only start the OTP
+    %% applications needed by the command and certificate helpers.
+    RequiredApps = [crypto, public_key, inets],
+    case [Failure || App <- RequiredApps,
+                     Failure <- [application:ensure_all_started(App)],
+                     not runtime_started(Failure)] of
+        [] -> ok;
+        Failures -> ct:fail({ias_test_runtime_start_failed, Failures})
     end.
+
+runtime_started({ok, _Apps}) ->
+    true;
+runtime_started({error, {already_started, _App}}) ->
+    true;
+runtime_started(_) ->
+    false.
 
 vpn_repo(Config) ->
     Raw = case os:getenv("VPN_REPO") of
