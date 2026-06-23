@@ -8,7 +8,8 @@
          end_per_suite/1,
          provisioning_lifecycle/1,
          provisioning_identity_and_revision_guards/1,
-         provisioned_peer_transfers_dataplane_payload/1]).
+         provisioned_peer_transfers_dataplane_payload/1,
+         dataplane_survives_authenticated_rekey/1]).
 
 -define(VPN_NODE, 'vpn_ct@127.0.0.1').
 -define(COOKIE, ias_vpn_ct_cookie).
@@ -18,7 +19,8 @@
 all() ->
     [provisioning_lifecycle,
      provisioning_identity_and_revision_guards,
-     provisioned_peer_transfers_dataplane_payload].
+     provisioned_peer_transfers_dataplane_payload,
+     dataplane_survives_authenticated_rekey].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -243,6 +245,109 @@ provisioned_peer_transfers_dataplane_payload(Config) ->
     Matching = [Entry || Entry <- ReceivedHistory,
                          maps:get(payload, Entry, undefined) =:= Payload],
     ?assertEqual(1, length(Matching)),
+    ok.
+
+dataplane_survives_authenticated_rekey(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_rekey_">>),
+    BeforePayload = <<"ias-vpn-before-rekey">>,
+    AfterPayload = <<"ias-vpn-after-rekey">>,
+
+    ok = reset_ias_state(),
+    allow = prepare_authorized_peer(DeviceId, client_a, ActualFingerprint),
+    {ok, UpsertResult} =
+        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+    ?assertEqual(applied, delivery_status(UpsertResult)),
+    timer:sleep(500),
+    ?assert(lists:member(client_a, running_peers(VpnNode))),
+    ?assert(lists:member(peer_b, running_peers(VpnNode))),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_clear_received_payloads,
+                  [peer_b],
+                  ?RPC_TIMEOUT_MS),
+    {ok, BeforeState} = rpc:call(VpnNode,
+                                 vpn_manager,
+                                 debug_session_state,
+                                 [client_a],
+                                 ?RPC_TIMEOUT_MS),
+    ?assertEqual(established, maps:get(handshake_status, BeforeState)),
+    EpochBefore = maps:get(current_epoch, BeforeState),
+    ?assert(EpochBefore > 0),
+    RekeysBefore = maps:get(rekeys_completed, BeforeState),
+
+    {ok, SentBefore} = rpc:call(VpnNode,
+                                vpn_manager,
+                                debug_send_payload,
+                                [client_a, BeforePayload],
+                                ?RPC_TIMEOUT_MS),
+    {ok, ReceivedBefore} =
+        wait_for_received_payload(VpnNode, peer_b, BeforePayload, 5000),
+    ?assertEqual(EpochBefore, maps:get(key_epoch, SentBefore)),
+    ?assertEqual(EpochBefore, maps:get(key_epoch, ReceivedBefore)),
+
+    {ok, NextEpoch} = rpc:call(VpnNode,
+                               vpn_manager,
+                               rekey,
+                               [client_a],
+                               ?RPC_TIMEOUT_MS),
+    ?assertEqual(EpochBefore + 1, NextEpoch),
+    {ok, ClientAfterRekey} = rpc:call(VpnNode,
+                                      vpn_manager,
+                                      debug_wait_for_epoch,
+                                      [client_a, NextEpoch, 5000],
+                                      7000),
+    {ok, PeerAfterRekey} = rpc:call(VpnNode,
+                                    vpn_manager,
+                                    debug_wait_for_epoch,
+                                    [peer_b, NextEpoch, 5000],
+                                    7000),
+    ?assertEqual(established, maps:get(handshake_status, ClientAfterRekey)),
+    ?assertEqual(established, maps:get(handshake_status, PeerAfterRekey)),
+    ?assertEqual(EpochBefore, maps:get(previous_epoch, ClientAfterRekey)),
+    ?assertEqual(EpochBefore, maps:get(previous_epoch, PeerAfterRekey)),
+    ?assert(maps:get(rekeys_completed, ClientAfterRekey) >= RekeysBefore + 1),
+
+    {ok, SentAfter} = rpc:call(VpnNode,
+                               vpn_manager,
+                               debug_send_payload,
+                               [client_a, AfterPayload],
+                               ?RPC_TIMEOUT_MS),
+    {ok, ReceivedAfter} =
+        wait_for_received_payload(VpnNode, peer_b, AfterPayload, 5000),
+    ?assertEqual(NextEpoch, maps:get(key_epoch, SentAfter)),
+    ?assertEqual(NextEpoch, maps:get(key_epoch, ReceivedAfter)),
+    ?assertEqual(AfterPayload, maps:get(payload, ReceivedAfter)),
+
+    {ok, ClientFinalState} = rpc:call(VpnNode,
+                                      vpn_manager,
+                                      debug_session_state,
+                                      [client_a],
+                                      ?RPC_TIMEOUT_MS),
+    {ok, PeerFinalState} = rpc:call(VpnNode,
+                                    vpn_manager,
+                                    debug_session_state,
+                                    [peer_b],
+                                    ?RPC_TIMEOUT_MS),
+    ?assertEqual(NextEpoch, maps:get(current_epoch, ClientFinalState)),
+    ?assertEqual(NextEpoch, maps:get(current_epoch, PeerFinalState)),
+    ?assert(maps:get(tx_packets_since_rekey, ClientFinalState) >= 1),
+    ?assert(maps:get(rx_packets_since_rekey, PeerFinalState) >= 1),
+
+    {ok, ReceivedHistory} = rpc:call(VpnNode,
+                                     vpn_manager,
+                                     debug_received_payloads,
+                                     [peer_b],
+                                     ?RPC_TIMEOUT_MS),
+    BeforeMatches = [Entry || Entry <- ReceivedHistory,
+                              maps:get(payload, Entry, undefined) =:= BeforePayload],
+    AfterMatches = [Entry || Entry <- ReceivedHistory,
+                             maps:get(payload, Entry, undefined) =:= AfterPayload],
+    ?assertEqual(1, length(BeforeMatches)),
+    ?assertEqual(1, length(AfterMatches)),
     ok.
 
 wait_for_received_payload(VpnNode, PeerId, Payload, TimeoutMs) ->
