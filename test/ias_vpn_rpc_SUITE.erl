@@ -395,8 +395,9 @@ dataplane_recovers_after_peer_restart(Config) ->
                                         debug_send_payload,
                                         [client_a, BeforePayload],
                                         ?RPC_TIMEOUT_MS),
-    {ok, _ReceivedBeforeRestart} =
+    {ok, ReceivedBeforeRestart} =
         wait_for_received_payload(VpnNode, peer_b, BeforePayload, 5000),
+    ?assertEqual(BeforePayload, maps:get(payload, ReceivedBeforeRestart)),
 
     {ok, OldPid} = rpc:call(VpnNode,
                             vpn_manager,
@@ -443,11 +444,8 @@ dataplane_recovers_after_peer_restart(Config) ->
                                      debug_received_payloads,
                                      [peer_b],
                                      ?RPC_TIMEOUT_MS),
-    BeforeMatches = [Entry || Entry <- ReceivedHistory,
-                              maps:get(payload, Entry, undefined) =:= BeforePayload],
     AfterMatches = [Entry || Entry <- ReceivedHistory,
                              maps:get(payload, Entry, undefined) =:= AfterPayload],
-    ?assertEqual(1, length(BeforeMatches)),
     ?assertEqual(1, length(AfterMatches)),
     ok.
 
