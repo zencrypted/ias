@@ -27,7 +27,7 @@ init_per_suite(Config) ->
     ok = filelib:ensure_dir(LogPath),
     ok = prepare_vpn(VpnRepo),
     {ok, VpnProcess} = start_vpn(VpnRepo, LogPath),
-    case wait_for_node(?VPN_NODE, ?STARTUP_TIMEOUT_MS) of
+    case wait_for_vpn_ready(?VPN_NODE, ?STARTUP_TIMEOUT_MS) of
         ok ->
             application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
             application:set_env(ias, vpn_provisioning_vpn_node, ?VPN_NODE),
@@ -189,8 +189,16 @@ ensure_no_conflicting_vpn_node() ->
         pang -> ok;
         pong -> ct:fail({conflicting_vpn_node_running, 'vpn@127.0.0.1'})
     end,
-    _ = rpc:call(?VPN_NODE, init, stop, [], 1000),
-    ok.
+    case net_adm:ping(?VPN_NODE) of
+        pang ->
+            ok;
+        pong ->
+            _ = rpc:call(?VPN_NODE, init, stop, [], 1000),
+            case wait_for_node_down(?VPN_NODE, 5000) of
+                ok -> ok;
+                {error, Reason} -> ct:fail({stale_vpn_ct_node, Reason})
+            end
+    end.
 
 prepare_vpn(VpnRepo) ->
     Command = "cd " ++ shell_quote(VpnRepo) ++
@@ -227,7 +235,11 @@ vpn_process_owner(Parent, VpnRepo, LogPath) ->
                                           "exec env ERL_FLAGS=\"-name vpn_ct@127.0.0.1 " ++
                                           "-setcookie ias_vpn_ct_cookie\" " ++
                                           "rebar3 as debug shell --eval " ++
-                                          "'timer:sleep(infinity).' "]},
+                                          "'case application:ensure_all_started(vpn) of " ++
+                                          "{ok, _} -> ok; " ++
+                                          "{error, {vpn, {already_started, vpn}}} -> ok; " ++
+                                          "Other -> erlang:error({vpn_start_failed, Other}) " ++
+                                          "end, timer:sleep(infinity).' "]},
                                   {cd, VpnRepo},
                                   binary,
                                   exit_status,
@@ -264,6 +276,63 @@ vpn_process_loop(Port, Log) ->
             ok;
         {'EXIT', Port, _Reason} ->
             ok
+    end.
+
+wait_for_vpn_ready(Node, TimeoutMs) ->
+    StartedAt = erlang:monotonic_time(millisecond),
+    wait_for_vpn_ready(Node, TimeoutMs, StartedAt, not_connected).
+
+wait_for_vpn_ready(Node, TimeoutMs, StartedAt, LastReason) ->
+    Ready = case net_adm:ping(Node) of
+                pang ->
+                    {error, not_connected};
+                pong ->
+                    case rpc:call(Node, code, which, [vpn_peer_registry], ?RPC_TIMEOUT_MS) of
+                        non_existing ->
+                            {error, vpn_code_not_loaded};
+                        {badrpc, Reason} ->
+                            {error, {vpn_code_probe_failed, Reason}};
+                        _BeamPath ->
+                            case rpc:call(Node,
+                                          application,
+                                          which_applications,
+                                          [],
+                                          ?RPC_TIMEOUT_MS) of
+                                Apps when is_list(Apps) ->
+                                    case lists:keymember(vpn, 1, Apps) of
+                                        true -> ok;
+                                        false -> {error, vpn_application_not_started}
+                                    end;
+                                {badrpc, Reason} ->
+                                    {error, {vpn_application_probe_failed, Reason}}
+                            end
+                    end
+            end,
+    case Ready of
+        ok ->
+            ok;
+        {error, Reason} ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= TimeoutMs of
+                true -> {error, {timeout, Reason, LastReason}};
+                false ->
+                    timer:sleep(250),
+                    wait_for_vpn_ready(Node, TimeoutMs, StartedAt, Reason)
+            end
+    end.
+
+wait_for_node_down(Node, TimeoutMs) ->
+    wait_for_node_down(Node, TimeoutMs, erlang:monotonic_time(millisecond)).
+
+wait_for_node_down(Node, TimeoutMs, StartedAt) ->
+    case net_adm:ping(Node) of
+        pang -> ok;
+        pong ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= TimeoutMs of
+                true -> {error, timeout};
+                false -> timer:sleep(100), wait_for_node_down(Node, TimeoutMs, StartedAt)
+            end
     end.
 
 wait_for_node(Node, TimeoutMs) ->
