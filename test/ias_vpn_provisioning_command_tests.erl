@@ -87,7 +87,7 @@ normalizes_binary_authorization_reason_test_() ->
                            maps:get(id, Device), disable),
          Desired = maps:get(desired_state, Command),
          Reason = maps:get(authorization_reason, Desired),
-         [?_assertEqual(<<"certificate_not_verified">>, Reason)]
+         [?_assertEqual(<<"no_vpn_service">>, Reason)]
      end}.
 
 setup() ->
