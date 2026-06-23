@@ -231,7 +231,7 @@ provisioned_peer_transfers_dataplane_payload(Config) ->
     ?assertEqual(Payload, maps:get(payload, Received)),
     ?assertEqual(byte_size(Payload), maps:get(bytes, Received)),
     ?assertEqual(ExpectedDigest, maps:get(sha256, Received)),
-    ?assertEqual(client_a, maps:get(peer_id, Received)),
+    ?assertEqual(<<"client_a">>, maps:get(peer_id, Received)),
     ?assertEqual(maps:get(key_epoch, Sent), maps:get(key_epoch, Received)),
     ?assertEqual(maps:get(seq, Sent), maps:get(seq, Received)),
 
