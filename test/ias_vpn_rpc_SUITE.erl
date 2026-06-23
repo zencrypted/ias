@@ -290,8 +290,8 @@ wait_for_vpn_ready(Node, TimeoutMs, StartedAt, LastReason) ->
                     case rpc:call(Node, code, which, [vpn_peer_registry], ?RPC_TIMEOUT_MS) of
                         non_existing ->
                             {error, vpn_code_not_loaded};
-                        {badrpc, Reason} ->
-                            {error, {vpn_code_probe_failed, Reason}};
+                        {badrpc, CodeProbeReason} ->
+                            {error, {vpn_code_probe_failed, CodeProbeReason}};
                         _BeamPath ->
                             case rpc:call(Node,
                                           application,
@@ -303,21 +303,21 @@ wait_for_vpn_ready(Node, TimeoutMs, StartedAt, LastReason) ->
                                         true -> ok;
                                         false -> {error, vpn_application_not_started}
                                     end;
-                                {badrpc, Reason} ->
-                                    {error, {vpn_application_probe_failed, Reason}}
+                                {badrpc, AppProbeReason} ->
+                                    {error, {vpn_application_probe_failed, AppProbeReason}}
                             end
                     end
             end,
     case Ready of
         ok ->
             ok;
-        {error, Reason} ->
+        {error, ReadyReason} ->
             Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
             case Elapsed >= TimeoutMs of
-                true -> {error, {timeout, Reason, LastReason}};
+                true -> {error, {timeout, ReadyReason, LastReason}};
                 false ->
                     timer:sleep(250),
-                    wait_for_vpn_ready(Node, TimeoutMs, StartedAt, Reason)
+                    wait_for_vpn_ready(Node, TimeoutMs, StartedAt, ReadyReason)
             end
     end.
 
