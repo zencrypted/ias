@@ -57,7 +57,16 @@ vpn_page_renders_create_service_form_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_summary">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_auto_refresh">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Refresh now">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Auto-refresh: 2s">>)).
+    ?assertMatch({_, _}, binary:match(Html, <<"Auto-refresh: 2s">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Runtime: unavailable | Last attempt:">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"·">>)).
+
+runtime_refresh_panels_preserve_update_targets_test() ->
+    StatusHtml = iolist_to_binary(nitro:render(ias_vpn:runtime_status_panel({error, unavailable}))),
+    SummaryHtml = iolist_to_binary(nitro:render(ias_vpn:runtime_summary_panel({error, unavailable}))),
+
+    ?assertMatch({_, _}, binary:match(StatusHtml, <<"id=\"vpn_runtime_refresh_status\"">>)),
+    ?assertMatch({_, _}, binary:match(SummaryHtml, <<"id=\"vpn_runtime_summary\"">>)).
 
 vpn_page_honors_runtime_development_bypass_test() ->
     Summary = #{<<"counts">> => #{<<"configured">> => 1,

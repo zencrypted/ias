@@ -1,13 +1,14 @@
 -module(ias_vpn).
--export([event/1, content/1, create_vpn_service/4, create_vpn_service/6]).
+-export([event/1, content/1, create_vpn_service/4, create_vpn_service/6,
+         runtime_status_panel/1, runtime_summary_panel/1]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
     render();
 event(refresh_vpn_runtime) ->
     Summary = ias_vpn_runtime:summary(),
-    nitro:update(vpn_runtime_refresh_status, refresh_status(Summary)),
-    nitro:update(vpn_runtime_summary, render_summary(Summary)),
+    nitro:update(vpn_runtime_refresh_status, runtime_status_panel(Summary)),
+    nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary)),
     nitro:wire(<<"window.iasVpnRefreshBusy=false;">>);
 event(create_vpn_service) ->
     Name = field_value(nitro:q(vpn_service_name), <<"OpenVPN">>),
@@ -37,15 +38,13 @@ content(Summary) ->
         create_service_panel(),
         #panel{id = vpn_services_list, body = managed_services_panel()},
         runtime_refresh_controls(Summary),
-        #panel{id = vpn_runtime_summary, body = render_summary(Summary)}
+        runtime_summary_panel(Summary)
     ]}.
 
 runtime_refresh_controls(Summary) ->
     #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 8px;">>,
            body = [
-               #panel{id = vpn_runtime_refresh_status,
-                      style = <<"font-size:12px;color:#64748b;">>,
-                      body = refresh_status(Summary)},
+               runtime_status_panel(Summary),
                #link{id = vpn_runtime_refresh_now,
                      class = [button, sgreen],
                      body = ias_html:text("Refresh now"),
@@ -56,14 +55,22 @@ runtime_refresh_controls(Summary) ->
                      postback = refresh_vpn_runtime}
            ]}.
 
+runtime_status_panel(Summary) ->
+    #panel{id = vpn_runtime_refresh_status,
+           style = <<"font-size:12px;color:#64748b;">>,
+           body = refresh_status(Summary)}.
+
+runtime_summary_panel(Summary) ->
+    #panel{id = vpn_runtime_summary, body = render_summary(Summary)}.
+
 refresh_status({ok, Data}) when is_map(Data) ->
-    ias_html:join([<<"Runtime: connected · Last update: ">>,
+    ias_html:join([<<"Runtime: connected | Last update: ">>,
                    utc_time_text(),
-                   <<" UTC · Auto-refresh: 2s">>]);
+                   <<" UTC | Auto-refresh: 2s">>]);
 refresh_status(_) ->
-    ias_html:join([<<"Runtime: unavailable · Last attempt: ">>,
+    ias_html:join([<<"Runtime: unavailable | Last attempt: ">>,
                    utc_time_text(),
-                   <<" UTC · Auto-refresh: 2s">>]).
+                   <<" UTC | Auto-refresh: 2s">>]).
 
 utc_time_text() ->
     {{_Year, _Month, _Day}, {Hour, Minute, Second}} = calendar:universal_time(),
