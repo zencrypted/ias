@@ -234,12 +234,7 @@ vpn_process_owner(Parent, VpnRepo, LogPath) ->
                                  [{args, ["-lc",
                                           "exec env ERL_FLAGS=\"-name vpn_ct@127.0.0.1 " ++
                                           "-setcookie ias_vpn_ct_cookie\" " ++
-                                          "rebar3 as debug shell --eval " ++
-                                          "'case application:ensure_all_started(vpn) of " ++
-                                          "{ok, _} -> ok; " ++
-                                          "{error, {vpn, {already_started, vpn}}} -> ok; " ++
-                                          "Other -> erlang:error({vpn_start_failed, Other}) " ++
-                                          "end, timer:sleep(infinity).' "]},
+                                          "rebar3 as debug shell"]},
                                   {cd, VpnRepo},
                                   binary,
                                   exit_status,
