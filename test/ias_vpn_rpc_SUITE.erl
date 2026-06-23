@@ -11,7 +11,8 @@
          provisioned_peer_transfers_dataplane_payload/1,
          dataplane_survives_authenticated_rekey/1,
          dataplane_recovers_after_peer_restart/1,
-         replayed_dataplane_frame_is_rejected/1]).
+         replayed_dataplane_frame_is_rejected/1,
+         previous_epoch_expires_after_grace_window/1]).
 
 -define(VPN_NODE, 'vpn_ct@127.0.0.1').
 -define(COOKIE, ias_vpn_ct_cookie).
@@ -24,7 +25,8 @@ all() ->
      provisioned_peer_transfers_dataplane_payload,
      dataplane_survives_authenticated_rekey,
      dataplane_recovers_after_peer_restart,
-     replayed_dataplane_frame_is_rejected].
+     replayed_dataplane_frame_is_rejected,
+     previous_epoch_expires_after_grace_window].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -516,6 +518,117 @@ replayed_dataplane_frame_is_rejected(Config) ->
     ?assertEqual(1, length(Matches)),
     ok.
 
+
+previous_epoch_expires_after_grace_window(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_previous_epoch_">>),
+    Payload = <<"ias-vpn-previous-epoch-probe">>,
+
+    ok = reset_ias_state(),
+    allow = prepare_authorized_peer(DeviceId, client_a, ActualFingerprint),
+    {ok, UpsertDelivery} =
+        deliver_upsert_after_runtime_revision(VpnNode,
+                                              DeviceId,
+                                              client_a),
+    ?assertEqual(applied, maps:get(delivery_status, UpsertDelivery)),
+    timer:sleep(500),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_clear_received_payloads,
+                  [peer_b],
+                  ?RPC_TIMEOUT_MS),
+    {ok, Sent} = rpc:call(VpnNode,
+                          vpn_manager,
+                          debug_send_payload,
+                          [client_a, Payload],
+                          ?RPC_TIMEOUT_MS),
+    PreviousEpoch = maps:get(key_epoch, Sent),
+    PreviousSeq = maps:get(seq, Sent),
+    {ok, FirstReceipt} =
+        wait_for_received_payload(VpnNode, peer_b, Payload, 5000),
+    ?assertEqual(PreviousEpoch, maps:get(key_epoch, FirstReceipt)),
+    ?assertEqual(PreviousSeq, maps:get(seq, FirstReceipt)),
+
+    {ok, NextEpoch} = rpc:call(VpnNode,
+                               vpn_manager,
+                               rekey,
+                               [client_a],
+                               ?RPC_TIMEOUT_MS),
+    ?assertEqual(PreviousEpoch + 1, NextEpoch),
+    {ok, _ClientAfterRekey} = rpc:call(VpnNode,
+                                       vpn_manager,
+                                       debug_wait_for_epoch,
+                                       [client_a, NextEpoch, 5000],
+                                       7000),
+    {ok, PeerAfterRekey} = rpc:call(VpnNode,
+                                    vpn_manager,
+                                    debug_wait_for_epoch,
+                                    [peer_b, NextEpoch, 5000],
+                                    7000),
+    ?assertEqual(PreviousEpoch, maps:get(previous_epoch, PeerAfterRekey)),
+    GraceRemaining = maps:get(previous_epoch_expires_in_ms, PeerAfterRekey),
+    ?assert(is_integer(GraceRemaining)),
+    ?assert(GraceRemaining > 0),
+
+    {ok, StatsBeforeGraceReplay} = peer_link_stats(VpnNode, peer_b),
+    DuplicateBefore = maps:get(duplicate_frames, StatsBeforeGraceReplay, 0),
+    ReplayDropsBefore = maps:get(replay_drops, StatsBeforeGraceReplay, 0),
+    StaleBefore = maps:get(stale_epoch_drops, StatsBeforeGraceReplay, 0),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_replay_frame,
+                  [client_a, PreviousEpoch, PreviousSeq],
+                  ?RPC_TIMEOUT_MS),
+    {ok, StatsDuringGrace} =
+        wait_for_replay_rejection(VpnNode,
+                                  peer_b,
+                                  DuplicateBefore + 1,
+                                  ReplayDropsBefore + 1,
+                                  5000),
+    ?assertEqual(StaleBefore, maps:get(stale_epoch_drops, StatsDuringGrace, 0)),
+
+    {ok, ExpiredState} =
+        wait_for_previous_epoch_expiry(VpnNode,
+                                       peer_b,
+                                       GraceRemaining + 3000),
+    ?assertEqual(undefined, maps:get(previous_epoch, ExpiredState)),
+    ?assertEqual(undefined,
+                 maps:get(previous_epoch_expires_in_ms, ExpiredState)),
+
+    {ok, StatsBeforeExpiredReplay} = peer_link_stats(VpnNode, peer_b),
+    StaleBeforeExpiredReplay =
+        maps:get(stale_epoch_drops, StatsBeforeExpiredReplay, 0),
+    RejectedBeforeExpiredReplay =
+        maps:get(frames_rejected, StatsBeforeExpiredReplay, 0),
+
+    ok = rpc:call(VpnNode,
+                  vpn_manager,
+                  debug_replay_frame,
+                  [client_a, PreviousEpoch, PreviousSeq],
+                  ?RPC_TIMEOUT_MS),
+    {ok, StatsAfterExpiredReplay} =
+        wait_for_stale_epoch_rejection(VpnNode,
+                                       peer_b,
+                                       StaleBeforeExpiredReplay + 1,
+                                       RejectedBeforeExpiredReplay + 1,
+                                       5000),
+    ?assertEqual(StaleBeforeExpiredReplay + 1,
+                 maps:get(stale_epoch_drops, StatsAfterExpiredReplay, 0)),
+
+    {ok, ReceivedHistory} = rpc:call(VpnNode,
+                                     vpn_manager,
+                                     debug_received_payloads,
+                                     [peer_b],
+                                     ?RPC_TIMEOUT_MS),
+    Matches = [Entry || Entry <- ReceivedHistory,
+                        maps:get(payload, Entry, undefined) =:= Payload],
+    ?assertEqual(1, length(Matches)),
+    ok.
+
 peer_link_stats(VpnNode, PeerId) ->
     case rpc:call(VpnNode,
                   vpn_manager,
@@ -526,6 +639,112 @@ peer_link_stats(VpnNode, PeerId) ->
             {ok, LinkStats};
         Other ->
             {error, Other}
+    end.
+
+
+wait_for_previous_epoch_expiry(VpnNode, PeerId, TimeoutMs) ->
+    wait_for_previous_epoch_expiry(VpnNode,
+                                   PeerId,
+                                   TimeoutMs,
+                                   erlang:monotonic_time(millisecond),
+                                   not_started).
+
+wait_for_previous_epoch_expiry(VpnNode, PeerId, TimeoutMs, StartedAt, LastResult) ->
+    Result = rpc:call(VpnNode,
+                      vpn_manager,
+                      debug_session_state,
+                      [PeerId],
+                      ?RPC_TIMEOUT_MS),
+    case Result of
+        {ok, #{previous_epoch := undefined} = SessionState} ->
+            {ok, SessionState};
+        _ ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= TimeoutMs of
+                true ->
+                    ct:fail({vpn_previous_epoch_not_expired, PeerId, LastResult, Result});
+                false ->
+                    timer:sleep(100),
+                    wait_for_previous_epoch_expiry(VpnNode,
+                                                   PeerId,
+                                                   TimeoutMs,
+                                                   StartedAt,
+                                                   Result)
+            end
+    end.
+
+wait_for_stale_epoch_rejection(VpnNode,
+                               PeerId,
+                               ExpectedStaleDrops,
+                               ExpectedRejected,
+                               TimeoutMs) ->
+    wait_for_stale_epoch_rejection(VpnNode,
+                                   PeerId,
+                                   ExpectedStaleDrops,
+                                   ExpectedRejected,
+                                   TimeoutMs,
+                                   erlang:monotonic_time(millisecond),
+                                   not_started).
+
+wait_for_stale_epoch_rejection(VpnNode,
+                               PeerId,
+                               ExpectedStaleDrops,
+                               ExpectedRejected,
+                               TimeoutMs,
+                               StartedAt,
+                               LastResult) ->
+    Result = peer_link_stats(VpnNode, PeerId),
+    case Result of
+        {ok, Stats} ->
+            StaleDrops = maps:get(stale_epoch_drops, Stats, 0),
+            Rejected = maps:get(frames_rejected, Stats, 0),
+            case StaleDrops >= ExpectedStaleDrops andalso
+                 Rejected >= ExpectedRejected of
+                true ->
+                    {ok, Stats};
+                false ->
+                    wait_for_stale_epoch_rejection_retry(VpnNode,
+                                                         PeerId,
+                                                         ExpectedStaleDrops,
+                                                         ExpectedRejected,
+                                                         TimeoutMs,
+                                                         StartedAt,
+                                                         Result)
+            end;
+        _ ->
+            wait_for_stale_epoch_rejection_retry(VpnNode,
+                                                 PeerId,
+                                                 ExpectedStaleDrops,
+                                                 ExpectedRejected,
+                                                 TimeoutMs,
+                                                 StartedAt,
+                                                 Result)
+    end.
+
+wait_for_stale_epoch_rejection_retry(VpnNode,
+                                     PeerId,
+                                     ExpectedStaleDrops,
+                                     ExpectedRejected,
+                                     TimeoutMs,
+                                     StartedAt,
+                                     LastResult) ->
+    Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+    case Elapsed >= TimeoutMs of
+        true ->
+            ct:fail({vpn_stale_epoch_not_rejected,
+                     PeerId,
+                     ExpectedStaleDrops,
+                     ExpectedRejected,
+                     LastResult});
+        false ->
+            timer:sleep(100),
+            wait_for_stale_epoch_rejection(VpnNode,
+                                           PeerId,
+                                           ExpectedStaleDrops,
+                                           ExpectedRejected,
+                                           TimeoutMs,
+                                           StartedAt,
+                                           LastResult)
     end.
 
 wait_for_replay_rejection(VpnNode,
