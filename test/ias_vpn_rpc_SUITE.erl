@@ -26,7 +26,7 @@ init_per_suite(Config) ->
     LogPath = filename:join([cwd(), "_build", "test", "logs", "ias_vpn_rpc", "vpn.log"]),
     ok = filelib:ensure_dir(LogPath),
     ok = prepare_vpn(VpnRepo),
-    {ok, VpnOsPid} = start_vpn(VpnRepo, LogPath),
+    {ok, VpnProcess} = start_vpn(VpnRepo, LogPath),
     case wait_for_node(?VPN_NODE, ?STARTUP_TIMEOUT_MS) of
         ok ->
             application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
@@ -34,10 +34,10 @@ init_per_suite(Config) ->
             application:set_env(ias, vpn_provisioning_rpc_timeout, ?RPC_TIMEOUT_MS),
             [{vpn_repo, VpnRepo},
              {vpn_node, ?VPN_NODE},
-             {vpn_os_pid, VpnOsPid},
+             {vpn_process, VpnProcess},
              {vpn_log, LogPath} | Config];
         {error, Reason} ->
-            _ = stop_os_process(VpnOsPid),
+            _ = stop_vpn_process(VpnProcess),
             ct:fail({vpn_startup_failed, Reason, read_log(LogPath)})
     end.
 
@@ -45,9 +45,9 @@ end_per_suite(Config) ->
     VpnNode = proplists:get_value(vpn_node, Config, ?VPN_NODE),
     _ = rpc:call(VpnNode, init, stop, [], ?RPC_TIMEOUT_MS),
     timer:sleep(500),
-    case proplists:get_value(vpn_os_pid, Config) of
+    case proplists:get_value(vpn_process, Config) of
         undefined -> ok;
-        Pid -> _ = stop_os_process(Pid)
+        Process -> _ = stop_vpn_process(Process)
     end,
     application:unset_env(ias, vpn_provisioning_transport),
     application:unset_env(ias, vpn_provisioning_vpn_node),
@@ -205,18 +205,65 @@ prepare_vpn(VpnRepo) ->
     end.
 
 start_vpn(VpnRepo, LogPath) ->
-    Command = "cd " ++ shell_quote(VpnRepo) ++
-              " && nohup env ERL_FLAGS=\"-name vpn_ct@127.0.0.1 -setcookie ias_vpn_ct_cookie\"" ++
-              " rebar3 as debug shell --eval 'timer:sleep(infinity).'" ++
-              " > " ++ shell_quote(LogPath) ++ " 2>&1 < /dev/null & echo $!",
-    case run_command(Command, 10000) of
-        {ok, Output} ->
-            case string:to_integer(string:trim(Output)) of
-                {Pid, _Rest} when Pid > 0 -> {ok, Pid};
-                _ -> {error, {invalid_vpn_pid, Output}}
+    Parent = self(),
+    Process = spawn(fun() -> vpn_process_owner(Parent, VpnRepo, LogPath) end),
+    receive
+        {vpn_process_started, Process} ->
+            {ok, Process};
+        {vpn_process_failed, Process, Reason} ->
+            {error, Reason}
+    after 10000 ->
+        exit(Process, kill),
+        {error, {vpn_spawn_failed, timeout}}
+    end.
+
+vpn_process_owner(Parent, VpnRepo, LogPath) ->
+    process_flag(trap_exit, true),
+    case file:open(LogPath, [write, raw, binary]) of
+        {ok, Log} ->
+            try
+                Port = open_port({spawn_executable, "/bin/bash"},
+                                 [{args, ["-lc",
+                                          "exec env ERL_FLAGS=\"-name vpn_ct@127.0.0.1 " ++
+                                          "-setcookie ias_vpn_ct_cookie\" " ++
+                                          "rebar3 as debug shell --eval " ++
+                                          "'timer:sleep(infinity).' "]},
+                                  {cd, VpnRepo},
+                                  binary,
+                                  exit_status,
+                                  stderr_to_stdout,
+                                  use_stdio]),
+                Parent ! {vpn_process_started, self()},
+                vpn_process_loop(Port, Log)
+            catch
+                Class:Reason:Stacktrace ->
+                    Parent ! {vpn_process_failed,
+                              self(),
+                              {vpn_spawn_failed, Class, Reason, Stacktrace}}
+            after
+                file:close(Log)
             end;
-        {error, Status, Output} ->
-            {error, {vpn_spawn_failed, Status, Output}}
+        {error, Reason} ->
+            Parent ! {vpn_process_failed,
+                      self(),
+                      {vpn_log_open_failed, LogPath, Reason}}
+    end.
+
+vpn_process_loop(Port, Log) ->
+    receive
+        {Port, {data, Data}} ->
+            ok = file:write(Log, Data),
+            vpn_process_loop(Port, Log);
+        {Port, {exit_status, Status}} ->
+            ok = file:write(Log,
+                            iolist_to_binary(io_lib:format("~nVPN exited with status ~p~n",
+                                                         [Status]))),
+            ok;
+        stop ->
+            _ = catch port_close(Port),
+            ok;
+        {'EXIT', Port, _Reason} ->
+            ok
     end.
 
 wait_for_node(Node, TimeoutMs) ->
@@ -255,9 +302,18 @@ collect_command(Port, Timeout, Acc) ->
         {error, timeout, binary_to_list(iolist_to_binary(lists:reverse(Acc)))}
     end.
 
-stop_os_process(Pid) when is_integer(Pid), Pid > 0 ->
-    _ = os:cmd("kill " ++ integer_to_list(Pid) ++ " 2>/dev/null || true"),
-    ok.
+stop_vpn_process(Process) when is_pid(Process) ->
+    Monitor = erlang:monitor(process, Process),
+    Process ! stop,
+    receive
+        {'DOWN', Monitor, process, Process, _Reason} -> ok
+    after 3000 ->
+        exit(Process, kill),
+        receive
+            {'DOWN', Monitor, process, Process, _Reason} -> ok
+        after 1000 -> ok
+        end
+    end.
 
 read_log(Path) ->
     case file:read_file(Path) of
