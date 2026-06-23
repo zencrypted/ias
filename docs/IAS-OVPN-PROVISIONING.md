@@ -391,3 +391,15 @@ fixtures, but it is not switchable from request parameters or wizard UI and does
 not bypass PEM parsing, role separation, identical fingerprint checks, secret
 sanitization or OVPN directive injection protections. Transactions created in
 development mode record the bypass metadata and render a visible warning.
+
+## Canonical VPN Runtime Provisioning Command
+
+IAS now prepares a revisioned, sanitized runtime command independently from OVPN artifact export:
+
+```erlang
+{ok, Command} = ias_vpn_provisioning_command:build(DeviceId).
+```
+
+The command contains only runtime identity and authorization metadata. It never contains private-key material, PEM bodies, or an OVPN document. Repeated preparation of an unchanged projection keeps the same revision; a material operation or desired-state change advances the per-device revision.
+
+This stage intentionally does not deliver the command to VPN. Delivery is a separate adapter so previewing or rendering IAS pages cannot mutate VPN runtime state.
