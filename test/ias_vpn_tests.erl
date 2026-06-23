@@ -53,7 +53,11 @@ vpn_page_renders_create_service_form_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Remote Host">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Security Policy">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"CA Certificate">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Managed VPN Services">>)).
+    ?assertMatch({_, _}, binary:match(Html, <<"Managed VPN Services">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_summary">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_auto_refresh">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Refresh now">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Auto-refresh: 2s">>)).
 
 vpn_page_honors_runtime_development_bypass_test() ->
     Summary = #{<<"counts">> => #{<<"configured">> => 1,
