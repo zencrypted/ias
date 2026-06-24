@@ -125,6 +125,7 @@ IAS reads these application environment keys:
 - `vpn_provisioning_transport`: `disabled | erlang_rpc`
 - `vpn_provisioning_vpn_node`: distributed Erlang VPN node name
 - `vpn_provisioning_rpc_timeout`: RPC timeout in milliseconds
+- `vpn_dynamic_allocation_reservation`: reserve a VPN-owned dynamic pair before Device CSR preparation
 
 Default configuration is:
 
@@ -204,6 +205,55 @@ net_adm:ping('vpn@127.0.0.1').
 ```erlang
 ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert).
 ```
+
+## Dynamic allocation reservation bridge
+
+IAS can now reserve VPN-owned dynamic runtime resources before preparing a
+Device CSR. The bridge is enabled with:
+
+```erlang
+{vpn_dynamic_allocation_reservation, true}
+```
+
+When enabled, explicit CSR-plan preparation performs this control-plane step:
+
+```text
+selected IAS Device
+-> rpc:call(VpnNode, vpn_peer_allocator, ensure, [DeviceId], Timeout)
+-> safe allocation metadata
+-> IAS Device and wizard draft
+-> Device CSR plan
+```
+
+Reservation happens only when an administrator explicitly prepares or
+regenerates a Device CSR plan. Merely selecting or viewing a Device does not
+consume a VPN allocation. Repeating CSR preparation is safe because the VPN
+allocator owns idempotency for the Device ID.
+
+IAS stores only allocation identity metadata:
+
+- allocation ID and allocator instance ID;
+- client and gateway peer IDs;
+- slot and generation;
+- reservation state and persistence mode;
+- allocator creation timestamp.
+
+IAS deliberately does not copy the allocator's interface names, tunnel
+addresses, UDP ports, certificate paths, private-key paths, PEM bodies, or
+identity bundles. VPN remains the owner of transport resources and identity
+material. The RPC result is validated against the selected Device ID before it
+is persisted.
+
+This bridge does not yet switch provisioning to the dynamic client peer. The
+existing `alice -> client_a` and `bob -> client_b` runtime-slot mapping remains
+the active delivery path until VPN can atomically reconcile and start both
+sides of an allocator-backed pair. The pending reservation metadata prepares
+the domain model for that later cutover without breaking the verified static
+dataplane. The CSR common name is also unchanged at this stage.
+
+If reservation is enabled and VPN cannot reserve or validate an allocation, CSR
+plan preparation fails closed. Setting the feature to `false` preserves the
+previous isolated/static-preview behavior and performs no allocator RPC.
 
 ## Verified two-user Provisioning Wizard milestone
 

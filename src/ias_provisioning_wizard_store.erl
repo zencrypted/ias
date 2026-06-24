@@ -66,6 +66,15 @@ new(device_bound) ->
         pending_private_key_reference => undefined,
         pending_csr_filename => undefined,
         pending_enrollment_common_name => undefined,
+        vpn_allocation_id => undefined,
+        vpn_allocator_instance_id => undefined,
+        vpn_client_peer_id => undefined,
+        vpn_gateway_peer_id => undefined,
+        vpn_allocation_slot => undefined,
+        vpn_allocation_generation => undefined,
+        vpn_allocation_state => undefined,
+        vpn_allocation_persistence => undefined,
+        vpn_allocation_created_at => undefined,
         relationships_applied => false,
         provisioning_id => undefined,
         completed => false,
@@ -155,10 +164,12 @@ back(Id) ->
 select_user(Id, UserId) ->
     case valid_user(UserId) of
         {ok, User} ->
-            update(Id, reset_completion(#{user_id => maps:get(id, User),
-                                         device_id => undefined,
-                                         client_certificate_id => undefined,
-                                         relationships_applied => false}));
+            update(Id, reset_completion(maps:merge(
+                         clear_vpn_allocation_updates(),
+                         #{user_id => maps:get(id, User),
+                           device_id => undefined,
+                           client_certificate_id => undefined,
+                           relationships_applied => false})));
         {error, Reason} ->
             {error, Reason}
     end.
@@ -184,18 +195,31 @@ select_device(Id, DeviceId) ->
                                       user -> device;
                                       Step -> Step
                                   end,
-                    update(Id, reset_completion(#{user_id => Owner,
-                                                 device_id => maps:get(id, Device),
-                                                 current_step => CurrentStep,
-                                                 pending_private_key_reference => undefined,
-                                                 pending_csr_filename => undefined,
-                                                 pending_enrollment_common_name => undefined,
-                                                 relationships_applied => false}));
+                    update(Id, reset_completion(maps:merge(
+                                 clear_vpn_allocation_updates(),
+                                 #{user_id => Owner,
+                                   device_id => maps:get(id, Device),
+                                   current_step => CurrentStep,
+                                   pending_private_key_reference => undefined,
+                                   pending_csr_filename => undefined,
+                                   pending_enrollment_common_name => undefined,
+                                   relationships_applied => false})));
                 {error, Reason} -> {error, Reason}
             end;
         {not_found, _} -> {error, not_found};
         {_, {error, Reason}} -> {error, Reason}
     end.
+
+clear_vpn_allocation_updates() ->
+    #{vpn_allocation_id => undefined,
+      vpn_allocator_instance_id => undefined,
+      vpn_client_peer_id => undefined,
+      vpn_gateway_peer_id => undefined,
+      vpn_allocation_slot => undefined,
+      vpn_allocation_generation => undefined,
+      vpn_allocation_state => undefined,
+      vpn_allocation_persistence => undefined,
+      vpn_allocation_created_at => undefined}.
 
 resolve_device_owner(undefined, undefined) ->
     case ias_demo_store:users() of
@@ -357,13 +381,18 @@ prepare_or_replace_device_csr_plan(Id) ->
         {ok, Draft} ->
             case selected_device(Draft) of
                 {ok, Device} ->
-                    case ias_device_csr_command:generate(Device) of
-                        {ok, Plan} ->
-                            update(Id, #{
-                                pending_private_key_reference => maps:get(private_key_ref, Plan),
-                                pending_csr_filename => maps:get(csr_filename, Plan),
-                                pending_enrollment_common_name => maps:get(common_name, Plan)
-                            });
+                    case reserve_vpn_allocation(Device) of
+                        {ok, AllocationUpdates} ->
+                            case ias_device_csr_command:generate(Device) of
+                                {ok, Plan} ->
+                                    update(Id, maps:merge(AllocationUpdates, #{
+                                        pending_private_key_reference => maps:get(private_key_ref, Plan),
+                                        pending_csr_filename => maps:get(csr_filename, Plan),
+                                        pending_enrollment_common_name => maps:get(common_name, Plan)
+                                    }));
+                                {error, Reason} ->
+                                    {error, Reason}
+                            end;
                         {error, Reason} ->
                             {error, Reason}
                     end;
@@ -375,6 +404,28 @@ prepare_or_replace_device_csr_plan(Id) ->
         not_found ->
             {error, not_found}
     end.
+
+
+reserve_vpn_allocation(Device) ->
+    case ias_vpn_allocation:ensure(maps:get(id, Device)) of
+        disabled ->
+            {ok, #{}};
+        {ok, Allocation} ->
+            {ok, vpn_allocation_draft_updates(Allocation)};
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+vpn_allocation_draft_updates(Allocation) ->
+    #{vpn_allocation_id => maps:get(allocation_id, Allocation),
+      vpn_allocator_instance_id => maps:get(allocator_instance_id, Allocation),
+      vpn_client_peer_id => maps:get(client_peer_id, Allocation),
+      vpn_gateway_peer_id => maps:get(gateway_peer_id, Allocation),
+      vpn_allocation_slot => maps:get(slot, Allocation),
+      vpn_allocation_generation => maps:get(generation, Allocation),
+      vpn_allocation_state => maps:get(state, Allocation),
+      vpn_allocation_persistence => maps:get(persistence, Allocation),
+      vpn_allocation_created_at => maps:get(created_at, Allocation, undefined)}.
 
 relationship_review(Draft) when is_map(Draft) ->
     ias_provisioning_wizard_relationships:review(Draft);
@@ -873,6 +924,11 @@ validate_restored_draft(Draft) ->
                vpn_service_id, ca_certificate_id, client_certificate_id,
                pending_private_key_reference, pending_csr_filename,
                pending_enrollment_common_name,
+               vpn_allocation_id, vpn_allocator_instance_id,
+               vpn_client_peer_id, vpn_gateway_peer_id,
+               vpn_allocation_slot, vpn_allocation_generation,
+               vpn_allocation_state, vpn_allocation_persistence,
+               vpn_allocation_created_at,
                relationships_applied, provisioning_id, completed,
                completed_at, created_at, updated_at],
     Selected = maps:with(Allowed, Draft),
@@ -895,6 +951,16 @@ validate_restored_draft(Draft) ->
                  andalso valid_optional_private_key_ref(maps:get(pending_private_key_reference, Safe, undefined))
                  andalso valid_optional_reference(maps:get(pending_csr_filename, Safe, undefined))
                  andalso valid_optional_reference(maps:get(pending_enrollment_common_name, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(vpn_allocation_id, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(vpn_allocator_instance_id, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(vpn_client_peer_id, Safe, undefined))
+                 andalso valid_optional_reference(maps:get(vpn_gateway_peer_id, Safe, undefined))
+                 andalso valid_optional_positive_integer(maps:get(vpn_allocation_slot, Safe, undefined))
+                 andalso valid_optional_positive_integer(maps:get(vpn_allocation_generation, Safe, undefined))
+                 andalso valid_optional_allocation_state(maps:get(vpn_allocation_state, Safe, undefined))
+                 andalso valid_optional_allocation_persistence(maps:get(vpn_allocation_persistence, Safe, undefined))
+                 andalso valid_optional_timestamp(maps:get(vpn_allocation_created_at, Safe, undefined))
+                 andalso valid_allocation_metadata(Safe)
                  andalso valid_optional_reference(maps:get(provisioning_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(completed_at, Safe, undefined))
                  andalso is_boolean(maps:get(relationships_applied, Safe, false))
@@ -920,6 +986,38 @@ valid_optional_user_reference(Id) -> usable_restore_id(Id).
 valid_optional_profile_reference(undefined) -> true;
 valid_optional_profile_reference(Id) when is_atom(Id) -> true;
 valid_optional_profile_reference(Id) -> usable_restore_id(Id).
+
+
+valid_optional_positive_integer(undefined) -> true;
+valid_optional_positive_integer(Value) -> is_integer(Value) andalso Value > 0.
+
+valid_optional_allocation_state(undefined) -> true;
+valid_optional_allocation_state(reserved) -> true;
+valid_optional_allocation_state(released) -> true;
+valid_optional_allocation_state(_) -> false.
+
+valid_optional_allocation_persistence(undefined) -> true;
+valid_optional_allocation_persistence(volatile) -> true;
+valid_optional_allocation_persistence(durable) -> true;
+valid_optional_allocation_persistence(_) -> false.
+
+valid_optional_timestamp(undefined) -> true;
+valid_optional_timestamp(Value) when is_integer(Value) -> Value >= 0;
+valid_optional_timestamp(Value) -> usable_restore_id(Value).
+
+valid_allocation_metadata(Draft) ->
+    Values = [maps:get(vpn_allocation_id, Draft, undefined),
+              maps:get(vpn_allocator_instance_id, Draft, undefined),
+              maps:get(vpn_client_peer_id, Draft, undefined),
+              maps:get(vpn_gateway_peer_id, Draft, undefined),
+              maps:get(vpn_allocation_slot, Draft, undefined),
+              maps:get(vpn_allocation_generation, Draft, undefined),
+              maps:get(vpn_allocation_state, Draft, undefined),
+              maps:get(vpn_allocation_persistence, Draft, undefined)],
+    case lists:all(fun(Value) -> Value =:= undefined end, Values) of
+        true -> true;
+        false -> lists:all(fun(Value) -> Value =/= undefined end, Values)
+    end.
 
 valid_optional_private_key_ref(undefined) -> true;
 valid_optional_private_key_ref(<<>>) -> true;
