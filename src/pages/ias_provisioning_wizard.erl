@@ -78,6 +78,10 @@ event({wizard_create_another_provisioning, WizardId}) ->
         {ok, Draft, _Transaction} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
         {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
     end;
+event({wizard_provision_vpn_access, WizardId}) ->
+    Result = ias_vpn_wizard_provisioning:provision(WizardId),
+    nitro:update(wizard_vpn_provisioning_result,
+                 wizard_vpn_provisioning_result_panel(Result));
 event({wizard_download_device_bound_ovpn, ProvisioningId}) ->
     wizard_download_device_bound_ovpn(
         ias_device_bound_ovpn:download_response(ProvisioningId));
@@ -444,12 +448,55 @@ provisioning_created_panel(Draft, Transaction) ->
             #link{url = demo_object_url(ProvisioningId), class = [button, sgreen],
                   body = ias_html:text("Open Provisioning Transaction")},
             wizard_download_device_bound_ovpn_action(Transaction),
+            #link{class = [button, sgreen],
+                  body = ias_html:text("Provision VPN Access"),
+                  postback = {wizard_provision_vpn_access, maps:get(id, Draft)}},
             #link{class = [button, more],
                   body = ias_html:text("Create Another Transaction"),
                   postback = {wizard_create_another_provisioning, maps:get(id, Draft)}}
         ]},
+        wizard_vpn_provisioning_status_panel(Draft),
         #panel{id = wizard_ovpn_download_result}
     ]}.
+
+wizard_vpn_provisioning_status_panel(Draft) ->
+    DeviceId = maps:get(device_id, Draft, undefined),
+    Status = ias_vpn_provisioning_delivery:status(DeviceId),
+    #panel{id = wizard_vpn_provisioning_result,
+           style = <<"margin-top:12px;">>,
+           body = wizard_vpn_delivery_status_body(Status)}.
+
+wizard_vpn_provisioning_result_panel({ok, Result}) ->
+    Delivery = maps:get(delivery, Result, #{}),
+    Command = maps:get(command, Result, #{}),
+    #panel{id = wizard_vpn_provisioning_result,
+           style = <<"margin-top:12px;">>,
+           body = [wizard_notice("VPN Provisioning Delivery",
+                                 "The IAS provisioning command was delivered to the configured VPN runtime."),
+                   key_value_table([
+                       {"Peer", maps:get(peer_id, Command, maps:get(device_id, Result, undefined))},
+                       {"Operation", maps:get(operation, Delivery, upsert)},
+                       {"Revision", maps:get(revision, Delivery, maps:get(revision, Command, undefined))},
+                       {"Delivery", maps:get(delivery_status, Delivery, undefined)}
+                   ]),
+                   #link{url = <<"/app/vpn.htm">>, class = [button, more],
+                         body = ias_html:text("Open VPN Runtime")} ]};
+wizard_vpn_provisioning_result_panel({error, Reason}) ->
+    #panel{id = wizard_vpn_provisioning_result,
+           style = <<"margin-top:12px;">>,
+           body = wizard_error_panel(Reason)}.
+
+wizard_vpn_delivery_status_body(#{attempts := 0}) ->
+    [#p{body = ias_html:text("VPN runtime provisioning has not been attempted yet.")}];
+wizard_vpn_delivery_status_body(Status) ->
+    [key_value_table([
+         {"Last Operation", maps:get(last_operation, Status, undefined)},
+         {"Revision", maps:get(last_revision, Status, undefined)},
+         {"Delivery", maps:get(last_delivery_status, Status, undefined)},
+         {"Delivered At", maps:get(last_delivered_at, Status, undefined)}
+     ]),
+     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("Open VPN Runtime")}].
 
 wizard_download_device_bound_ovpn_action(#{mode := device_bound,
                                            artifact_status := public_bundle_ready,
