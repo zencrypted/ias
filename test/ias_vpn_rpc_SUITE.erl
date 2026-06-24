@@ -1344,10 +1344,24 @@ code_path_args(Paths) ->
     lists:append([["-pa", Path] || Path <- lists:reverse(Paths)]).
 
 vpn_start_expression(MnesiaDir) ->
+    MnesiaDirArgument = erl_term_argument(MnesiaDir),
     "ok = application:set_env(mnesia, dir, " ++
-    erl_term_argument(MnesiaDir) ++ "), " ++
+    MnesiaDirArgument ++ "), " ++
+    "io:format(standard_error, "
+    "\"VPN CT startup: preparing Mnesia schema in ~ts~n\", [" ++
+    MnesiaDirArgument ++ "]), " ++
+    "case mnesia:create_schema([node()]) of "
+    "ok -> ok; "
+    "{error, {_, {already_exists, _}}} -> ok; "
+    "{error, SchemaReason} -> io:format(standard_error, "
+    "\"VPN Mnesia schema creation failed: ~p~n\", [SchemaReason]), "
+    "halt(1) end, " ++
+    "io:format(standard_error, "
+    "\"VPN CT startup: starting VPN application~n\", []), " ++
     "case application:ensure_all_started(vpn) of "
-    "{ok, _} -> receive after infinity -> ok end; "
+    "{ok, _} -> io:format(standard_error, "
+    "\"VPN CT startup: VPN application started~n\", []), "
+    "receive after infinity -> ok end; "
     "{error, Reason} -> io:format(standard_error, "
     "\"VPN startup failed: ~p~n\", [Reason]), halt(1) end.".
 
