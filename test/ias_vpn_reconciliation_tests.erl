@@ -95,6 +95,112 @@ vpn_only_device_is_reported_as_orphan_test_() ->
          end
      end}.
 
+safe_replay_preserves_durable_command_and_is_idempotent_test_() ->
+    reconciliation_fixture(
+      fun(DeviceId, PeerId, Command1) ->
+          {ok, Command2, changed} = ias_vpn_authority:prepare(
+                                      DeviceId,
+                                      command(DeviceId,
+                                              PeerId,
+                                              disable,
+                                              false)),
+          Tracker = replay_tracker(behind,
+                                   DeviceId,
+                                   PeerId,
+                                   Command1,
+                                   Command2),
+          {ok, Before} = ias_vpn_reconciliation:device(DeviceId),
+          ?assertEqual(vpn_behind, maps:get(status, Before)),
+          ?assertEqual(2,
+                       maps:get(revision,
+                                maps:get(ias, Before))),
+
+          {ok, Replay} = ias_vpn_reconciliation:replay(DeviceId),
+          ?assertEqual(replayed, maps:get(outcome, Replay)),
+          ?assertEqual(true, maps:get(replay_performed, Replay)),
+          ?assertEqual(vpn_behind, maps:get(trigger_status, Replay)),
+          ?assertEqual(2, maps:get(command_revision, Replay)),
+          ?assertEqual(applied,
+                       maps:get(delivery_status,
+                                maps:get(delivery, Replay))),
+          ?assertEqual(synchronized,
+                       maps:get(status, maps:get('after', Replay))),
+          ?assertEqual(1, tracker_value(Tracker, apply_count)),
+
+          {ok, Authority} = ias_vpn_authority:get(DeviceId),
+          ?assertEqual(Command2,
+                       maps:get(canonical_command, Authority)),
+          ?assertEqual(2, maps:get(revision, Authority)),
+          HistoryAfterReplay = ias_vpn_provisioning_delivery:history(DeviceId),
+          ?assertEqual(1, length(HistoryAfterReplay)),
+
+          {ok, NoOp} = ias_vpn_reconciliation:replay(DeviceId),
+          ?assertEqual(already_synchronized, maps:get(outcome, NoOp)),
+          ?assertEqual(false, maps:get(replay_performed, NoOp)),
+          ?assertEqual(1, tracker_value(Tracker, apply_count)),
+          ?assertEqual(HistoryAfterReplay,
+                       ias_vpn_provisioning_delivery:history(DeviceId)),
+          ets:delete(Tracker)
+      end).
+
+missing_projection_is_replayed_by_safe_batch_test_() ->
+    reconciliation_fixture(
+      fun(DeviceId, PeerId, Command1) ->
+          {ok, Command2, changed} = ias_vpn_authority:prepare(
+                                      DeviceId,
+                                      command(DeviceId,
+                                              PeerId,
+                                              disable,
+                                              false)),
+          Tracker = replay_tracker(missing,
+                                   DeviceId,
+                                   PeerId,
+                                   Command1,
+                                   Command2),
+          {ok, Before} = ias_vpn_reconciliation:device(DeviceId),
+          ?assertEqual(missing_in_vpn, maps:get(status, Before)),
+
+          {ok, Result} = ias_vpn_reconciliation:replay(),
+          ?assertEqual(synchronized, maps:get(state, Result)),
+          ?assertEqual(1, maps:get(attempted_records, Result)),
+          ?assertEqual(1, maps:get(replayed_records, Result)),
+          ?assertEqual(0, maps:get(blocked_records, Result)),
+          ?assertEqual(0, maps:get(failed_records, Result)),
+          ?assertEqual(1, tracker_value(Tracker, apply_count)),
+          ?assertEqual(0,
+                       maps:get(drift_records,
+                                maps:get('after', Result))),
+          ets:delete(Tracker)
+      end).
+
+divergence_and_foreign_vpn_state_are_never_replayed_test_() ->
+    reconciliation_fixture(
+      fun(DeviceId, PeerId, Command1) ->
+          Conflicting = (head(Command1, applied))#{digest => <<0:256>>},
+          set_snapshot(#{PeerId => Conflicting},
+                       [registry_entry(DeviceId, PeerId, Command1)]),
+          ?assertEqual({error,
+                        {vpn_replay_blocked,
+                         divergence,
+                         command_digest_mismatch}},
+                       ias_vpn_reconciliation:replay(DeviceId)),
+
+          {ok, _Command2, changed} = ias_vpn_authority:prepare(
+                                       DeviceId,
+                                       command(DeviceId,
+                                               PeerId,
+                                               disable,
+                                               false)),
+          ForeignHead = (head(Command1, applied))#{source => external},
+          set_snapshot(#{PeerId => ForeignHead},
+                       [registry_entry(DeviceId, PeerId, Command1)]),
+          ?assertEqual({error,
+                        {vpn_replay_blocked,
+                         divergence,
+                         vpn_state_not_owned_by_ias}},
+                       ias_vpn_reconciliation:replay(DeviceId))
+      end).
+
 transport_disabled_fails_without_vpn_calls_test_() ->
     {setup,
      fun setup/0,
@@ -128,11 +234,13 @@ setup() ->
                  rpc_fun => application:get_env(ias,
                                                  vpn_provisioning_rpc_fun)},
     ok = ias_demo_store:clear(),
+    ok = ias_vpn_provisioning_delivery:reset(),
     application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
     Previous.
 
 cleanup(Previous) ->
     ok = ias_demo_store:clear(),
+    ok = ias_vpn_provisioning_delivery:reset(),
     restore_env(vpn_provisioning_transport, maps:get(transport, Previous)),
     restore_env(vpn_provisioning_rpc_fun, maps:get(rpc_fun, Previous)).
 
@@ -148,6 +256,59 @@ set_snapshot(Heads, Registry) ->
                                 Args})
           end,
     application:set_env(ias, vpn_provisioning_rpc_fun, Fun).
+
+replay_tracker(InitialState,
+               DeviceId,
+               PeerId,
+               BeforeCommand,
+               ReplayCommand) ->
+    Tracker = ets:new(ias_vpn_reconciliation_replay_tracker,
+                      [set, private]),
+    true = ets:insert(Tracker,
+                      [{state, InitialState},
+                       {apply_count, 0}]),
+    Fun = fun(_Node, vpn_provisioning, recovery_heads, [], _Timeout) ->
+                  case tracker_value(Tracker, state) of
+                      behind -> {ok, #{PeerId => head(BeforeCommand, applied)}};
+                      missing -> {ok, #{}};
+                      synchronized ->
+                          {ok, #{PeerId => head(ReplayCommand, applied)}}
+                  end;
+             (_Node, vpn_peer_registry, list, [], _Timeout) ->
+                  case tracker_value(Tracker, state) of
+                      behind -> [registry_entry(DeviceId,
+                                                PeerId,
+                                                BeforeCommand)];
+                      missing -> [];
+                      synchronized -> [registry_entry(DeviceId,
+                                                      PeerId,
+                                                      ReplayCommand)]
+                  end;
+             (_Node, vpn_provisioning, apply, [Delivered], _Timeout) ->
+                  case Delivered =:= ReplayCommand of
+                      true -> ok;
+                      false -> erlang:error({unexpected_replay_command,
+                                             Delivered,
+                                             ReplayCommand})
+                  end,
+                  _ = ets:update_counter(Tracker, apply_count, 1),
+                  true = ets:insert(Tracker, {state, synchronized}),
+                  {ok, #{operation => maps:get(operation, ReplayCommand),
+                         peer => registry_entry(DeviceId,
+                                                PeerId,
+                                                ReplayCommand)}};
+             (_Node, Module, Function, Args, _Timeout) ->
+                  erlang:error({unexpected_replay_rpc,
+                                Module,
+                                Function,
+                                Args})
+          end,
+    application:set_env(ias, vpn_provisioning_rpc_fun, Fun),
+    Tracker.
+
+tracker_value(Tracker, Key) ->
+    [{Key, Value}] = ets:lookup(Tracker, Key),
+    Value.
 
 head(Command, Phase) ->
     #{revision => maps:get(revision, Command),

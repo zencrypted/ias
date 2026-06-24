@@ -1,16 +1,19 @@
 %%%-------------------------------------------------------------------
-%% @doc Read-only IAS-to-VPN durable state reconciliation.
+%% @doc IAS-to-VPN durable state reconciliation and explicit safe replay.
 %%
-%% Stage 8B.2A intentionally reports drift without replaying commands or
-%% mutating either authority. IAS durable authority is compared with the VPN
-%% provisioning projection and safe peer registry snapshots. Automatic repair
-%% belongs to a later stage.
+%% Read-only reports compare IAS durable authority with the VPN provisioning
+%% projection and safe peer registry snapshots. Stage 8B.2B adds an explicit
+%% replay action for the two recoverable states only: vpn_behind and
+%% missing_in_vpn. Divergence, orphan, and authority-only records remain
+%% fail-closed and are never overwritten automatically.
 %%%-------------------------------------------------------------------
 -module(ias_vpn_reconciliation).
 
 -export([device/1,
          report/0,
-         status/0]).
+         status/0,
+         replay/0,
+         replay/1]).
 
 -define(DEFAULT_TIMEOUT, 5000).
 
@@ -69,6 +72,302 @@ report() ->
 
 status() ->
     report().
+
+%% @doc Replay every currently recoverable authority record.
+%%
+%% This is an explicit administrative action. It never replays divergence,
+%% orphan, authority-only, or already synchronized records. A fresh read-only
+%% report is returned after all eligible records have been attempted.
+-spec replay() -> {ok, map()} | {error, term()}.
+replay() ->
+    case report() of
+        {ok, BeforeReport} ->
+            Entries = maps:get(entries, BeforeReport, []),
+            Results = [replay_report_entry(Entry) || Entry <- Entries],
+            finish_replay_report(BeforeReport, Results);
+        {error, _} = Error ->
+            Error
+    end.
+
+%% @doc Replay one durable canonical command when reconciliation proves that
+%% VPN is behind IAS or the expected VPN projection/runtime is missing.
+%%
+%% The stored command is delivered byte-for-byte with the same revision. The
+%% IAS revision, command digest, canonical command, and allocation identity are
+%% verified again after delivery before a fresh VPN snapshot is accepted.
+-spec replay(term()) -> {ok, map()} | not_found | {error, term()}.
+replay(DeviceId0) ->
+    DeviceId = normalize_id(DeviceId0),
+    case ias_vpn_authority:get(DeviceId) of
+        {ok, Authority} ->
+            case vpn_snapshot() of
+                {ok, Snapshot} ->
+                    Entry = reconcile_authority(Authority, Snapshot),
+                    replay_authority(Authority, Entry);
+                {error, _} = Error ->
+                    Error
+            end;
+        not_found ->
+            not_found;
+        {error, Reason} ->
+            {error, {vpn_authority_read_failed, Reason}}
+    end.
+
+replay_authority(Authority, #{status := synchronized} = Entry) ->
+    {ok, replay_result(Authority,
+                       already_synchronized,
+                       false,
+                       Entry,
+                       undefined,
+                       Entry)};
+replay_authority(Authority,
+                 #{status := Status} = Entry)
+  when Status =:= vpn_behind; Status =:= missing_in_vpn ->
+    case replay_target_owned_by_ias(Entry) of
+        false ->
+            {error, {vpn_replay_blocked,
+                     divergence,
+                     vpn_state_not_owned_by_ias}};
+        true ->
+            case replay_command(Authority) of
+                {ok, Command, ReplayIdentity} ->
+                    replay_delivery(Authority,
+                                    Entry,
+                                    Command,
+                                    ReplayIdentity);
+                {error, Reason} ->
+                    {error, {vpn_replay_command_invalid, Reason}}
+            end
+    end;
+replay_authority(_Authority, #{status := Status, reason := Reason}) ->
+    {error, {vpn_replay_blocked, Status, Reason}}.
+
+replay_delivery(Authority,
+                Before,
+                Command,
+                ReplayIdentity) ->
+    case ias_vpn_provisioning_delivery:deliver(Command) of
+        {ok, Delivery} ->
+            case replay_delivery_accepted(Delivery) of
+                true ->
+                    verify_replay(Authority,
+                                  Before,
+                                  Delivery,
+                                  ReplayIdentity);
+                false ->
+                    {error,
+                     {vpn_replay_delivery_failed,
+                      maps:get(delivery_status, Delivery, undefined),
+                      maps:get(vpn_result, Delivery, undefined)}}
+            end;
+        {error, Reason} ->
+            {error, {vpn_replay_delivery_failed, sanitize_reason(Reason)}}
+    end.
+
+verify_replay(Authority,
+              Before,
+              Delivery,
+              ReplayIdentity) ->
+    DeviceId = maps:get(device_id, Authority),
+    case ias_vpn_authority:get(DeviceId) of
+        {ok, AuthorityAfter} ->
+            case replay_identity(AuthorityAfter) =:= ReplayIdentity of
+                false ->
+                    {error, vpn_authority_changed_during_replay};
+                true ->
+                    verify_replay_snapshot(AuthorityAfter,
+                                           Before,
+                                           Delivery)
+            end;
+        not_found ->
+            {error, vpn_authority_disappeared_during_replay};
+        {error, Reason} ->
+            {error, {vpn_authority_read_failed, Reason}}
+    end.
+
+verify_replay_snapshot(Authority, Before, Delivery) ->
+    case vpn_snapshot() of
+        {ok, Snapshot} ->
+            After = reconcile_authority(Authority, Snapshot),
+            case maps:get(status, After) of
+                synchronized ->
+                    {ok, replay_result(Authority,
+                                       replayed,
+                                       true,
+                                       Before,
+                                       Delivery,
+                                       After)};
+                Status ->
+                    {error,
+                     {vpn_replay_not_synchronized,
+                      Status,
+                      maps:get(reason, After, undefined)}}
+            end;
+        {error, Reason} ->
+            {error, {vpn_replay_verification_failed, Reason}}
+    end.
+
+replay_command(Authority) ->
+    DeviceId = maps:get(device_id, Authority),
+    Revision = maps:get(revision, Authority, 0),
+    Digest = maps:get(command_digest, Authority, undefined),
+    Command = maps:get(canonical_command, Authority, #{}),
+    Desired = maps:get(desired_state, Command, undefined),
+    Valid = is_map(Command)
+        andalso map_size(Command) > 0
+        andalso is_integer(Revision)
+        andalso Revision > 0
+        andalso maps:get(revision, Command, undefined) =:= Revision
+        andalso is_binary(Digest)
+        andalso byte_size(Digest) =:= 32
+        andalso is_ias_source(maps:get(source, Command, undefined))
+        andalso valid_replay_operation(maps:get(operation,
+                                                Command,
+                                                undefined))
+        andalso valid_peer_id(maps:get(peer_id, Command, undefined))
+        andalso is_map(Desired)
+        andalso normalize_id(maps:get(device_id, Desired, undefined)) =:= DeviceId
+        andalso expected_vpn_digest(Command) =/= undefined,
+    case Valid of
+        true -> {ok, Command, replay_identity(Authority)};
+        false -> {error, invalid_durable_canonical_command}
+    end.
+
+valid_replay_operation(upsert) -> true;
+valid_replay_operation(enable) -> true;
+valid_replay_operation(disable) -> true;
+valid_replay_operation(revoke) -> true;
+valid_replay_operation(remove) -> true;
+valid_replay_operation(_) -> false.
+
+replay_identity(Authority) ->
+    Binding = maps:get(binding, Authority, #{}),
+    #{revision => maps:get(revision, Authority, undefined),
+      command_digest => maps:get(command_digest, Authority, undefined),
+      canonical_command => maps:get(canonical_command, Authority, #{}),
+      allocation_identity => maps:with([vpn_allocation_id,
+                                        vpn_allocator_instance_id,
+                                        vpn_client_peer_id,
+                                        vpn_gateway_peer_id,
+                                        vpn_allocation_slot,
+                                        vpn_allocation_generation],
+                                       Binding)}.
+
+replay_delivery_accepted(Delivery) ->
+    lists:member(maps:get(delivery_status, Delivery, undefined),
+                 [applied, unchanged]).
+
+replay_target_owned_by_ias(Entry) ->
+    Vpn = maps:get(vpn, Entry, #{}),
+    Head = maps:get(head, Vpn, undefined),
+    Registry = maps:get(registry, Vpn, []),
+    replay_head_owned_by_ias(Head)
+        andalso lists:all(fun ias_managed_registry/1, Registry).
+
+replay_head_owned_by_ias(undefined) -> true;
+replay_head_owned_by_ias(Head) when is_map(Head) -> ias_managed_head(Head);
+replay_head_owned_by_ias(_Head) -> false.
+
+replay_result(Authority,
+              Outcome,
+              Performed,
+              Before,
+              Delivery,
+              After) ->
+    Command = maps:get(canonical_command, Authority, #{}),
+    #{device_id => maps:get(device_id, Authority),
+      outcome => Outcome,
+      safe_replay => true,
+      requested_action => replay,
+      automatic_action => none,
+      replay_performed => Performed,
+      trigger_status => maps:get(status, Before, undefined),
+      trigger_reason => maps:get(reason, Before, undefined),
+      command_revision => maps:get(revision, Authority, undefined),
+      command_digest => maps:get(command_digest, Authority, undefined),
+      expected_vpn_digest => expected_vpn_digest(Command),
+      delivery => Delivery,
+      before => Before,
+      'after' => After}.
+
+replay_report_entry(#{device_id := DeviceId, status := Status})
+  when Status =:= vpn_behind; Status =:= missing_in_vpn ->
+    case replay(DeviceId) of
+        {ok, Result} -> Result#{attempted => true};
+        {error, {vpn_replay_blocked, BlockedStatus, BlockedReason}} ->
+            #{device_id => DeviceId,
+              outcome => blocked,
+              attempted => false,
+              replay_performed => false,
+              status => BlockedStatus,
+              reason => BlockedReason};
+        {error, Reason} ->
+            #{device_id => DeviceId,
+              outcome => failed,
+              attempted => true,
+              replay_performed => false,
+              error => sanitize_reason(Reason)};
+        not_found ->
+            #{device_id => DeviceId,
+              outcome => failed,
+              attempted => true,
+              replay_performed => false,
+              error => authority_not_found}
+    end;
+replay_report_entry(#{device_id := DeviceId, status := synchronized}) ->
+    #{device_id => DeviceId,
+      outcome => already_synchronized,
+      attempted => false,
+      replay_performed => false};
+replay_report_entry(#{device_id := DeviceId,
+                      status := Status,
+                      reason := Reason}) ->
+    #{device_id => DeviceId,
+      outcome => blocked,
+      attempted => false,
+      replay_performed => false,
+      status => Status,
+      reason => Reason}.
+
+finish_replay_report(BeforeReport, Results) ->
+    Failed = count_outcome(failed, Results),
+    case report() of
+        {ok, AfterReport} ->
+            Result = #{state => replay_report_state(Failed, AfterReport),
+                       automatic_action => none,
+                       requested_action => replay,
+                       attempted_records => count_attempted(Results),
+                       replayed_records => count_outcome(replayed, Results),
+                       no_action_records => count_outcome(already_synchronized,
+                                                          Results),
+                       blocked_records => count_outcome(blocked, Results),
+                       failed_records => Failed,
+                       before => BeforeReport,
+                       'after' => AfterReport,
+                       results => Results},
+            case Failed of
+                0 -> {ok, Result};
+                _ -> {error, {vpn_safe_replay_failed, Result}}
+            end;
+        {error, Reason} ->
+            {error, {vpn_replay_verification_failed, Reason}}
+    end.
+
+replay_report_state(Failed, _AfterReport) when Failed > 0 ->
+    replay_failed;
+replay_report_state(0, AfterReport) ->
+    case maps:get(drift_records, AfterReport, 0) of
+        0 -> synchronized;
+        _ -> drift_remaining
+    end.
+
+count_outcome(Outcome, Results) ->
+    length([Result || Result <- Results,
+                      maps:get(outcome, Result, undefined) =:= Outcome]).
+
+count_attempted(Results) ->
+    length([Result || Result <- Results,
+                      maps:get(attempted, Result, false) =:= true]).
 
 vpn_snapshot() ->
     case transport() of

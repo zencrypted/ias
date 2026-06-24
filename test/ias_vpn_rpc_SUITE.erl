@@ -10,6 +10,7 @@
          provisioning_lifecycle/1,
          provisioning_identity_and_revision_guards/1,
          read_only_reconciliation_reports_synchronized_state/1,
+         safe_reconciliation_replays_vpn_behind_state/1,
          provisioned_peer_transfers_dataplane_payload/1,
          dataplane_survives_authenticated_rekey/1,
          dataplane_recovers_after_peer_restart/1,
@@ -27,6 +28,7 @@ all() ->
     [provisioning_lifecycle,
      provisioning_identity_and_revision_guards,
      read_only_reconciliation_reports_synchronized_state,
+     safe_reconciliation_replays_vpn_behind_state,
      provisioned_peer_transfers_dataplane_payload,
      dataplane_survives_authenticated_rekey,
      dataplane_recovers_after_peer_restart,
@@ -315,6 +317,61 @@ read_only_reconciliation_reports_synchronized_state(Config) ->
     [RegistryEntry] = maps:get(registry, VpnSnapshot),
     ?assertEqual(DeviceId, maps:get(id, RegistryEntry)),
     ?assertEqual(DeviceId, maps:get(device_id, RegistryEntry)),
+    ok.
+
+safe_reconciliation_replays_vpn_behind_state(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_safe_replay_">>),
+    ok = reset_ias_state(),
+    allow = prepare_authorized_device(DeviceId, ActualFingerprint),
+
+    {ok, UpsertResult} =
+        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+    ?assertEqual(applied, delivery_status(UpsertResult)),
+    ?assertEqual(1, command_revision(UpsertResult)),
+
+    {ok, DisableCommand} =
+        ias_vpn_provisioning_command:build(DeviceId, disable),
+    ?assertEqual(2, maps:get(revision, DisableCommand)),
+    {ok, Before} = ias_vpn_reconciliation:device(DeviceId),
+    ?assertEqual(vpn_behind, maps:get(status, Before)),
+    ?assertEqual(vpn_revision_behind, maps:get(reason, Before)),
+    HistoryBefore = ias_vpn_provisioning_delivery:history(DeviceId),
+
+    {ok, Replay} = ias_vpn_reconciliation:replay(DeviceId),
+    ?assertEqual(replayed, maps:get(outcome, Replay)),
+    ?assertEqual(true, maps:get(replay_performed, Replay)),
+    ?assertEqual(2, maps:get(command_revision, Replay)),
+    ?assertEqual(applied,
+                 maps:get(delivery_status,
+                          maps:get(delivery, Replay))),
+    ?assertEqual(synchronized,
+                 maps:get(status, maps:get('after', Replay))),
+    {ok, AuthorityAfterReplay} = ias_vpn_authority:get(DeviceId),
+    ?assertEqual(2, maps:get(revision, AuthorityAfterReplay)),
+    ?assertEqual(DisableCommand,
+                 maps:get(canonical_command, AuthorityAfterReplay)),
+    HistoryAfter = ias_vpn_provisioning_delivery:history(DeviceId),
+    ?assertEqual(length(HistoryBefore) + 1, length(HistoryAfter)),
+
+    {ok, RegistryAfterReplay} = rpc:call(VpnNode,
+                                         vpn_peer_registry,
+                                         get,
+                                         [DeviceId],
+                                         ?RPC_TIMEOUT_MS),
+    ?assertEqual(false, maps:get(enabled, RegistryAfterReplay)),
+    ?assertEqual(2, maps:get(revision, RegistryAfterReplay)),
+    ?assertEqual(disable,
+                 maps:get(last_provisioning_operation,
+                          RegistryAfterReplay)),
+
+    {ok, NoOp} = ias_vpn_reconciliation:replay(DeviceId),
+    ?assertEqual(already_synchronized, maps:get(outcome, NoOp)),
+    ?assertEqual(false, maps:get(replay_performed, NoOp)),
+    ?assertEqual(HistoryAfter,
+                 ias_vpn_provisioning_delivery:history(DeviceId)),
     ok.
 
 provisioned_peer_transfers_dataplane_payload(Config) ->

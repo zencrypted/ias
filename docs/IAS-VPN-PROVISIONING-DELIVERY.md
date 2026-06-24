@@ -49,8 +49,8 @@ VPN now persists allocator ownership, provisioning revision barriers, restrictiv
 tombstones, and the recoverable peer projection in KVS/Mnesia. A VPN node restart
 reconstructs the registry and eligible peer processes before reconciliation starts.
 IAS stores its own canonical command and public Device binding durably as well.
-Cross-node comparison and authoritative replay remain a separate Stage 8B.2
-reconciliation concern.
+IAS can compare those durable authorities without mutation and explicitly replay
+the stored command when VPN is behind or the expected VPN projection is missing.
 
 ## Deployment topology and optional embedded VPN
 
@@ -423,8 +423,8 @@ Common Test case.
 
 Automatic background reconciliation/retries and non-RPC transports remain out of
 scope for this stage. Local persistence is implemented on both IAS and VPN.
-Stage 8B.2A adds explicit read-only cross-node comparison below; authoritative
-replay remains a later boundary.
+Stage 8B.2A adds explicit read-only cross-node comparison below, while Stage
+8B.2B adds an explicit safe replay action without enabling background repair.
 
 ## Durable IAS VPN authority (Stage 8B.1)
 
@@ -439,8 +439,8 @@ KVS-backed VPN fields onto the current Device object, while Device writes commit
 VPN authority before publishing the updated object in ETS. Clearing demo state
 is an explicit destructive reset and also clears the durable VPN authority.
 
-Stage 8B.1 does not compare IAS and VPN projections or replay commands after a
-remote divergence. That reconciliation belongs to Stage 8B.2.
+Cross-node comparison and controlled replay are layered on top of this authority
+by Stage 8B.2A and Stage 8B.2B.
 
 ## Read-only IAS/VPN reconciliation (Stage 8B.2A)
 
@@ -470,5 +470,36 @@ its revision, because the VPN ledger digest intentionally differs from the
 internal IAS command-change digest stored by Stage 8B.1. Returned snapshots are
 filtered to public provisioning and registry fields only.
 
-Safe replay of `vpn_behind` and `missing_in_vpn` states, plus explicit handling
-of divergence and orphan records, remain Stage 8B.2B/8B.2C work.
+## Explicit safe replay (Stage 8B.2B)
+
+Read-only reconciliation remains the default operation:
+
+```erlang
+ias_vpn_reconciliation:device(DeviceId).
+ias_vpn_reconciliation:report().
+```
+
+Replay requires an explicit administrative call:
+
+```erlang
+ias_vpn_reconciliation:replay(DeviceId).
+ias_vpn_reconciliation:replay().
+```
+
+Only `vpn_behind` and `missing_in_vpn` are replayable. IAS reads the durable
+canonical command and delivers that exact map with the existing revision. It
+does not invoke the command builder and therefore cannot allocate a newer
+revision. Existing VPN heads and registry entries must also be IAS-owned before
+they may be replaced.
+
+After delivery IAS verifies that its revision, command digest, canonical
+command, and allocation identity did not change, then fetches a new VPN
+provisioning/registry snapshot. Success is returned only when the fresh snapshot
+is `synchronized`. Repeating replay for a synchronized Device is a no-op and
+does not add another delivery attempt.
+
+The zero-argument form replays only currently eligible authority records,
+skips synchronized and blocked records, and returns a final read-only report.
+`divergence`, `orphan`, foreign VPN state, and authority records without a
+canonical command remain fail-closed. Explicit divergence and orphan resolution
+remain Stage 8B.2C work.
