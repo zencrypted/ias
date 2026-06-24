@@ -83,7 +83,8 @@ event({wizard_create_another_provisioning, WizardId}) ->
 event({wizard_provision_vpn_access, WizardId}) ->
     Result = ias_vpn_wizard_provisioning:provision(WizardId),
     nitro:update(wizard_vpn_provisioning_result,
-                 wizard_vpn_provisioning_result_panel(WizardId, Result));
+                 wizard_vpn_provisioning_result_container(
+                     wizard_vpn_provisioning_result_panel(WizardId, Result)));
 event({wizard_disable_vpn_access, WizardId}) ->
     wizard_vpn_lifecycle_action(WizardId, disable);
 event({wizard_enable_vpn_access, WizardId}) ->
@@ -474,9 +475,13 @@ provisioning_created_panel(Draft, Transaction) ->
 wizard_vpn_provisioning_status_panel(Draft) ->
     DeviceId = maps:get(device_id, Draft, undefined),
     Status = ias_vpn_access_lifecycle:status(DeviceId),
+    wizard_vpn_provisioning_result_container(
+        wizard_vpn_lifecycle_status_body(maps:get(id, Draft), Status)).
+
+wizard_vpn_provisioning_result_container(Body) ->
     #panel{id = wizard_vpn_provisioning_result,
            style = <<"margin-top:12px;">>,
-           body = wizard_vpn_lifecycle_status_body(maps:get(id, Draft), Status)}.
+           body = Body}.
 
 wizard_vpn_provisioning_result_panel(WizardId, {ok, Result}) ->
     Delivery = maps:get(delivery, Result, #{}),
@@ -500,7 +505,8 @@ wizard_vpn_lifecycle_action(WizardId, Operation) ->
         Error -> Error
     end,
     Body = wizard_vpn_lifecycle_action_body(WizardId, Operation, Result),
-    nitro:update(wizard_vpn_provisioning_result, Body).
+    nitro:update(wizard_vpn_provisioning_result,
+                 wizard_vpn_provisioning_result_container(Body)).
 
 apply_wizard_vpn_lifecycle_operation(disable, DeviceId) ->
     ias_vpn_access_lifecycle:disable(DeviceId);
