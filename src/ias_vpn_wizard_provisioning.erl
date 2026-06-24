@@ -30,6 +30,7 @@ deliver(_Draft, _Transaction, undefined) ->
 deliver(Draft, Transaction, DeviceId) ->
     case bind_runtime_peer(DeviceId) of
         {ok, RuntimePeerId} ->
+            ok = synchronize_runtime_revision(DeviceId, RuntimePeerId),
             case ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert) of
                 {ok, DeliveryResult} ->
                     {ok, #{wizard_id => maps:get(id, Draft),
@@ -72,3 +73,31 @@ first_present([undefined | Rest]) -> first_present(Rest);
 first_present([<<>> | Rest]) -> first_present(Rest);
 first_present([Value | _]) -> Value;
 first_present([]) -> undefined.
+
+
+synchronize_runtime_revision(DeviceId, RuntimePeerId) ->
+    case application:get_env(ias, vpn_provisioning_transport, disabled) of
+        erlang_rpc ->
+            synchronize_runtime_revision(DeviceId, RuntimePeerId, vpn_node());
+        <<"erlang_rpc">> ->
+            synchronize_runtime_revision(DeviceId, RuntimePeerId, vpn_node());
+        _ ->
+            ok
+    end.
+
+synchronize_runtime_revision(DeviceId, RuntimePeerId, Node) ->
+    Timeout = application:get_env(ias, vpn_provisioning_rpc_timeout, 5000),
+    case rpc:call(Node, vpn_peer_registry, get, [RuntimePeerId], Timeout) of
+        {ok, Peer} when is_map(Peer) ->
+            Revision = maps:get(revision, Peer, 0),
+            ias_vpn_provisioning_state:ensure_minimum_revision(DeviceId, Revision);
+        {error, not_found} ->
+            ok;
+        {badrpc, _Reason} ->
+            ok;
+        _ ->
+            ok
+    end.
+
+vpn_node() ->
+    application:get_env(ias, vpn_provisioning_vpn_node, 'vpn@127.0.0.1').

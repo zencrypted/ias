@@ -44,6 +44,18 @@ runtime_peer_id_overrides_device_peer_id_test_() ->
           ?_assertEqual(DeviceId, maps:get(device_id, Desired))]
      end}.
 
+revision_floor_is_advanced_before_rebinding_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(#{device := Device}) ->
+         DeviceId = maps:get(id, Device),
+         ok = ias_vpn_provisioning_state:ensure_minimum_revision(DeviceId, 6),
+         {ok, Command} = ias_vpn_provisioning_command:build(DeviceId, upsert),
+         [?_assertEqual(7, maps:get(revision, Command)),
+          ?_assertEqual(7, ias_vpn_provisioning_state:current_revision(DeviceId))]
+     end}.
+
 revision_changes_only_when_projection_changes_test_() ->
     {setup,
      fun setup/0,

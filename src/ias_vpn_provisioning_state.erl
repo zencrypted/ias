@@ -2,6 +2,7 @@
 -export([ensure/0,
          reset/0,
          prepare/2,
+         ensure_minimum_revision/2,
          current_revision/1,
          last_command/1,
          status/0]).
@@ -32,6 +33,31 @@ prepare(DeviceId, Command0) when is_map(Command0) ->
         [] ->
             store(Key, 1, Fingerprint, Command0)
     end.
+
+
+ensure_minimum_revision(DeviceId, Revision) when is_integer(Revision), Revision >= 0 ->
+    ensure(),
+    Key = normalize_id(DeviceId),
+    case ets:lookup(?TABLE, Key) of
+        [{Key, #{revision := Current}}] when Current >= Revision ->
+            ok;
+        [{Key, State}] ->
+            true = ets:insert(?TABLE, {Key, State#{revision => Revision,
+                                                  fingerprint => undefined,
+                                                  command => #{},
+                                                  updated_at => erlang:system_time(second)}}),
+            ok;
+        [] ->
+            State = #{device_id => Key,
+                      revision => Revision,
+                      fingerprint => undefined,
+                      command => #{},
+                      updated_at => erlang:system_time(second)},
+            true = ets:insert(?TABLE, {Key, State}),
+            ok
+    end;
+ensure_minimum_revision(_DeviceId, _Revision) ->
+    {error, invalid_revision}.
 
 current_revision(DeviceId) ->
     ensure(),
