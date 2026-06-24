@@ -1351,6 +1351,12 @@ code_path_args(Paths) ->
 
 vpn_start_expression(MnesiaDir) ->
     MnesiaDirArgument = erl_term_argument(MnesiaDir),
+    "case application:load(mnesia) of " ++
+    "ok -> ok; " ++
+    "{error, {already_loaded, mnesia}} -> ok; " ++
+    "{error, LoadReason} -> io:format(standard_error, " ++
+    "\"VPN CT startup: Mnesia application load failed: ~p~n\", " ++
+    "[LoadReason]), halt(1) end, " ++
     "case application:get_env(mnesia, dir) of "
     "{ok, " ++ MnesiaDirArgument ++ "} -> "
     "io:format(standard_error, "
