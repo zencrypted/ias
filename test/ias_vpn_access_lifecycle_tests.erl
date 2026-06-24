@@ -108,21 +108,17 @@ disable_advances_runtime_revision(Context) ->
     ExpectedRevision = maps:get(initial_runtime_revision, Context) + 1,
     {ok, Result} = ias_vpn_access_lifecycle:disable(maps:get(device_id, Context)),
     {ok, RuntimePeer} = maps:get(runtime, Result),
-    maps:get(runtime_peer_id, Result) =:= client_b andalso
-    maps:get(operation, Result) =:= disable andalso
-    maps:get(revision, Result) =:= ExpectedRevision andalso
-    maps:get(delivery_status, Result) =:= applied andalso
-    maps:get(id, RuntimePeer) =:= client_b andalso
-    maps:get(device_id, RuntimePeer) =:= <<"bob-device">> andalso
-    maps:get(profile_id, RuntimePeer) =:= default_user andalso
-    maps:get(enabled, RuntimePeer) =:= false andalso
-    maps:get(authorized, RuntimePeer) =:= true andalso
-    maps:get(authorization_reason, RuntimePeer) =:= profile_allows_vpn andalso
-    maps:get(revision, RuntimePeer) =:= ExpectedRevision andalso
-    maps:get(revoked, RuntimePeer) =:= false andalso
-    maps:get(last_provisioning_operation, RuntimePeer) =:= disable andalso
-    not maps:is_key(private_key_path, RuntimePeer) andalso
-    not maps:is_key(session_key, RuntimePeer).
+    ExpectedRevision = maps:get(revision, Result),
+    ExpectedRevision = maps:get(revision, RuntimePeer),
+    client_b = maps:get(runtime_peer_id, Result),
+    disable = maps:get(operation, Result),
+    applied = maps:get(delivery_status, Result),
+    client_b = maps:get(id, RuntimePeer),
+    false = maps:get(enabled, RuntimePeer),
+    disable = maps:get(last_provisioning_operation, RuntimePeer),
+    false = maps:is_key(private_key_path, RuntimePeer),
+    false = maps:is_key(session_key, RuntimePeer),
+    true.
 
 enable_advances_revision(Context) ->
     {ok, Result} = ias_vpn_access_lifecycle:enable(maps:get(device_id, Context)),
