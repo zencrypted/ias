@@ -22,15 +22,15 @@
 -define(RPC_TIMEOUT_MS, 5000).
 
 all() ->
-    [wizard_provisions_device_into_vpn_runtime,
-     provisioning_lifecycle,
+    [provisioning_lifecycle,
      provisioning_identity_and_revision_guards,
      provisioned_peer_transfers_dataplane_payload,
      dataplane_survives_authenticated_rekey,
      dataplane_recovers_after_peer_restart,
      replayed_dataplane_frame_is_rejected,
      previous_epoch_expires_after_grace_window,
-     out_of_order_frames_within_replay_window_are_accepted].
+     out_of_order_frames_within_replay_window_are_accepted,
+     wizard_provisions_device_into_vpn_runtime].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),

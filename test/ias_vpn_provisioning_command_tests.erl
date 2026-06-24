@@ -26,6 +26,24 @@ canonical_command_test_() ->
           ?_assertEqual(false, maps:is_key(ovpn, Desired))]
      end}.
 
+
+runtime_peer_id_overrides_device_peer_id_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(#{device := Device}) ->
+         DeviceId = maps:get(id, Device),
+         RuntimePeerId = client_a,
+         _ = ias_demo_store:put_runtime_object(
+               Device#{peer_id => DeviceId,
+                       runtime_peer_id => RuntimePeerId,
+                       vpn_peer => RuntimePeerId}),
+         {ok, Command} = ias_vpn_provisioning_command:build(DeviceId, upsert),
+         Desired = maps:get(desired_state, Command),
+         [?_assertEqual(RuntimePeerId, maps:get(peer_id, Command)),
+          ?_assertEqual(DeviceId, maps:get(device_id, Desired))]
+     end}.
+
 revision_changes_only_when_projection_changes_test_() ->
     {setup,
      fun setup/0,

@@ -152,8 +152,8 @@ linked_certificate(DeviceId) ->
     end.
 
 peer_id(Device) ->
-    first_present([maps:get(peer_id, Device, undefined),
-                   maps:get(runtime_peer_id, Device, undefined),
+    first_present([maps:get(runtime_peer_id, Device, undefined),
+                   maps:get(peer_id, Device, undefined),
                    maps:get(id, Device)]).
 
 device(DeviceId) ->
