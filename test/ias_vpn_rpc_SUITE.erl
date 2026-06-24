@@ -22,15 +22,15 @@
 -define(RPC_TIMEOUT_MS, 5000).
 
 all() ->
-    [provisioning_lifecycle,
+    [wizard_provisions_device_into_vpn_runtime,
+     provisioning_lifecycle,
      provisioning_identity_and_revision_guards,
      provisioned_peer_transfers_dataplane_payload,
      dataplane_survives_authenticated_rekey,
      dataplane_recovers_after_peer_restart,
      replayed_dataplane_frame_is_rejected,
      previous_epoch_expires_after_grace_window,
-     out_of_order_frames_within_replay_window_are_accepted,
-     wizard_provisions_device_into_vpn_runtime].
+     out_of_order_frames_within_replay_window_are_accepted].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -49,6 +49,7 @@ init_per_suite(Config) ->
             application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
             application:set_env(ias, vpn_provisioning_vpn_node, ?VPN_NODE),
             application:set_env(ias, vpn_provisioning_rpc_timeout, ?RPC_TIMEOUT_MS),
+            application:set_env(ias, vpn_provisioning_runtime_peer_id, client_a),
             [{vpn_repo, VpnRepo},
              {vpn_node, ?VPN_NODE},
              {vpn_process, VpnProcess},
@@ -69,6 +70,7 @@ end_per_suite(Config) ->
     application:unset_env(ias, vpn_provisioning_transport),
     application:unset_env(ias, vpn_provisioning_vpn_node),
     application:unset_env(ias, vpn_provisioning_rpc_timeout),
+    application:unset_env(ias, vpn_provisioning_runtime_peer_id),
     ok.
 
 provisioning_lifecycle(Config) ->
@@ -1383,12 +1385,12 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
                                    ClientCertificateId,
                                    ActualFingerprint),
 
-    ?assertEqual({error, not_found},
-                 rpc:call(VpnNode,
-                          vpn_peer_registry,
-                          get,
-                          [DeviceId],
-                          ?RPC_TIMEOUT_MS)),
+    {ok, InitialRuntimePeer} = rpc:call(VpnNode,
+                                         vpn_peer_registry,
+                                         get,
+                                         [client_a],
+                                         ?RPC_TIMEOUT_MS),
+    ?assertEqual(0, maps:get(revision, InitialRuntimePeer)),
     ?assertEqual([], ias_vpn_provisioning_delivery:history(DeviceId)),
 
     {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
@@ -1424,26 +1426,37 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
     ?assertEqual(allow, maps:get(authorization, Transaction)),
     ?assertEqual(ready_for_delivery, maps:get(status, Transaction)),
 
-    {ok, DeliveryResult} =
-        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+    {ok, ProvisioningResult} =
+        ias_vpn_wizard_provisioning:provision(WizardId),
+    ?assertEqual(client_a, maps:get(runtime_peer_id, ProvisioningResult)),
+    DeliveryResult = #{command => maps:get(command, ProvisioningResult),
+                       delivery => maps:get(delivery, ProvisioningResult)},
     ?assertEqual(applied, delivery_status(DeliveryResult)),
     ?assertEqual(1, command_revision(DeliveryResult)),
-    CommandDesired = maps:get(desired_state, maps:get(command, DeliveryResult)),
+    Command = maps:get(command, DeliveryResult),
+    ?assertEqual(client_a, maps:get(peer_id, Command)),
+    CommandDesired = maps:get(desired_state, Command),
+    ?assertEqual(DeviceId, maps:get(device_id, CommandDesired)),
     ?assertEqual(administrator, maps:get(profile_id, CommandDesired)),
-    timer:sleep(500),
+
+    {ok, ClientSession} = wait_for_session_established(VpnNode, client_a, 5000),
+    {ok, GatewaySession} = wait_for_session_established(VpnNode, peer_b, 5000),
+    ?assertEqual(established, maps:get(handshake_status, ClientSession)),
+    ?assertEqual(established, maps:get(handshake_status, GatewaySession)),
 
     {ok, RuntimePeer} = rpc:call(VpnNode,
                                  vpn_peer_registry,
                                  get,
-                                 [DeviceId],
+                                 [client_a],
                                  ?RPC_TIMEOUT_MS),
-    ?assertEqual(DeviceId, maps:get(id, RuntimePeer)),
+    ?assertEqual(client_a, maps:get(id, RuntimePeer)),
+    ?assertEqual(DeviceId, maps:get(device_id, RuntimePeer)),
     ?assertEqual(ActualFingerprint,
                  maps:get(certificate_fingerprint, RuntimePeer)),
     ?assertEqual(true, maps:get(enabled, RuntimePeer)),
     ?assertEqual(true, maps:get(authorized, RuntimePeer)),
     ?assertEqual(administrator, maps:get(profile_id, RuntimePeer)),
-    ?assert(lists:member(DeviceId, running_peers(VpnNode))),
+    ?assert(lists:member(client_a, running_peers(VpnNode))),
 
     History = ias_vpn_provisioning_delivery:history(DeviceId),
     ?assertEqual(1, length(History)),
