@@ -89,6 +89,10 @@ event({wizard_disable_vpn_access, WizardId}) ->
     wizard_vpn_lifecycle_action(WizardId, disable);
 event({wizard_enable_vpn_access, WizardId}) ->
     wizard_vpn_lifecycle_action(WizardId, enable);
+event({wizard_confirm_revoke_vpn_access, WizardId}) ->
+    nitro:wire(#confirm{
+        text = wizard_vpn_revoke_confirm_text(),
+        postback = {wizard_revoke_vpn_access, WizardId}});
 event({wizard_revoke_vpn_access, WizardId}) ->
     wizard_vpn_lifecycle_action(WizardId, revoke);
 event({wizard_download_device_bound_ovpn, ProvisioningId}) ->
@@ -578,7 +582,9 @@ wizard_vpn_lifecycle_status_body(WizardId, Status) ->
             body = wizard_vpn_lifecycle_actions(WizardId, Runtime)}].
 
 wizard_vpn_lifecycle_actions(_WizardId, {ok, #{revoked := true}}) ->
-    [#link{url = <<"/app/vpn.htm">>, class = [button, more],
+    [#span{class = [button, more],
+           body = ias_html:text("VPN Access Revoked")},
+     #link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
 wizard_vpn_lifecycle_actions(WizardId, {ok, #{enabled := false}}) ->
     [#link{id = wizard_vpn_lifecycle_action_id(enable, WizardId),
@@ -604,9 +610,10 @@ wizard_vpn_revoke_action(WizardId) ->
     #link{id = wizard_vpn_lifecycle_action_id(revoke, WizardId),
           class = [button, more],
           body = ias_html:text("Revoke VPN Access"),
-          actions = [#confirm{
-              text = "Revoke VPN access permanently? Enabling the peer later will not bypass the revoke barrier.",
-              postback = {wizard_revoke_vpn_access, WizardId}}]}.
+          postback = {wizard_confirm_revoke_vpn_access, WizardId}}.
+
+wizard_vpn_revoke_confirm_text() ->
+    "Revoke VPN access permanently? Enabling the peer later will not bypass the revoke barrier.".
 
 wizard_vpn_lifecycle_action_id(Operation, WizardId) ->
     ias_html:join([<<"wizard_vpn_lifecycle_">>, Operation, <<"_">>, WizardId]).
@@ -617,6 +624,7 @@ wizard_runtime_state({ok, #{authorized := true}}) -> enabled;
 wizard_runtime_state({ok, _Peer}) -> available;
 wizard_runtime_state(Value) -> Value.
 
+wizard_runtime_value(authorized, {ok, #{revoked := true}}) -> false;
 wizard_runtime_value(Key, {ok, Peer}) -> maps:get(Key, Peer, undefined);
 wizard_runtime_value(_Key, _Runtime) -> undefined.
 
