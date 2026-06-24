@@ -346,7 +346,7 @@ ensure_disc_schema() ->
 
 ensure_authority_table() ->
     case lists:member(?TABLE, mnesia:system_info(tables)) of
-        true -> validate_authority_table();
+        true -> wait_for_authority_table();
         false -> create_authority_table()
     end.
 
@@ -355,19 +355,21 @@ create_authority_table() ->
                {type, set},
                {disc_copies, [node()]}],
     case mnesia:create_table(?TABLE, Options) of
-        {atomic, ok} ->
-            case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
-                ok -> validate_authority_table();
-                {timeout, Tables} ->
-                    {error, {vpn_authority_tables_unavailable, Tables}};
-                {error, Reason} ->
-                    {error, {vpn_authority_tables_unavailable, Reason}}
-            end;
+        {atomic, ok} -> wait_for_authority_table();
         {aborted, Reason} ->
             case contains_already_exists(Reason) of
-                true -> validate_authority_table();
+                true -> wait_for_authority_table();
                 false -> {error, {vpn_authority_table_create_failed, Reason}}
             end
+    end.
+
+wait_for_authority_table() ->
+    case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
+        ok -> validate_authority_table();
+        {timeout, Tables} ->
+            {error, {vpn_authority_tables_unavailable, Tables}};
+        {error, Reason} ->
+            {error, {vpn_authority_tables_unavailable, Reason}}
     end.
 
 validate_authority_table() ->
