@@ -13,7 +13,8 @@
          dataplane_recovers_after_peer_restart/1,
          replayed_dataplane_frame_is_rejected/1,
          previous_epoch_expires_after_grace_window/1,
-         out_of_order_frames_within_replay_window_are_accepted/1]).
+         out_of_order_frames_within_replay_window_are_accepted/1,
+         wizard_provisions_device_into_vpn_runtime/1]).
 
 -define(VPN_NODE, 'vpn_ct@127.0.0.1').
 -define(COOKIE, ias_vpn_ct_cookie).
@@ -28,7 +29,8 @@ all() ->
      dataplane_recovers_after_peer_restart,
      replayed_dataplane_frame_is_rejected,
      previous_epoch_expires_after_grace_window,
-     out_of_order_frames_within_replay_window_are_accepted].
+     out_of_order_frames_within_replay_window_are_accepted,
+     wizard_provisions_device_into_vpn_runtime].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -1361,6 +1363,168 @@ wait_for_vpn_ready(Node, Process, Monitor, TimeoutMs, StartedAt, LastReason) ->
             end
     end.
 
+
+
+wizard_provisions_device_into_vpn_runtime(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_wizard_device_">>),
+    ServiceId = unique_id(<<"ias_ct_wizard_service_">>),
+    CaCertificateId = unique_id(<<"ias_ct_wizard_ca_">>),
+    ClientCertificateId = unique_id(<<"ias_ct_wizard_client_">>),
+
+    ok = reset_ias_state(),
+    ok = ias_provisioning_wizard_store:clear(),
+    {Device, Service, CaCertificate, ClientCertificate} =
+        prepare_wizard_vpn_objects(DeviceId,
+                                   ServiceId,
+                                   CaCertificateId,
+                                   ClientCertificateId,
+                                   ActualFingerprint),
+
+    ?assertEqual({error, not_found},
+                 rpc:call(VpnNode,
+                          vpn_peer_registry,
+                          get,
+                          [DeviceId],
+                          ?RPC_TIMEOUT_MS)),
+    ?assertEqual([], ias_vpn_provisioning_delivery:history(DeviceId)),
+
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    WizardId = maps:get(id, Draft0),
+    {ok, _} = ias_provisioning_wizard_store:select_existing_device(
+                WizardId, maps:get(id, Device)),
+    {ok, _} = ias_provisioning_wizard_store:select_existing_security_profile(
+                WizardId, default_user),
+    {ok, _} = ias_provisioning_wizard_store:select_existing_vpn_service(
+                WizardId, maps:get(id, Service)),
+    {ok, _} = ias_provisioning_wizard_store:select_existing_ca_certificate(
+                WizardId, maps:get(id, CaCertificate)),
+    {ok, _} = ias_provisioning_wizard_store:select_existing_client_certificate(
+                WizardId, maps:get(id, ClientCertificate)),
+
+    {ok, SelectedDraft} = ias_provisioning_wizard_store:get(WizardId),
+    {ok, ReadyDraft} = ensure_wizard_relationships(WizardId, SelectedDraft),
+    ?assertEqual(true,
+                 ias_provisioning_wizard_store:relationships_ready(ReadyDraft)),
+    ?assertEqual(true,
+                 ias_provisioning_wizard_store:material_readiness_ready(ReadyDraft)),
+
+    {ok, CompletedDraft, Transaction} =
+        ias_provisioning_wizard_store:create_provisioning(WizardId),
+    ?assertEqual(true, maps:get(completed, CompletedDraft)),
+    ?assertEqual(provisioning, maps:get(current_step, CompletedDraft)),
+    ?assertEqual(maps:get(id, Transaction),
+                 maps:get(provisioning_id, CompletedDraft)),
+    ?assertEqual(DeviceId, maps:get(device_id, Transaction)),
+    ?assertEqual(ServiceId, maps:get(vpn_service_id, Transaction)),
+    ?assertEqual(CaCertificateId, maps:get(ca_certificate_id, Transaction)),
+    ?assertEqual(ClientCertificateId, maps:get(certificate_id, Transaction)),
+    ?assertEqual(allow, maps:get(authorization, Transaction)),
+    ?assertEqual(ready_for_delivery, maps:get(status, Transaction)),
+
+    {ok, DeliveryResult} =
+        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+    ?assertEqual(applied, delivery_status(DeliveryResult)),
+    ?assertEqual(1, command_revision(DeliveryResult)),
+    timer:sleep(500),
+
+    {ok, RuntimePeer} = rpc:call(VpnNode,
+                                 vpn_peer_registry,
+                                 get,
+                                 [DeviceId],
+                                 ?RPC_TIMEOUT_MS),
+    ?assertEqual(DeviceId, maps:get(id, RuntimePeer)),
+    ?assertEqual(ActualFingerprint,
+                 maps:get(certificate_fingerprint, RuntimePeer)),
+    ?assertEqual(true, maps:get(enabled, RuntimePeer)),
+    ?assertEqual(true, maps:get(authorized, RuntimePeer)),
+    ?assert(lists:member(DeviceId, running_peers(VpnNode))),
+
+    History = ias_vpn_provisioning_delivery:history(DeviceId),
+    ?assertEqual(1, length(History)),
+    [Delivery] = History,
+    ?assertEqual(upsert, maps:get(operation, Delivery)),
+    ?assertEqual(applied, maps:get(delivery_status, Delivery)),
+    ?assertEqual(1, maps:get(revision, Delivery)),
+    ?assertEqual(false, history_contains(History, <<"private_key">>)),
+    ?assertEqual(false, history_contains(History, <<"ovpn">>)),
+    ?assertEqual(false, history_contains(History, <<"session_key">>)),
+    ok.
+
+prepare_wizard_vpn_objects(DeviceId,
+                           ServiceId,
+                           CaCertificateId,
+                           ClientCertificateId,
+                           Fingerprint) ->
+    [Profile] = [Candidate || Candidate <- ias_demo_data:profiles(),
+                              maps:get(id, Candidate) =:= default_user],
+    Claims = ias_policy:certificate_claims(Profile),
+    Device = ias_demo_store:put_runtime_object(
+        #{id => DeviceId,
+          kind => device,
+          peer_id => DeviceId,
+          source => manual_device,
+          name => <<"CT Wizard Device">>,
+          type => <<"vpn-client">>,
+          private_key_provider => <<"device_file">>,
+          private_key_ref => <<"client.key">>}),
+    Service = ias_demo_store:put_runtime_object(
+        #{id => ServiceId,
+          kind => vpn_service,
+          source => manual_vpn_service,
+          name => <<"CT OpenVPN Service">>,
+          service => openvpn,
+          remote => <<"127.0.0.1:5556">>,
+          remote_host => <<"127.0.0.1">>,
+          remote_port => <<"5556">>,
+          protocol => <<"udp">>,
+          tls_auth => not_configured}),
+    CaCertificate = ias_demo_store:put_runtime_object(
+        #{id => CaCertificateId,
+          kind => certificate,
+          source => ca_certificate,
+          material_type => ca_certificate,
+          certificate_role => ca_certificate,
+          certificate_status => trusted,
+          name => <<"CT VPN CA">>,
+          subject => <<"CN=Zencrypted Dev CA">>}),
+    ClientCertificate = ias_demo_store:add_certificate(
+        #{id => ClientCertificateId,
+          source => certificate_issue_demo,
+          certificate_role => client_certificate,
+          certificate_status => trusted,
+          profile_id => default_user,
+          profile => Profile,
+          subject_cn => <<"ct-wizard-vpn-client">>,
+          fingerprint_sha256 => Fingerprint,
+          private_key_stored => false,
+          certificate_body_stored => false}),
+    {ok, _} = ias_certificate_verification:verify(
+        ClientCertificate#{certificate_id => ClientCertificateId,
+                           issuer_cn => <<"Zencrypted Dev CA">>,
+                           profile => Profile,
+                           profile_id => default_user,
+                           claims => Claims,
+                           trusted => true,
+                           key_match => true}),
+    Pem = public_key:pem_encode([{'Certificate', <<1,2,3,4>>, not_encrypted}]),
+    {ok, _} = ias_certificate_material:put(CaCertificateId,
+                                           ca_certificate,
+                                           Pem,
+                                           operator_load),
+    {ok, _} = ias_certificate_material:put(ClientCertificateId,
+                                           client_certificate,
+                                           Pem,
+                                           operator_load),
+    {Device, Service, CaCertificate, ClientCertificate}.
+
+ensure_wizard_relationships(WizardId, Draft) ->
+    case ias_provisioning_wizard_store:relationships_ready(Draft) of
+        true -> {ok, Draft};
+        false -> ias_provisioning_wizard_store:apply_relationships(WizardId)
+    end.
 
 vpn_test_api_ready(Node) ->
     RequiredExports = [{debug_session_state, 1},
