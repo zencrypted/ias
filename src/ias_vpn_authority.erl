@@ -21,10 +21,16 @@
 -define(WAIT_TIMEOUT, 5000).
 
 ensure() ->
-    case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
-        ok -> validate_all();
-        {timeout, Tables} -> {error, {vpn_authority_tables_unavailable, Tables}};
-        {error, Reason} -> {error, {vpn_authority_tables_unavailable, Reason}}
+    case ensure_storage() of
+        ok ->
+            case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
+                ok -> validate_all();
+                {timeout, Tables} ->
+                    {error, {vpn_authority_tables_unavailable, Tables}};
+                {error, Reason} ->
+                    {error, {vpn_authority_tables_unavailable, Reason}}
+            end;
+        {error, _} = Error -> Error
     end.
 
 get(DeviceId0) ->
@@ -190,9 +196,14 @@ delete(DeviceId0) ->
     end.
 
 reset() ->
-    case mnesia:clear_table(?TABLE) of
-        {atomic, ok} -> ok;
-        {aborted, Reason} -> {error, {vpn_authority_reset_failed, Reason}}
+    case ensure_storage() of
+        ok ->
+            case mnesia:clear_table(?TABLE) of
+                {atomic, ok} -> ok;
+                {aborted, Reason} ->
+                    {error, {vpn_authority_reset_failed, Reason}}
+            end;
+        {error, _} = Error -> Error
     end.
 
 reset_provisioning() ->
@@ -246,10 +257,140 @@ validate_all() ->
     end.
 
 transaction(Fun) ->
-    case mnesia:sync_transaction(Fun) of
-        {atomic, Result} -> {ok, Result};
-        {aborted, Reason} -> {error, normalize_abort(Reason)}
+    case ensure_storage() of
+        ok ->
+            case mnesia:sync_transaction(Fun) of
+                {atomic, Result} -> {ok, Result};
+                {aborted, Reason} -> {error, normalize_abort(Reason)}
+            end;
+        {error, _} = Error -> Error
     end.
+
+ensure_storage() ->
+    case ensure_mnesia_running() of
+        ok ->
+            case ensure_disc_schema() of
+                ok -> ensure_authority_table();
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
+    end.
+
+ensure_mnesia_running() ->
+    case catch mnesia:system_info(is_running) of
+        yes -> ok;
+        starting -> wait_for_mnesia(?WAIT_TIMEOUT);
+        no -> start_mnesia();
+        stopping -> {error, {vpn_authority_mnesia_unavailable, stopping}};
+        {'EXIT', _} -> start_mnesia();
+        State -> {error, {vpn_authority_mnesia_unavailable, State}}
+    end.
+
+start_mnesia() ->
+    case ensure_mnesia_schema() of
+        ok ->
+            case application:ensure_all_started(mnesia) of
+                {ok, _Started} -> wait_for_mnesia(?WAIT_TIMEOUT);
+                {error, Reason} ->
+                    {error, {vpn_authority_mnesia_start_failed, Reason}}
+            end;
+        {error, _} = Error -> Error
+    end.
+
+ensure_mnesia_schema() ->
+    case mnesia:create_schema([node()]) of
+        ok -> ok;
+        {error, Reason} ->
+            case contains_already_exists(Reason) of
+                true -> ok;
+                false -> {error, {vpn_authority_schema_create_failed, Reason}}
+            end
+    end.
+
+wait_for_mnesia(Timeout) ->
+    wait_for_mnesia(Timeout, erlang:monotonic_time(millisecond)).
+
+wait_for_mnesia(Timeout, StartedAt) ->
+    case catch mnesia:system_info(is_running) of
+        yes -> ok;
+        State ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= Timeout of
+                true -> {error, {vpn_authority_mnesia_start_timeout, State}};
+                false ->
+                    timer:sleep(10),
+                    wait_for_mnesia(Timeout, StartedAt)
+            end
+    end.
+
+ensure_disc_schema() ->
+    case catch mnesia:table_info(schema, storage_type) of
+        disc_copies -> ok;
+        ram_copies ->
+            case mnesia:change_table_copy_type(schema, node(), disc_copies) of
+                {atomic, ok} -> ok;
+                {aborted, Reason} ->
+                    case contains_already_exists(Reason) of
+                        true -> ok;
+                        false ->
+                            {error,
+                             {vpn_authority_schema_persistence_failed,
+                              Reason}}
+                    end
+            end;
+        {'EXIT', Reason} ->
+            {error, {vpn_authority_schema_unavailable, Reason}};
+        StorageType ->
+            {error, {vpn_authority_invalid_schema_storage, StorageType}}
+    end.
+
+ensure_authority_table() ->
+    case lists:member(?TABLE, mnesia:system_info(tables)) of
+        true -> validate_authority_table();
+        false -> create_authority_table()
+    end.
+
+create_authority_table() ->
+    Options = [{attributes, record_info(fields, ias_vpn_device_state)},
+               {type, set},
+               {disc_copies, [node()]}],
+    case mnesia:create_table(?TABLE, Options) of
+        {atomic, ok} ->
+            case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
+                ok -> validate_authority_table();
+                {timeout, Tables} ->
+                    {error, {vpn_authority_tables_unavailable, Tables}};
+                {error, Reason} ->
+                    {error, {vpn_authority_tables_unavailable, Reason}}
+            end;
+        {aborted, Reason} ->
+            case contains_already_exists(Reason) of
+                true -> validate_authority_table();
+                false -> {error, {vpn_authority_table_create_failed, Reason}}
+            end
+    end.
+
+validate_authority_table() ->
+    ExpectedAttributes = record_info(fields, ias_vpn_device_state),
+    ActualAttributes = mnesia:table_info(?TABLE, attributes),
+    StorageType = mnesia:table_info(?TABLE, storage_type),
+    TableType = mnesia:table_info(?TABLE, type),
+    case {ActualAttributes, StorageType, TableType} of
+        {ExpectedAttributes, disc_copies, set} -> ok;
+        _ ->
+            {error,
+             {invalid_vpn_authority_table,
+              #{attributes => ActualAttributes,
+                storage_type => StorageType,
+                type => TableType}}}
+    end.
+
+contains_already_exists(already_exists) -> true;
+contains_already_exists(Term) when is_tuple(Term) ->
+    lists:any(fun contains_already_exists/1, tuple_to_list(Term));
+contains_already_exists(Term) when is_list(Term) ->
+    lists:any(fun contains_already_exists/1, Term);
+contains_already_exists(_) -> false.
 
 normalize_abort({vpn_authority_invalid_record, Reason}) -> Reason;
 normalize_abort(Reason) -> {vpn_authority_transaction_failed, Reason}.
