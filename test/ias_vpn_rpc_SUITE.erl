@@ -1257,7 +1257,8 @@ vpn_process_owner(Parent, VpnRepo, LogPath, MnesiaDir) ->
                         "-noinput",
                         "-name", "vpn_ct@127.0.0.1",
                         "-setcookie", "ias_vpn_ct_cookie",
-                        "-config", filename:join(VpnRepo, "config/sys.debug")]
+                        "-config", filename:join(VpnRepo, "config/sys.debug"),
+                        "-mnesia", "dir", erl_term_argument(MnesiaDir)]
                        ++ code_path_args(EbinPaths)
                        ++ ["-eval", vpn_start_expression(MnesiaDir)],
                 Port = open_port({spawn_executable, Erl},
@@ -1350,11 +1351,14 @@ code_path_args(Paths) ->
 
 vpn_start_expression(MnesiaDir) ->
     MnesiaDirArgument = erl_term_argument(MnesiaDir),
-    "ok = application:set_env(mnesia, dir, " ++
-    MnesiaDirArgument ++ "), " ++
+    "case application:get_env(mnesia, dir) of "
+    "{ok, " ++ MnesiaDirArgument ++ "} -> "
     "io:format(standard_error, "
-    "\"VPN CT startup: using fresh Mnesia directory ~ts~n\", [" ++
-    MnesiaDirArgument ++ "]), " ++
+    "\"VPN CT startup: Mnesia VM directory ~ts~n\", [" ++
+    MnesiaDirArgument ++ "]); "
+    "ActualMnesiaDir -> io:format(standard_error, "
+    "\"VPN CT startup: unexpected Mnesia directory ~p, expected ~ts~n\", "
+    "[ActualMnesiaDir, " ++ MnesiaDirArgument ++ "]), halt(1) end, " ++
     "io:format(standard_error, "
     "\"VPN CT startup: starting VPN application~n\", []), " ++
     "case application:ensure_all_started(vpn) of "
