@@ -142,6 +142,7 @@ sanitize_peer(Peer) when is_map(Peer) ->
                authorization_mode,
                authorized,
                authorization_reason,
+               profile_id,
                certificate_fingerprint,
                revision,
                revoked,
