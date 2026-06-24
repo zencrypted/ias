@@ -131,7 +131,10 @@ vpn_lifecycle_actions_follow_runtime_state_test() ->
         ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Revoke VPN Access">>)),
         ?assertMatch({_, _}, binary:match(RevokedHtml, <<"VPN Access Revoked">>)),
         ?assertMatch({_, _}, binary:match(RevokedHtml, <<">revoked</td>">>)),
-        ?assertMatch({_, _}, binary:match(RevokedHtml, <<"Authorized</th><td>no</td>">>))
+        ?assertMatch({match, _},
+                     re:run(RevokedHtml,
+                            <<"Authorized</th><td[^>]*>no</td>">>,
+                            [{capture, first, index}]))
     end).
 
 completed_wizard_roundtrips_through_demo_state_test() ->
