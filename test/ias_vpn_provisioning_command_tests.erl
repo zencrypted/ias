@@ -19,6 +19,7 @@ canonical_command_test_() ->
           ?_assertEqual(true, maps:get(authorized, Desired)),
           ?_assertEqual(true, maps:get(enabled, Desired)),
           ?_assertEqual(policy, maps:get(authorization_mode, Desired)),
+          ?_assertEqual(default_user, maps:get(profile_id, Desired)),
           ?_assertEqual(maps:get(fingerprint_sha256, Certificate),
                         maps:get(certificate_fingerprint, Desired)),
           ?_assertEqual(false, maps:is_key(private_key, Desired)),
@@ -65,6 +66,7 @@ summary_is_sanitized_test_() ->
          {ok, Command} = ias_vpn_provisioning_command:build(maps:get(id, Device), upsert),
          Summary = ias_vpn_provisioning_command:summary(Command),
          [?_assertEqual(upsert, maps:get(operation, Summary)),
+          ?_assertEqual(default_user, maps:get(profile_id, Summary)),
           ?_assertEqual(false, maps:is_key(desired_state, Summary)),
           ?_assertEqual(false, maps:is_key(runtime_config, Summary)),
           ?_assertEqual(false, maps:is_key(private_key, Summary))]
@@ -111,8 +113,13 @@ setup() ->
     {ok, _} = ias_relationship_link:create(uses_security_policy,
                                             maps:get(id, Certificate),
                                             <<"high_security">>),
-    [Profile] = [Candidate || Candidate <- ias_demo_data:profiles(),
-                               maps:get(id, Candidate) =:= default_user],
+    [Profile0] = [Candidate || Candidate <- ias_demo_data:profiles(),
+                                maps:get(id, Candidate) =:= default_user],
+    Profile = ias_demo_store:put_runtime_object(
+                Profile0#{kind => security_profile}),
+    {ok, _} = ias_relationship_link:create(uses_security_profile,
+                                            maps:get(id, Device),
+                                            maps:get(id, Profile)),
     Claims = ias_policy:certificate_claims(Profile),
     {ok, _} = ias_certificate_verification:verify(
         Certificate#{certificate_id => maps:get(id, Certificate),

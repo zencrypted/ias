@@ -1396,7 +1396,7 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
     {ok, _} = ias_provisioning_wizard_store:select_existing_device(
                 WizardId, maps:get(id, Device)),
     {ok, _} = ias_provisioning_wizard_store:select_existing_security_profile(
-                WizardId, default_user),
+                WizardId, administrator),
     {ok, _} = ias_provisioning_wizard_store:select_existing_vpn_service(
                 WizardId, maps:get(id, Service)),
     {ok, _} = ias_provisioning_wizard_store:select_existing_ca_certificate(
@@ -1428,6 +1428,8 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
         ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
     ?assertEqual(applied, delivery_status(DeliveryResult)),
     ?assertEqual(1, command_revision(DeliveryResult)),
+    CommandDesired = maps:get(desired_state, maps:get(command, DeliveryResult)),
+    ?assertEqual(administrator, maps:get(profile_id, CommandDesired)),
     timer:sleep(500),
 
     {ok, RuntimePeer} = rpc:call(VpnNode,
@@ -1440,6 +1442,7 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
                  maps:get(certificate_fingerprint, RuntimePeer)),
     ?assertEqual(true, maps:get(enabled, RuntimePeer)),
     ?assertEqual(true, maps:get(authorized, RuntimePeer)),
+    ?assertEqual(administrator, maps:get(profile_id, RuntimePeer)),
     ?assert(lists:member(DeviceId, running_peers(VpnNode))),
 
     History = ias_vpn_provisioning_delivery:history(DeviceId),
@@ -1459,7 +1462,7 @@ prepare_wizard_vpn_objects(DeviceId,
                            ClientCertificateId,
                            Fingerprint) ->
     [Profile] = [Candidate || Candidate <- ias_demo_data:profiles(),
-                              maps:get(id, Candidate) =:= default_user],
+                              maps:get(id, Candidate) =:= administrator],
     Claims = ias_policy:certificate_claims(Profile),
     Device = ias_demo_store:put_runtime_object(
         #{id => DeviceId,
@@ -1495,7 +1498,7 @@ prepare_wizard_vpn_objects(DeviceId,
           source => certificate_issue_demo,
           certificate_role => client_certificate,
           certificate_status => trusted,
-          profile_id => default_user,
+          profile_id => administrator,
           profile => Profile,
           subject_cn => <<"ct-wizard-vpn-client">>,
           fingerprint_sha256 => Fingerprint,
@@ -1505,7 +1508,7 @@ prepare_wizard_vpn_objects(DeviceId,
         ClientCertificate#{certificate_id => ClientCertificateId,
                            issuer_cn => <<"Zencrypted Dev CA">>,
                            profile => Profile,
-                           profile_id => default_user,
+                           profile_id => administrator,
                            claims => Claims,
                            trusted => true,
                            key_match => true}),

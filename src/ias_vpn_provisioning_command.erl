@@ -33,6 +33,7 @@ summary(Command) when is_map(Command) ->
       authorized => maps:get(authorized, Desired, undefined),
       authorization_mode => maps:get(authorization_mode, Desired, undefined),
       authorization_reason => maps:get(authorization_reason, Desired, undefined),
+      profile_id => maps:get(profile_id, Desired, undefined),
       certificate_fingerprint => maps:get(certificate_fingerprint, Desired, undefined)};
 summary(_) ->
     #{}.
@@ -78,12 +79,40 @@ desired_state(Device, CertificateResult, Decision, Operation) ->
                      _ -> Authorized0
                  end,
     Enabled = Authorized andalso (Operation =:= upsert orelse Operation =:= enable),
-    #{device_id => maps:get(id, Device),
-      enabled => Enabled,
-      authorized => Authorized,
-      authorization_mode => policy,
-      authorization_reason => authorization_reason(Decision, Operation),
-      certificate_fingerprint => certificate_fingerprint(CertificateResult)}.
+    Desired0 = #{device_id => maps:get(id, Device),
+                 enabled => Enabled,
+                 authorized => Authorized,
+                 authorization_mode => policy,
+                 authorization_reason => authorization_reason(Decision, Operation),
+                 certificate_fingerprint => certificate_fingerprint(CertificateResult)},
+    maybe_put(profile_id, linked_profile_id(Device, CertificateResult), Desired0).
+
+
+linked_profile_id(Device, CertificateResult) ->
+    DeviceId = maps:get(id, Device),
+    first_present([linked_device_profile_id(DeviceId),
+                   maps:get(profile_id, Device, maps:get(profile, Device, undefined)),
+                   certificate_profile_id(CertificateResult)]).
+
+linked_device_profile_id(DeviceId) ->
+    case [maps:get(target_id, Relationship, undefined)
+          || Relationship <- ias_demo_store:relationships(),
+             maps:get(relation_type, Relationship, undefined) =:= uses_security_profile,
+             maps:get(source_kind, Relationship, undefined) =:= device,
+             same_id(maps:get(source_id, Relationship, undefined), DeviceId),
+             maps:get(target_kind, Relationship, undefined) =:= security_profile] of
+        [ProfileId | _] -> ProfileId;
+        [] -> undefined
+    end.
+
+certificate_profile_id({ok, Certificate}) ->
+    maps:get(profile_id, Certificate, maps:get(profile, Certificate, undefined));
+certificate_profile_id(not_found) ->
+    undefined.
+
+maybe_put(_Key, undefined, Map) -> Map;
+maybe_put(_Key, <<>>, Map) -> Map;
+maybe_put(Key, Value, Map) -> Map#{Key => Value}.
 
 authorization_reason(_Decision, revoke) -> certificate_revoked;
 authorization_reason(_Decision, remove) -> device_decommissioned;
