@@ -83,7 +83,11 @@ event({wizard_create_another_provisioning, WizardId}) ->
 event({wizard_provision_vpn_access, WizardId}) ->
     Result = ias_vpn_wizard_provisioning:provision(WizardId),
     nitro:update(wizard_vpn_provisioning_result,
-                 wizard_vpn_provisioning_result_panel(Result));
+                 wizard_vpn_provisioning_result_panel(WizardId, Result));
+event({wizard_disable_vpn_access, WizardId}) ->
+    wizard_vpn_lifecycle_action(WizardId, disable);
+event({wizard_enable_vpn_access, WizardId}) ->
+    wizard_vpn_lifecycle_action(WizardId, enable);
 event({wizard_download_device_bound_ovpn, ProvisioningId}) ->
     wizard_download_device_bound_ovpn(
         ias_device_bound_ovpn:download_response(ProvisioningId));
@@ -469,42 +473,117 @@ provisioning_created_panel(Draft, Transaction) ->
 
 wizard_vpn_provisioning_status_panel(Draft) ->
     DeviceId = maps:get(device_id, Draft, undefined),
-    Status = ias_vpn_provisioning_delivery:status(DeviceId),
+    Status = ias_vpn_access_lifecycle:status(DeviceId),
     #panel{id = wizard_vpn_provisioning_result,
            style = <<"margin-top:12px;">>,
-           body = wizard_vpn_delivery_status_body(Status)}.
+           body = wizard_vpn_lifecycle_status_body(maps:get(id, Draft), Status)}.
 
-wizard_vpn_provisioning_result_panel({ok, Result}) ->
+wizard_vpn_provisioning_result_panel(WizardId, {ok, Result}) ->
     Delivery = maps:get(delivery, Result, #{}),
     Command = maps:get(command, Result, #{}),
-    #panel{id = wizard_vpn_provisioning_result,
-           style = <<"margin-top:12px;">>,
-           body = [wizard_notice("VPN Provisioning Delivery",
-                                 "The IAS provisioning command was delivered to the configured VPN runtime."),
-                   key_value_table([
-                       {"Peer", maps:get(peer_id, Command, maps:get(device_id, Result, undefined))},
-                       {"Operation", maps:get(operation, Delivery, upsert)},
-                       {"Revision", maps:get(revision, Delivery, maps:get(revision, Command, undefined))},
-                       {"Delivery", maps:get(delivery_status, Delivery, undefined)}
-                   ]),
-                   #link{url = <<"/app/vpn.htm">>, class = [button, more],
-                         body = ias_html:text("Open VPN Runtime")} ]};
-wizard_vpn_provisioning_result_panel({error, Reason}) ->
-    #panel{id = wizard_vpn_provisioning_result,
-           style = <<"margin-top:12px;">>,
-           body = wizard_error_panel(Reason)}.
+    [wizard_notice("VPN Provisioning Delivery",
+                   "The IAS provisioning command was delivered to the configured VPN runtime."),
+     key_value_table([
+         {"Peer", maps:get(peer_id, Command, maps:get(device_id, Result, undefined))},
+         {"Operation", maps:get(operation, Delivery, upsert)},
+         {"Revision", maps:get(revision, Delivery, maps:get(revision, Command, undefined))},
+         {"Delivery", maps:get(delivery_status, Delivery, undefined)}
+     ])
+     | wizard_vpn_lifecycle_status_body(WizardId, wizard_vpn_lifecycle_status(WizardId))];
+wizard_vpn_provisioning_result_panel(WizardId, {error, Reason}) ->
+    [wizard_error_panel(Reason)
+     | wizard_vpn_lifecycle_status_body(WizardId, wizard_vpn_lifecycle_status(WizardId))].
 
-wizard_vpn_delivery_status_body(#{attempts := 0}) ->
-    [#p{body = ias_html:text("VPN runtime provisioning has not been attempted yet.")}];
-wizard_vpn_delivery_status_body(Status) ->
+wizard_vpn_lifecycle_action(WizardId, Operation) ->
+    Result = case wizard_device_id(WizardId) of
+        {ok, DeviceId} -> apply_wizard_vpn_lifecycle_operation(Operation, DeviceId);
+        Error -> Error
+    end,
+    Body = wizard_vpn_lifecycle_action_body(WizardId, Operation, Result),
+    nitro:update(wizard_vpn_provisioning_result, Body).
+
+apply_wizard_vpn_lifecycle_operation(disable, DeviceId) ->
+    ias_vpn_access_lifecycle:disable(DeviceId);
+apply_wizard_vpn_lifecycle_operation(enable, DeviceId) ->
+    ias_vpn_access_lifecycle:enable(DeviceId).
+
+wizard_device_id(WizardId) ->
+    case ias_provisioning_wizard_store:get(WizardId) of
+        {ok, Draft} ->
+            case maps:get(device_id, Draft, undefined) of
+                undefined -> {error, device_not_selected};
+                DeviceId -> {ok, DeviceId}
+            end;
+        not_found ->
+            {error, wizard_not_found}
+    end.
+
+wizard_vpn_lifecycle_status(WizardId) ->
+    case wizard_device_id(WizardId) of
+        {ok, DeviceId} -> ias_vpn_access_lifecycle:status(DeviceId);
+        Error -> Error
+    end.
+
+wizard_vpn_lifecycle_action_body(WizardId, Operation, {ok, Result}) ->
+    [wizard_notice("VPN Access Updated",
+                   "The VPN access lifecycle command was delivered to the configured VPN runtime."),
+     key_value_table([
+         {"Peer", maps:get(runtime_peer_id, Result, undefined)},
+         {"Operation", maps:get(operation, Result, Operation)},
+         {"Revision", maps:get(revision, Result, undefined)},
+         {"Delivery", maps:get(delivery_status, Result, undefined)}
+     ])
+     | wizard_vpn_lifecycle_status_body(WizardId, wizard_vpn_lifecycle_status(WizardId))];
+wizard_vpn_lifecycle_action_body(WizardId, _Operation, {error, Reason}) ->
+    [wizard_error_panel(Reason)
+     | wizard_vpn_lifecycle_status_body(WizardId, wizard_vpn_lifecycle_status(WizardId))].
+
+wizard_vpn_lifecycle_status_body(_WizardId, {error, Reason}) ->
+    [wizard_error_panel(Reason)];
+wizard_vpn_lifecycle_status_body(WizardId, Status) ->
+    Provisioning = maps:get(provisioning, Status, #{}),
+    Runtime = maps:get(runtime, Status, disabled),
     [key_value_table([
-         {"Last Operation", maps:get(last_operation, Status, undefined)},
-         {"Revision", maps:get(last_revision, Status, undefined)},
-         {"Delivery", maps:get(last_delivery_status, Status, undefined)},
-         {"Delivered At", maps:get(last_delivered_at, Status, undefined)}
+         {"Runtime Peer", maps:get(runtime_peer_id, Status, undefined)},
+         {"Last Operation", maps:get(last_operation, Provisioning, undefined)},
+         {"Revision", maps:get(last_revision, Provisioning,
+                                maps:get(current_revision, Provisioning, undefined))},
+         {"Delivery", maps:get(last_delivery_status, Provisioning, undefined)},
+         {"Delivered At", maps:get(last_delivered_at, Provisioning, undefined)},
+         {"Runtime State", wizard_runtime_state(Runtime)},
+         {"Authorized", wizard_runtime_value(authorized, Runtime)},
+         {"Revoked", wizard_runtime_value(revoked, Runtime)}
      ]),
+     #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
+            body = wizard_vpn_lifecycle_actions(WizardId, Runtime)}].
+
+wizard_vpn_lifecycle_actions(_WizardId, {ok, #{revoked := true}}) ->
+    [#link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("Open VPN Runtime")}];
+wizard_vpn_lifecycle_actions(WizardId, {ok, #{enabled := false}}) ->
+    [#link{class = [button, sgreen],
+           body = ias_html:text("Enable VPN Access"),
+           postback = {wizard_enable_vpn_access, WizardId}},
      #link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("Open VPN Runtime")}];
+wizard_vpn_lifecycle_actions(WizardId, {ok, _Peer}) ->
+    [#link{class = [button, more],
+           body = ias_html:text("Disable VPN Access"),
+           postback = {wizard_disable_vpn_access, WizardId}},
+     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("Open VPN Runtime")}];
+wizard_vpn_lifecycle_actions(_WizardId, _Runtime) ->
+    [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}].
+
+wizard_runtime_state({ok, #{revoked := true}}) -> revoked;
+wizard_runtime_state({ok, #{enabled := false}}) -> disabled;
+wizard_runtime_state({ok, #{authorized := true}}) -> enabled;
+wizard_runtime_state({ok, _Peer}) -> available;
+wizard_runtime_state(Value) -> Value.
+
+wizard_runtime_value(Key, {ok, Peer}) -> maps:get(Key, Peer, undefined);
+wizard_runtime_value(_Key, _Runtime) -> undefined.
 
 wizard_download_device_bound_ovpn_action(#{mode := device_bound,
                                            artifact_status := public_bundle_ready,

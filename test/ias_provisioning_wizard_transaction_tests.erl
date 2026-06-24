@@ -106,6 +106,23 @@ provisioning_step_renders_create_and_completed_states_test() ->
     ?assertMatch({_, _}, binary:match(HtmlAfter, <<"Create Another Transaction">>)),
     ?assertMatch({_, _}, binary:match(HtmlAfter, <<">Completed</span>">>)).
 
+vpn_lifecycle_actions_follow_runtime_state_test() ->
+    Draft = setup_ready_wizard(),
+    {ok, Completed, _Transaction} =
+        ias_provisioning_wizard_store:create_provisioning(maps:get(id, Draft)),
+    with_vpn_runtime_peer(true, true, false, fun() ->
+        EnabledHtml = render(ias_provisioning_wizard:content_for({draft, Completed})),
+        ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Disable VPN Access">>)),
+        ?assertEqual(nomatch, binary:match(EnabledHtml, <<"Enable VPN Access">>)),
+        ?assertMatch({_, _}, binary:match(EnabledHtml, <<">enabled</td>">>))
+    end),
+    with_vpn_runtime_peer(false, false, false, fun() ->
+        DisabledHtml = render(ias_provisioning_wizard:content_for({draft, Completed})),
+        ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Enable VPN Access">>)),
+        ?assertEqual(nomatch, binary:match(DisabledHtml, <<"Disable VPN Access">>)),
+        ?assertMatch({_, _}, binary:match(DisabledHtml, <<">disabled</td>">>))
+    end).
+
 completed_wizard_roundtrips_through_demo_state_test() ->
     Draft = setup_ready_wizard(),
     {ok, Completed, Transaction} =
@@ -125,6 +142,7 @@ setup_ready_wizard() ->
     Device = ias_demo_store:put_runtime_object(
         #{id => <<"wizard_transaction_device">>, kind => device,
           source => manual_device, name => <<"Laptop">>, type => <<"vpn-client">>,
+          runtime_peer_id => client_a, vpn_peer => client_a,
           private_key_provider => <<"device_file">>, private_key_ref => <<"client.key">>}),
     Service = ias_demo_store:put_runtime_object(
         #{id => <<"wizard_transaction_service">>, kind => vpn_service,
@@ -189,6 +207,35 @@ verify_client_certificate(Certificate) ->
 provisioning_count() ->
     length([Object || Object <- ias_demo_store:runtime_objects(),
                       maps:get(kind, Object, undefined) =:= ovpn_provisioning]).
+
+
+with_vpn_runtime_peer(Enabled, Authorized, Revoked, Fun) ->
+    PreviousTransport = application:get_env(ias, vpn_provisioning_transport),
+    PreviousRpcFun = application:get_env(ias, vpn_provisioning_rpc_fun),
+    application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
+    application:set_env(
+        ias,
+        vpn_provisioning_rpc_fun,
+        fun(_Node, vpn_peer_registry, get, [client_a], _Timeout) ->
+                {ok, #{id => client_a,
+                       enabled => Enabled,
+                       authorized => Authorized,
+                       revoked => Revoked,
+                       revision => 7,
+                       last_provisioning_operation => upsert}};
+           (_Node, _Module, _Function, _Args, _Timeout) ->
+                {badrpc, unsupported_test_call}
+        end),
+    try Fun()
+    after
+        restore_env(vpn_provisioning_transport, PreviousTransport),
+        restore_env(vpn_provisioning_rpc_fun, PreviousRpcFun)
+    end.
+
+restore_env(Key, {ok, Value}) ->
+    application:set_env(ias, Key, Value);
+restore_env(Key, undefined) ->
+    application:unset_env(ias, Key).
 
 render(Doc) ->
     iolist_to_binary(nitro:render(Doc)).
