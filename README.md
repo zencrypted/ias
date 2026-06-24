@@ -171,6 +171,19 @@ without invoking a second `rebar3` build, and verifies:
 - the IAS delivery history does not contain private key, OVPN, session-key, or
   ECDH material.
 
+The current demo also supports two simultaneous trusted runtime slots:
+
+```text
+Alice -> client_a <-> peer_b
+Bob   -> client_b <-> peer_c
+```
+
+This two-user flow has been verified manually through the Provisioning Wizard,
+certificate-authenticated session state, registry metadata, and distinct
+encrypted payload delivery for both pairs. It is not yet a dedicated Common Test
+case; the existing suite continues to isolate its dynamic lifecycle fixtures
+from the bounded two-slot wizard configuration.
+
 The test uses the fixed debug TUN interfaces and UDP ports from the VPN debug
 configuration. Stop any manually running `vpn@127.0.0.1` node before running
 the suite. The VPN process log is written under

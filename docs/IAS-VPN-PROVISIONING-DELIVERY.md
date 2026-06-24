@@ -205,5 +205,79 @@ net_adm:ping('vpn@127.0.0.1').
 ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert).
 ```
 
+## Verified two-user Provisioning Wizard milestone
+
+The current development configuration contains two trusted VPN runtime slots:
+
+```erlang
+#{alice => client_a,
+  bob => client_b}
+```
+
+The mapping is a bounded demo allocation policy. The IAS User and Device remain
+domain identities, while `client_a` and `client_b` are transport/runtime slot
+identities owned by the VPN node. The selected runtime slot is stored with the
+Device so retries and later provisioning operations continue to target the same
+peer.
+
+The verified end-to-end flows are:
+
+```text
+Alice -> Alice Device -> client_a <-> peer_b
+Bob   -> Bob Device   -> client_b <-> peer_c
+```
+
+For each user, the Provisioning Wizard performs:
+
+```text
+Scheme
+-> User
+-> owned Device
+-> Security Profile and Policy
+-> VPN Service
+-> CA Certificate
+-> Client Certificate
+-> Relationships
+-> Material Readiness
+-> Provisioning Transaction
+-> Provision VPN Access
+```
+
+The final action reuses the completed transaction, builds the canonical
+revisioned command, synchronizes the runtime-slot revision floor, and delivers
+the command to VPN over distributed Erlang RPC. VPN then applies the selected
+Device ID, Security Profile, authorization decision, certificate fingerprint,
+and revision to the assigned client slot.
+
+Manual runtime verification confirmed simultaneously that:
+
+- `client_a`, `client_b`, `peer_b`, and `peer_c` were running;
+- both certificate-authenticated sessions reached `established`;
+- Alice and Bob payloads travelled over their respective encrypted dataplanes;
+- the Alice payload was received by `peer_b` and the Bob payload by `peer_c`;
+- the client slots exposed the correct IAS Device IDs and Security Profiles;
+- certificate trust and key ownership checks passed;
+- no crypto failures or rejected frames were recorded.
+
+`peer_b` and `peer_c` are infrastructure-side debug peers. They may not carry an
+IAS user profile or positive IAS authorization metadata because they are not
+created by the Provisioning Wizard. Their successful authenticated sessions and
+dataplane reception are the relevant gateway-side signals.
+
+This milestone does not yet provide general multi-user allocation. Adding a
+third user requires another trusted slot and gateway pair. The planned
+production direction is a VPN-owned dynamic allocator that assigns peer IDs,
+interfaces, addresses, ports, identity locations, and gateway sessions without
+hard-coding IAS user names. Durable projection across a complete VPN restart
+also remains future work.
+
+The existing Common Test suite verifies the revisioned provisioning lifecycle,
+identity and revision guards, encrypted dataplane, authenticated rekey, peer
+restart recovery, replay rejection, previous-epoch expiry, out-of-order frames,
+and one complete wizard-to-runtime provisioning flow. The simultaneous
+Alice/Bob scenario has been verified manually but is not yet asserted as a
+dedicated Common Test case; whether to add that case should be decided based on
+its additional regression value and setup cost.
+
 Persistence, automatic background retries, and non-RPC transports remain out of
 scope for this stage.
