@@ -50,6 +50,8 @@ init_per_suite(Config) ->
             application:set_env(ias, vpn_provisioning_vpn_node, ?VPN_NODE),
             application:set_env(ias, vpn_provisioning_rpc_timeout, ?RPC_TIMEOUT_MS),
             application:set_env(ias, vpn_provisioning_runtime_peer_id, client_a),
+            application:set_env(ias, vpn_provisioning_runtime_peer_slots,
+                                #{alice => client_a, bob => client_b}),
             [{vpn_repo, VpnRepo},
              {vpn_node, ?VPN_NODE},
              {vpn_process, VpnProcess},
@@ -71,6 +73,7 @@ end_per_suite(Config) ->
     application:unset_env(ias, vpn_provisioning_vpn_node),
     application:unset_env(ias, vpn_provisioning_rpc_timeout),
     application:unset_env(ias, vpn_provisioning_runtime_peer_id),
+    application:unset_env(ias, vpn_provisioning_runtime_peer_slots),
     ok.
 
 provisioning_lifecycle(Config) ->
@@ -1143,7 +1146,7 @@ ensure_no_conflicting_vpn_node() ->
 
 prepare_vpn(VpnRepo) ->
     Command = "cd " ++ shell_quote(VpnRepo) ++
-              " && ./tools/ensure-debug-ovpn.sh" ++
+              " && ./tools/prepare-debug-topology.sh" ++
               " && rebar3 as debug compile",
     case run_command(Command, 120000) of
         {ok, Output} ->
@@ -1395,6 +1398,8 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
 
     {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
     WizardId = maps:get(id, Draft0),
+    {ok, _} = ias_provisioning_wizard_store:select_existing_user(
+                WizardId, alice),
     {ok, _} = ias_provisioning_wizard_store:select_existing_device(
                 WizardId, maps:get(id, Device)),
     {ok, _} = ias_provisioning_wizard_store:select_existing_security_profile(

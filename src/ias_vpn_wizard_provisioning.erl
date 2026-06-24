@@ -1,5 +1,5 @@
 -module(ias_vpn_wizard_provisioning).
--export([provision/1]).
+-export([provision/1, runtime_peer_id/2]).
 
 provision(WizardId) ->
     case ias_provisioning_wizard_store:get(WizardId) of
@@ -28,12 +28,13 @@ provision_ready_draft(Draft) ->
 deliver(_Draft, _Transaction, undefined) ->
     {error, device_required};
 deliver(Draft, Transaction, DeviceId) ->
-    case bind_runtime_peer(DeviceId) of
+    case bind_runtime_peer(DeviceId, Draft) of
         {ok, RuntimePeerId} ->
             ok = synchronize_runtime_revision(DeviceId, RuntimePeerId),
             case ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert) of
                 {ok, DeliveryResult} ->
                     {ok, #{wizard_id => maps:get(id, Draft),
+                           user_id => maps:get(user_id, Draft, undefined),
                            device_id => DeviceId,
                            runtime_peer_id => RuntimePeerId,
                            provisioning_id => maps:get(id, Transaction, undefined),
@@ -47,10 +48,10 @@ deliver(Draft, Transaction, DeviceId) ->
             {error, Reason}
     end.
 
-bind_runtime_peer(DeviceId) ->
+bind_runtime_peer(DeviceId, Draft) ->
     case ias_demo_store:get(DeviceId) of
         {ok, #{kind := device} = Device} ->
-            RuntimePeerId = configured_runtime_peer_id(Device),
+            RuntimePeerId = runtime_peer_id(Device, Draft),
             Updated = Device#{runtime_peer_id => RuntimePeerId,
                               vpn_peer => RuntimePeerId},
             _ = ias_demo_store:put_runtime_object(Updated),
@@ -59,8 +60,10 @@ bind_runtime_peer(DeviceId) ->
             {error, device_required}
     end.
 
-configured_runtime_peer_id(Device) ->
+runtime_peer_id(Device, Draft) when is_map(Device), is_map(Draft) ->
+    UserId = maps:get(user_id, Draft, maps:get(owner, Device, undefined)),
     case first_present([maps:get(runtime_peer_id, Device, undefined),
+                        configured_user_runtime_peer_id(UserId),
                         maps:get(vpn_peer, Device, undefined),
                         application:get_env(ias,
                                             vpn_provisioning_runtime_peer_id,
@@ -68,6 +71,26 @@ configured_runtime_peer_id(Device) ->
         undefined -> maps:get(id, Device);
         RuntimePeerId -> RuntimePeerId
     end.
+
+configured_user_runtime_peer_id(undefined) ->
+    undefined;
+configured_user_runtime_peer_id(UserId) ->
+    Slots = application:get_env(ias, vpn_provisioning_runtime_peer_slots, #{}),
+    lookup_runtime_slot(UserId, Slots).
+
+lookup_runtime_slot(UserId, Slots) when is_map(Slots) ->
+    maps:get(UserId, Slots, maps:get(normalize_slot_key(UserId), Slots, undefined));
+lookup_runtime_slot(UserId, Slots) when is_list(Slots) ->
+    proplists:get_value(UserId,
+                        Slots,
+                        proplists:get_value(normalize_slot_key(UserId), Slots));
+lookup_runtime_slot(_UserId, _Slots) ->
+    undefined.
+
+normalize_slot_key(Value) when is_atom(Value) -> atom_to_binary(Value, utf8);
+normalize_slot_key(Value) when is_binary(Value) -> Value;
+normalize_slot_key(Value) when is_list(Value) -> unicode:characters_to_binary(Value);
+normalize_slot_key(Value) -> Value.
 
 first_present([undefined | Rest]) -> first_present(Rest);
 first_present([<<>> | Rest]) -> first_present(Rest);
