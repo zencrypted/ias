@@ -744,3 +744,30 @@ entries and peer processes.
 ### Priority
 
 High before production deployment
+
+---
+
+## TD-019: Dynamic Allocation and Decommission Audit Are Volatile
+
+**Status:** Open
+
+**Area:** IAS/VPN Dynamic Allocation Recovery
+
+### Problem
+
+IAS now clears an active Device binding only after VPN confirms dynamic-pair
+decommission and retains a safe decommission history. VPN allocation ownership,
+revision heads, identity bundles, and decommission tombstones are still backed
+by development-time volatile state. A complete node restart therefore cannot
+reconstruct the same resource lifecycle without an external durable projection.
+
+### Desired Direction
+
+Persist Device-to-allocation ownership, allocation generations, revision heads,
+revoke/decommission tombstones, and the recovery order for registry and peer
+processes. IAS and VPN must reconcile the same durable allocation identity before
+accepting another provisioning or decommission request.
+
+### Priority
+
+High before production deployment

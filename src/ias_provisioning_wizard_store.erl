@@ -44,7 +44,8 @@
          step_description/1,
          portable_enabled/0,
          portable_reason/0,
-         ovpn_import_url/0]).
+         ovpn_import_url/0,
+         clear_vpn_allocation_for_device/1]).
 
 -define(TABLE, ias_provisioning_wizard_drafts).
 -define(OWNER, ias_provisioning_wizard_store_owner).
@@ -147,6 +148,22 @@ clear() ->
     ensure(),
     ets:delete_all_objects(?TABLE),
     ok.
+
+clear_vpn_allocation_for_device(DeviceId0) ->
+    ensure(),
+    DeviceId = normalize_id(DeviceId0),
+    Drafts = [Draft || {_Id, Draft} <- ets:tab2list(?TABLE),
+                       normalize_id(maps:get(device_id, Draft, undefined)) =:= DeviceId],
+    lists:foreach(
+      fun(Draft) ->
+          Id = maps:get(id, Draft),
+          Updated = (maps:merge(Draft, clear_vpn_allocation_updates()))#{
+              updated_at => created_at()
+          },
+          ets:insert(?TABLE, {Id, Updated})
+      end,
+      Drafts),
+    {ok, length(Drafts)}.
 
 next(Id) ->
     case get(Id) of

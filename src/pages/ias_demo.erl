@@ -75,6 +75,12 @@ event({device_confirm_revoke_vpn_access, DeviceId}) ->
         postback = {device_revoke_vpn_access, DeviceId}});
 event({device_revoke_vpn_access, DeviceId}) ->
     device_vpn_lifecycle_action(DeviceId, revoke);
+event({device_confirm_decommission_vpn_access, DeviceId}) ->
+    nitro:wire(#confirm{
+        text = device_vpn_decommission_confirm_text(),
+        postback = {device_decommission_vpn_access, DeviceId}});
+event({device_decommission_vpn_access, DeviceId}) ->
+    device_vpn_lifecycle_action(DeviceId, decommission);
 event(_) ->
     ok.
 
@@ -386,6 +392,7 @@ device_vpn_access_status_body(Device, Status, VpnSummary) ->
     Runtime = maps:get(runtime, Status, not_bound),
     Provisioning = maps:get(provisioning, Status, #{}),
     Allocation = maps:get(allocation, Status, undefined),
+    Decommission = maps:get(decommission, Status, undefined),
     case device_vpn_access_provisioned(RuntimePeerId, Runtime) of
         false ->
             [#h3{body = ias_html:text("VPN Access")},
@@ -394,6 +401,7 @@ device_vpn_access_status_body(Device, Status, VpnSummary) ->
                 body = ias_html:text(
                     "Complete the provisioning wizard before lifecycle controls become available.")},
              device_vpn_allocation_panel(Allocation),
+             device_vpn_decommission_panel(Decommission),
              #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
                     body = [
                         #link{url = <<"/app/provisioning-wizard.htm">>,
@@ -424,8 +432,9 @@ device_vpn_access_status_body(Device, Status, VpnSummary) ->
                  {"Revoked", device_vpn_runtime_value(revoked, Runtime, undefined)}
              ]),
              device_vpn_allocation_panel(Allocation),
+             device_vpn_decommission_panel(Decommission),
              #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
-                    body = device_vpn_access_actions(DeviceId, Runtime)},
+                    body = device_vpn_access_actions(DeviceId, Runtime, Allocation)},
              device_vpn_artifact_panel(DeviceId, Runtime)]
     end.
 
@@ -461,20 +470,40 @@ device_vpn_allocation_panel(Allocation) ->
                ])
            ]}.
 
-device_vpn_access_actions(_DeviceId, {ok, #{revoked := true}}) ->
+device_vpn_decommission_panel(undefined) ->
+    #panel{body = []};
+device_vpn_decommission_panel(Summary) when is_map(Summary) ->
+    #panel{style = <<"margin-top:12px;">>,
+           body = [
+               #p{style = <<"font-weight:600;margin-bottom:6px;">>,
+                  body = ias_html:text("Last VPN Decommission")},
+               key_value_table([
+                   {"Allocation ID", maps:get(allocation_id, Summary, undefined)},
+                   {"Client Peer", maps:get(client_peer_id, Summary, undefined)},
+                   {"Gateway Peer", maps:get(gateway_peer_id, Summary, undefined)},
+                   {"Allocation State", maps:get(allocation_state, Summary, undefined)},
+                   {"Registry State", maps:get(registry_state, Summary, undefined)},
+                   {"Identity State", maps:get(identity_state, Summary, undefined)},
+                   {"Decommissioned At", maps:get(decommissioned_at, Summary, undefined)}
+               ])
+           ]}.
+
+device_vpn_access_actions(DeviceId, {ok, #{revoked := true}}, Allocation) ->
     [#span{class = [button, more],
-           body = ias_html:text("VPN Access Revoked")},
-     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("VPN Access Revoked")}] ++
+    device_vpn_decommission_actions(DeviceId, Allocation) ++
+    [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
-device_vpn_access_actions(DeviceId, {ok, #{enabled := false}}) ->
+device_vpn_access_actions(DeviceId, {ok, #{enabled := false}}, Allocation) ->
     [#link{id = device_vpn_enable,
            class = [button, sgreen],
            body = ias_html:text("Enable VPN Access"),
            postback = {device_enable_vpn_access, DeviceId}},
-     device_vpn_revoke_action(DeviceId),
-     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+     device_vpn_revoke_action(DeviceId)] ++
+    device_vpn_decommission_actions(DeviceId, Allocation) ++
+    [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
-device_vpn_access_actions(DeviceId, {ok, _Peer}) ->
+device_vpn_access_actions(DeviceId, {ok, _Peer}, _Allocation) ->
     [#link{id = device_vpn_disable,
            class = [button, more],
            body = ias_html:text("Disable VPN Access"),
@@ -482,9 +511,17 @@ device_vpn_access_actions(DeviceId, {ok, _Peer}) ->
      device_vpn_revoke_action(DeviceId),
      #link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
-device_vpn_access_actions(_DeviceId, _Runtime) ->
+device_vpn_access_actions(_DeviceId, _Runtime, _Allocation) ->
     [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}].
+
+device_vpn_decommission_actions(DeviceId, Allocation) when is_map(Allocation) ->
+    [#link{id = device_vpn_decommission,
+           class = [button, more],
+           body = ias_html:text("Decommission VPN Access"),
+           postback = {device_confirm_decommission_vpn_access, DeviceId}}];
+device_vpn_decommission_actions(_DeviceId, _Allocation) ->
+    [].
 
 device_vpn_revoke_action(DeviceId) ->
     #link{id = device_vpn_revoke,
@@ -494,6 +531,9 @@ device_vpn_revoke_action(DeviceId) ->
 
 device_vpn_revoke_confirm_text() ->
     "Revoke VPN access permanently? Enabling the peer later will not bypass the revoke barrier.".
+
+device_vpn_decommission_confirm_text() ->
+    "Decommission this dynamic VPN allocation? Both runtime peers, the allocator reservation, and development identity material will be removed. IAS keeps a non-secret audit summary, and provisioning again creates a new allocation.".
 
 device_vpn_lifecycle_action(DeviceId, Operation) ->
     Result = apply_device_vpn_lifecycle_operation(Operation, DeviceId),
@@ -519,7 +559,9 @@ apply_device_vpn_lifecycle_operation(disable, DeviceId) ->
 apply_device_vpn_lifecycle_operation(enable, DeviceId) ->
     ias_vpn_access_lifecycle:enable(DeviceId);
 apply_device_vpn_lifecycle_operation(revoke, DeviceId) ->
-    ias_vpn_access_lifecycle:revoke(DeviceId).
+    ias_vpn_access_lifecycle:revoke(DeviceId);
+apply_device_vpn_lifecycle_operation(decommission, DeviceId) ->
+    ias_vpn_access_lifecycle:decommission(DeviceId, #{remove_identity => true}).
 
 device_vpn_status_after_action(Status, {ok, Result}) when is_map(Status) ->
     case maps:get(runtime, Result, undefined) of
@@ -529,6 +571,19 @@ device_vpn_status_after_action(Status, {ok, Result}) when is_map(Status) ->
 device_vpn_status_after_action(Status, _Result) ->
     Status.
 
+device_vpn_action_notice(decommission, {ok, Result}) ->
+    #panel{style = <<"margin-bottom:12px;padding:10px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #span{style = <<"font-weight:600;">>,
+                     body = ias_html:text("VPN access decommissioned")},
+               #br{},
+               ias_html:join([<<"Allocation: ">>,
+                              maps:get(allocation_id, Result, undefined),
+                              <<" | Identity: ">>,
+                              maps:get(identity_state, Result, undefined),
+                              <<" | Wizard drafts cleared: ">>,
+                              maps:get(wizard_drafts_cleared, Result, 0)])
+           ]};
 device_vpn_action_notice(Operation, {ok, Result}) ->
     #panel{style = <<"margin-bottom:12px;padding:10px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [

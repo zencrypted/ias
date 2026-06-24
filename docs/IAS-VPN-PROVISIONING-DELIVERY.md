@@ -276,6 +276,35 @@ remain unavailable until the client peer has actually been provisioned. No
 transport addresses, interface names, identity paths, PEM bodies, or private
 material are rendered.
 
+### Dynamic pair decommission bridge
+
+IAS exposes decommission as a separate destructive lifecycle boundary after a
+dynamic pair has been disabled or revoked. The Device page and completed
+Provisioning Wizard show the action only for a quiesced dynamic allocation and
+require explicit confirmation. IAS calls:
+
+```erlang
+vpn_dynamic_pair:decommission(DeviceId, #{remove_identity => true}).
+```
+
+The returned summary is validated against the Device-owned allocation before
+IAS changes local state. On success IAS removes the active runtime peer,
+allocation, reconciliation, and runtime-certificate binding fields from the
+Device; clears the same allocation projection from every wizard draft that
+references the Device; and retains only a non-secret decommission audit summary
+and history. Provisioning delivery history and revision state are preserved.
+
+A later `Provision VPN Access` action reserves a new VPN allocation, synchronizes
+the completed wizard draft with the new allocation metadata, creates new dynamic
+peer IDs and development identities, and continues the monotonically increasing
+IAS provisioning revision. Old peer IDs cannot be reused through the cleared
+Device or draft binding.
+
+The Common Test wizard scenario verifies revoke, rejected re-enable,
+decommission, allocator and registry removal, IAS binding cleanup, and immediate
+reprovisioning of the same Device with a different allocation and established
+client/gateway sessions.
+
 If reservation is enabled and VPN cannot reserve or validate an allocation, CSR
 plan preparation fails closed. Provisioning also performs an idempotent
 reservation check so existing-certificate flows cannot bypass allocation. If
@@ -355,9 +384,11 @@ restart recovery, replay rejection, previous-epoch expiry, out-of-order frames,
 and one complete wizard-to-runtime provisioning flow. That wizard case now
 asserts an allocator-backed arbitrary Device, dynamic client/gateway startup,
 both established handshakes, the runtime-generated certificate fingerprint,
-and pair-aware revoke semantics that stop both sides while preserving the
-client-only revoke barrier. The simultaneous static Alice/Bob scenario remains a
-manual compatibility check rather than a dedicated Common Test case.
+pair-aware revoke semantics that stop both sides while preserving the
+client-only revoke barrier, decommission cleanup across VPN and IAS, and fresh
+allocation after reprovisioning the same Device. The simultaneous static
+Alice/Bob scenario remains a manual compatibility check rather than a dedicated
+Common Test case.
 
 Persistence, automatic background retries, and non-RPC transports remain out of
 scope for this stage.

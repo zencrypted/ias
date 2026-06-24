@@ -95,6 +95,12 @@ event({wizard_confirm_revoke_vpn_access, WizardId}) ->
         postback = {wizard_revoke_vpn_access, WizardId}});
 event({wizard_revoke_vpn_access, WizardId}) ->
     wizard_vpn_lifecycle_action(WizardId, revoke);
+event({wizard_confirm_decommission_vpn_access, WizardId}) ->
+    nitro:wire(#confirm{
+        text = wizard_vpn_decommission_confirm_text(),
+        postback = {wizard_decommission_vpn_access, WizardId}});
+event({wizard_decommission_vpn_access, WizardId}) ->
+    wizard_vpn_lifecycle_action(WizardId, decommission);
 event({wizard_download_device_bound_ovpn, ProvisioningId}) ->
     wizard_download_device_bound_ovpn(
         ias_device_bound_ovpn:download_response(ProvisioningId));
@@ -535,7 +541,9 @@ apply_wizard_vpn_lifecycle_operation(disable, DeviceId) ->
 apply_wizard_vpn_lifecycle_operation(enable, DeviceId) ->
     ias_vpn_access_lifecycle:enable(DeviceId);
 apply_wizard_vpn_lifecycle_operation(revoke, DeviceId) ->
-    ias_vpn_access_lifecycle:revoke(DeviceId).
+    ias_vpn_access_lifecycle:revoke(DeviceId);
+apply_wizard_vpn_lifecycle_operation(decommission, DeviceId) ->
+    ias_vpn_access_lifecycle:decommission(DeviceId, #{remove_identity => true}).
 
 wizard_device_id(WizardId) ->
     case ias_provisioning_wizard_store:get(WizardId) of
@@ -554,6 +562,19 @@ wizard_vpn_lifecycle_status(WizardId) ->
         Error -> Error
     end.
 
+wizard_vpn_lifecycle_action_body(WizardId, decommission, {ok, Result}) ->
+    Status = wizard_vpn_lifecycle_status(WizardId),
+    [wizard_notice("VPN Access Decommissioned",
+                   "The dynamic pair, allocator reservation, and development identity material were removed. IAS retained only a non-secret audit summary."),
+     key_value_table([
+         {"Allocation ID", maps:get(allocation_id, Result, undefined)},
+         {"Client Peer", maps:get(client_peer_id, Result, undefined)},
+         {"Gateway Peer", maps:get(gateway_peer_id, Result, undefined)},
+         {"Allocation State", maps:get(allocation_state, Result, undefined)},
+         {"Identity State", maps:get(identity_state, Result, undefined)},
+         {"Wizard Drafts Cleared", maps:get(wizard_drafts_cleared, Result, 0)}
+     ])
+     | wizard_vpn_lifecycle_status_body(WizardId, Status)];
 wizard_vpn_lifecycle_action_body(WizardId, Operation, {ok, Result}) ->
     Status = wizard_vpn_lifecycle_status_after_action(WizardId, Result),
     [wizard_notice("VPN Access Updated",
@@ -584,6 +605,7 @@ wizard_vpn_lifecycle_status_body(WizardId, Status) ->
     Provisioning = maps:get(provisioning, Status, #{}),
     Runtime = maps:get(runtime, Status, disabled),
     Allocation = maps:get(allocation, Status, undefined),
+    Decommission = maps:get(decommission, Status, undefined),
     [key_value_table([
          {"Binding", maps:get(binding_mode, Status, static)},
          {"Runtime Peer", maps:get(runtime_peer_id, Status, undefined)},
@@ -597,8 +619,9 @@ wizard_vpn_lifecycle_status_body(WizardId, Status) ->
          {"Revoked", wizard_runtime_value(revoked, Runtime)}
      ]),
      wizard_vpn_allocation_panel(Allocation),
+     wizard_vpn_decommission_panel(Decommission),
      #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
-            body = wizard_vpn_lifecycle_actions(WizardId, Runtime)}].
+            body = wizard_vpn_lifecycle_actions(WizardId, Runtime, Allocation)}].
 
 wizard_vpn_allocation_panel(undefined) ->
     #panel{body = []};
@@ -627,20 +650,40 @@ wizard_vpn_allocation_panel(Allocation) ->
                ])
            ]}.
 
-wizard_vpn_lifecycle_actions(_WizardId, {ok, #{revoked := true}}) ->
+wizard_vpn_decommission_panel(undefined) ->
+    #panel{body = []};
+wizard_vpn_decommission_panel(Summary) when is_map(Summary) ->
+    #panel{style = <<"margin-top:12px;">>,
+           body = [
+               #p{style = <<"font-weight:600;margin-bottom:6px;">>,
+                  body = ias_html:text("Last VPN Decommission")},
+               key_value_table([
+                   {"Allocation ID", maps:get(allocation_id, Summary, undefined)},
+                   {"Client Peer", maps:get(client_peer_id, Summary, undefined)},
+                   {"Gateway Peer", maps:get(gateway_peer_id, Summary, undefined)},
+                   {"Allocation State", maps:get(allocation_state, Summary, undefined)},
+                   {"Registry State", maps:get(registry_state, Summary, undefined)},
+                   {"Identity State", maps:get(identity_state, Summary, undefined)},
+                   {"Decommissioned At", maps:get(decommissioned_at, Summary, undefined)}
+               ])
+           ]}.
+
+wizard_vpn_lifecycle_actions(WizardId, {ok, #{revoked := true}}, Allocation) ->
     [#span{class = [button, more],
-           body = ias_html:text("VPN Access Revoked")},
-     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("VPN Access Revoked")}] ++
+    wizard_vpn_decommission_actions(WizardId, Allocation) ++
+    [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
-wizard_vpn_lifecycle_actions(WizardId, {ok, #{enabled := false}}) ->
+wizard_vpn_lifecycle_actions(WizardId, {ok, #{enabled := false}}, Allocation) ->
     [#link{id = wizard_vpn_lifecycle_action_id(enable, WizardId),
            class = [button, sgreen],
            body = ias_html:text("Enable VPN Access"),
            postback = {wizard_enable_vpn_access, WizardId}},
-     wizard_vpn_revoke_action(WizardId),
-     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+     wizard_vpn_revoke_action(WizardId)] ++
+    wizard_vpn_decommission_actions(WizardId, Allocation) ++
+    [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
-wizard_vpn_lifecycle_actions(WizardId, {ok, _Peer}) ->
+wizard_vpn_lifecycle_actions(WizardId, {ok, _Peer}, _Allocation) ->
     [#link{id = wizard_vpn_lifecycle_action_id(disable, WizardId),
            class = [button, more],
            body = ias_html:text("Disable VPN Access"),
@@ -648,9 +691,17 @@ wizard_vpn_lifecycle_actions(WizardId, {ok, _Peer}) ->
      wizard_vpn_revoke_action(WizardId),
      #link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
-wizard_vpn_lifecycle_actions(_WizardId, _Runtime) ->
+wizard_vpn_lifecycle_actions(_WizardId, _Runtime, _Allocation) ->
     [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}].
+
+wizard_vpn_decommission_actions(WizardId, Allocation) when is_map(Allocation) ->
+    [#link{id = wizard_vpn_lifecycle_action_id(decommission, WizardId),
+           class = [button, more],
+           body = ias_html:text("Decommission VPN Access"),
+           postback = {wizard_confirm_decommission_vpn_access, WizardId}}];
+wizard_vpn_decommission_actions(_WizardId, _Allocation) ->
+    [].
 
 wizard_vpn_revoke_action(WizardId) ->
     #link{id = wizard_vpn_lifecycle_action_id(revoke, WizardId),
@@ -660,6 +711,9 @@ wizard_vpn_revoke_action(WizardId) ->
 
 wizard_vpn_revoke_confirm_text() ->
     "Revoke VPN access permanently? Enabling the peer later will not bypass the revoke barrier.".
+
+wizard_vpn_decommission_confirm_text() ->
+    "Decommission this dynamic VPN allocation? Both runtime peers, the allocator reservation, and development identity material will be removed. IAS keeps a non-secret audit summary, and provisioning again creates a new allocation.".
 
 wizard_vpn_lifecycle_action_id(Operation, WizardId) ->
     ias_html:join([<<"wizard_vpn_lifecycle_">>, Operation, <<"_">>, WizardId]).

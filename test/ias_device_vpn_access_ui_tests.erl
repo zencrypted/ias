@@ -23,11 +23,13 @@ device_vpn_access_controls_follow_runtime_state_test_() ->
              ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Disable VPN Access">>)),
              ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Revoke VPN Access">>)),
              ?assertEqual(nomatch, binary:match(EnabledHtml, <<"Enable VPN Access">>)),
+             ?assertEqual(nomatch, binary:match(EnabledHtml, <<"Decommission VPN Access">>)),
 
              set_runtime_peer(disabled_peer()),
              DisabledHtml = render(Device, Summary),
              ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Enable VPN Access">>)),
              ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Revoke VPN Access">>)),
+             ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Decommission VPN Access">>)),
              ?assertEqual(nomatch, binary:match(DisabledHtml, <<"Disable VPN Access">>)),
 
              set_runtime_peer(revoked_peer()),
@@ -35,7 +37,8 @@ device_vpn_access_controls_follow_runtime_state_test_() ->
              ?assertMatch({_, _}, binary:match(RevokedHtml, <<"VPN Access Revoked">>)),
              ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Enable VPN Access">>)),
              ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Disable VPN Access">>)),
-             ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Revoke VPN Access">>))
+             ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Revoke VPN Access">>)),
+             ?assertMatch({_, _}, binary:match(RevokedHtml, <<"Decommission VPN Access">>))
          end
      end}.
 
@@ -58,6 +61,40 @@ reserved_device_shows_dynamic_allocation_test_() ->
              ?assertMatch({_, _}, binary:match(Html, client_peer_id())),
              ?assertMatch({_, _}, binary:match(Html, gateway_peer_id())),
              ?assertMatch({_, _}, binary:match(Html, <<">reserved</td>">>))
+         end
+     end}.
+
+
+
+decommissioned_device_shows_audit_and_reprovision_guidance_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             Summary = #{device_id => <<"decommissioned-device-ui">>,
+                         allocation_id => <<"released-allocation-ui">>,
+                         client_peer_id => <<"released-client-ui">>,
+                         gateway_peer_id => <<"released-gateway-ui">>,
+                         allocation_state => released,
+                         registry_state => removed,
+                         identity_state => removed,
+                         decommissioned_at => 1782302000},
+             Device = ias_demo_store:add_device(
+                        #{id => <<"decommissioned-device-ui">>,
+                          owner => alice,
+                          peer_id => <<"decommissioned-device-ui">>,
+                          source => manual_device,
+                          vpn_last_decommission => Summary,
+                          vpn_decommission_history => [Summary]}),
+             Html = render(Device, {error, unavailable}),
+             ?assertMatch({_, _}, binary:match(Html, <<"VPN access not provisioned">>)),
+             ?assertMatch({_, _}, binary:match(Html, <<"Last VPN Decommission">>)),
+             ?assertMatch({_, _}, binary:match(Html, <<"released-allocation-ui">>)),
+             ?assertMatch({_, _}, binary:match(Html, <<"released-client-ui">>)),
+             ?assertMatch({_, _}, binary:match(Html, <<"removed">>)),
+             ?assertMatch({_, _}, binary:match(Html, <<"Open Provisioning Wizard">>)),
+             ?assertEqual(nomatch, binary:match(Html, <<"Decommission VPN Access">>))
          end
      end}.
 

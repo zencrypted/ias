@@ -151,6 +151,9 @@ without invoking a second `rebar3` build, and verifies:
 - revoke stops and locks the client peer;
 - a dynamic companion gateway is quiesced without being marked revoked;
 - enable after revoke is rejected and neither side of the dynamic pair restarts;
+- decommission removes the quiesced dynamic pair, releases its allocator slot,
+  removes development identity material, clears active IAS binding fields, and
+  permits the same Device to receive a fresh allocation with new peer IDs;
 - the IAS and runtime certificate fingerprints match;
 - a mismatched IAS certificate fingerprint is rejected before a peer starts;
 - a stale provisioning revision is rejected without rolling the runtime state
@@ -173,8 +176,9 @@ without invoking a second `rebar3` build, and verifies:
   ECDH material;
 - a wizard-selected arbitrary Device receives an allocator-backed dynamic
   client/gateway pair, both handshakes reach `established`, the runtime-generated
-  client certificate fingerprint is applied to the revisioned command, and the
-  revoke barrier remains effective.
+  client certificate fingerprint is applied to the revisioned command, the
+  revoke barrier remains effective, and the revoked pair can be decommissioned
+  before the same Device is provisioned again with a fresh allocation.
 
 The debug configuration also retains two simultaneous trusted static runtime
 slots for compatibility and lower-level regression tests:

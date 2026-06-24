@@ -29,7 +29,15 @@ deliver(_Draft, _Transaction, undefined) ->
     {error, device_required};
 deliver(Draft, Transaction, DeviceId) ->
     case ensure_runtime_allocation(DeviceId) of
-        ok -> deliver_with_runtime_allocation(Draft, Transaction, DeviceId);
+        ok ->
+            case synchronize_draft_allocation(Draft, DeviceId) of
+                {ok, SyncedDraft} ->
+                    deliver_with_runtime_allocation(SyncedDraft,
+                                                    Transaction,
+                                                    DeviceId);
+                {error, Reason} ->
+                    {error, Reason}
+            end;
         {error, Reason} -> {error, Reason}
     end.
 
@@ -141,6 +149,39 @@ ensure_runtime_allocation(DeviceId) ->
                 {ok, _Allocation} -> ok;
                 disabled -> {error, vpn_dynamic_allocation_required};
                 {error, Reason} -> {error, Reason}
+            end
+    end.
+
+synchronize_draft_allocation(Draft, DeviceId) ->
+    case ias_vpn_dynamic_pair:enabled() of
+        false ->
+            {ok, Draft};
+        true ->
+            case ias_demo_store:get(DeviceId) of
+                {ok, #{kind := device} = Device} ->
+                    case maps:get(vpn_allocation_id, Device, undefined) of
+                        undefined ->
+                            {error, vpn_dynamic_allocation_required};
+                        <<>> ->
+                            {error, vpn_dynamic_allocation_required};
+                        _AllocationId ->
+                            Updates = maps:with(
+                                        [vpn_allocation_id,
+                                         vpn_allocator_instance_id,
+                                         vpn_client_peer_id,
+                                         vpn_gateway_peer_id,
+                                         vpn_allocation_slot,
+                                         vpn_allocation_generation,
+                                         vpn_allocation_state,
+                                         vpn_allocation_persistence,
+                                         vpn_allocation_created_at],
+                                        Device),
+                            ias_provisioning_wizard_store:update(
+                              maps:get(id, Draft),
+                              Updates)
+                    end;
+                _ ->
+                    {error, device_required}
             end
     end.
 

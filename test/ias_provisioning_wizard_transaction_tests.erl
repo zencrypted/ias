@@ -131,7 +131,27 @@ dynamic_allocation_is_rendered_in_completed_wizard_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"client_dyn_wizard_ui">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"gateway_dyn_wizard_ui">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"allocator-wizard-ui">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<">dynamic</td>">>)).
+    ?assertMatch({_, _}, binary:match(Html, <<">dynamic</td>">>)),
+    with_vpn_runtime_peer_id(
+      <<"client_dyn_wizard_ui">>, false, false, false,
+      fun() ->
+          DisabledHtml = render(
+                           ias_provisioning_wizard:content_for(
+                             {draft, Completed})),
+          ?assertMatch({_, _},
+                       binary:match(DisabledHtml,
+                                    <<"Decommission VPN Access">>))
+      end),
+    with_vpn_runtime_peer_id(
+      <<"client_dyn_wizard_ui">>, false, false, true,
+      fun() ->
+          RevokedHtml = render(
+                          ias_provisioning_wizard:content_for(
+                            {draft, Completed})),
+          ?assertMatch({_, _},
+                       binary:match(RevokedHtml,
+                                    <<"Decommission VPN Access">>))
+      end).
 
 vpn_lifecycle_actions_follow_runtime_state_test() ->
     Draft = setup_ready_wizard(),
@@ -142,12 +162,14 @@ vpn_lifecycle_actions_follow_runtime_state_test() ->
         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Disable VPN Access">>)),
         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Revoke VPN Access">>)),
         ?assertEqual(nomatch, binary:match(EnabledHtml, <<"Enable VPN Access">>)),
+        ?assertEqual(nomatch, binary:match(EnabledHtml, <<"Decommission VPN Access">>)),
         ?assertMatch({_, _}, binary:match(EnabledHtml, <<">enabled</td>">>))
     end),
     with_vpn_runtime_peer(false, false, false, fun() ->
         DisabledHtml = render(ias_provisioning_wizard:content_for({draft, Completed})),
         ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Enable VPN Access">>)),
         ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Revoke VPN Access">>)),
+        ?assertEqual(nomatch, binary:match(DisabledHtml, <<"Decommission VPN Access">>)),
         ?assertEqual(nomatch, binary:match(DisabledHtml, <<"Disable VPN Access">>)),
         ?assertMatch({_, _}, binary:match(DisabledHtml, <<">disabled</td>">>))
     end),
@@ -156,6 +178,7 @@ vpn_lifecycle_actions_follow_runtime_state_test() ->
         ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Enable VPN Access">>)),
         ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Disable VPN Access">>)),
         ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Revoke VPN Access">>)),
+        ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Decommission VPN Access">>)),
         ?assertMatch({_, _}, binary:match(RevokedHtml, <<"VPN Access Revoked">>)),
         ?assertMatch({_, _}, binary:match(RevokedHtml, <<">revoked</td>">>)),
         ?assertMatch({match, _},
@@ -251,14 +274,22 @@ provisioning_count() ->
 
 
 with_vpn_runtime_peer(Enabled, Authorized, Revoked, Fun) ->
+    with_vpn_runtime_peer_id(client_a,
+                             Enabled,
+                             Authorized,
+                             Revoked,
+                             Fun).
+
+with_vpn_runtime_peer_id(PeerId, Enabled, Authorized, Revoked, Fun) ->
     PreviousTransport = application:get_env(ias, vpn_provisioning_transport),
     PreviousRpcFun = application:get_env(ias, vpn_provisioning_rpc_fun),
     application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
     application:set_env(
         ias,
         vpn_provisioning_rpc_fun,
-        fun(_Node, vpn_peer_registry, get, [client_a], _Timeout) ->
-                {ok, #{id => client_a,
+        fun(_Node, vpn_peer_registry, get, [RequestedPeerId], _Timeout)
+              when RequestedPeerId =:= PeerId ->
+                {ok, #{id => PeerId,
                        enabled => Enabled,
                        authorized => Authorized,
                        revoked => Revoked,
