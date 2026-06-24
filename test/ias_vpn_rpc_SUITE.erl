@@ -46,6 +46,7 @@ init_per_suite(Config) ->
     {ok, VpnProcess} = start_vpn(VpnRepo, LogPath),
     case wait_for_vpn_ready(?VPN_NODE, VpnProcess, ?STARTUP_TIMEOUT_MS) of
         ok ->
+            ok = configure_vpn_test_runtime(?VPN_NODE),
             application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
             application:set_env(ias, vpn_provisioning_vpn_node, ?VPN_NODE),
             application:set_env(ias, vpn_provisioning_rpc_timeout, ?RPC_TIMEOUT_MS),
@@ -59,6 +60,37 @@ init_per_suite(Config) ->
         {error, Reason} ->
             _ = stop_vpn_process(VpnProcess),
             ct:fail({vpn_startup_failed, Reason, read_log(LogPath)})
+    end.
+
+configure_vpn_test_runtime(VpnNode) ->
+    case rpc:call(VpnNode,
+                  application,
+                  get_env,
+                  [vpn, runtime_config_templates],
+                  ?RPC_TIMEOUT_MS) of
+        {ok, Templates} when is_map(Templates) ->
+            case maps:find(client_a, Templates) of
+                {ok, ClientATemplate} when is_map(ClientATemplate) ->
+                    ok = rpc:call(VpnNode,
+                                  application,
+                                  unset_env,
+                                  [vpn, runtime_config_templates],
+                                  ?RPC_TIMEOUT_MS),
+                    ok = rpc:call(VpnNode,
+                                  application,
+                                  set_env,
+                                  [vpn, runtime_config_template, ClientATemplate],
+                                  ?RPC_TIMEOUT_MS),
+                    ok;
+                _ ->
+                    ct:fail({vpn_client_a_template_missing, Templates})
+            end;
+        undefined ->
+            ok;
+        {badrpc, Reason} ->
+            ct:fail({vpn_test_runtime_config_failed, Reason});
+        Other ->
+            ct:fail({invalid_vpn_runtime_templates, Other})
     end.
 
 end_per_suite(Config) ->
