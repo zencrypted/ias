@@ -41,10 +41,13 @@ init_per_suite(Config) ->
     ok = validate_vpn_repo(VpnRepo),
     ok = ensure_no_conflicting_vpn_node(),
     ok = ensure_vpn_test_ports_available(),
-    LogPath = filename:join([cwd(), "_build", "test", "logs", "ias_vpn_rpc", "vpn.log"]),
+    RuntimeRoot = filename:join([cwd(), "_build", "test", "logs", "ias_vpn_rpc"]),
+    LogPath = filename:join(RuntimeRoot, "vpn.log"),
+    MnesiaDir = filename:join(RuntimeRoot, "mnesia"),
     ok = filelib:ensure_dir(LogPath),
+    ok = reset_vpn_mnesia_dir(MnesiaDir),
     ok = prepare_vpn(VpnRepo),
-    {ok, VpnProcess} = start_vpn(VpnRepo, LogPath),
+    {ok, VpnProcess} = start_vpn(VpnRepo, LogPath, MnesiaDir),
     case wait_for_vpn_ready(?VPN_NODE, VpnProcess, ?STARTUP_TIMEOUT_MS) of
         ok ->
             {ok, RuntimeTemplates} = configure_vpn_test_runtime(?VPN_NODE),
@@ -61,6 +64,7 @@ init_per_suite(Config) ->
              {vpn_node, ?VPN_NODE},
              {vpn_process, VpnProcess},
              {vpn_log, LogPath},
+             {vpn_mnesia_dir, MnesiaDir},
              {vpn_runtime_templates, RuntimeTemplates} | Config];
         {error, Reason} ->
             _ = stop_vpn_process(VpnProcess),
@@ -1224,9 +1228,14 @@ prepare_vpn(VpnRepo) ->
             ct:fail({vpn_prepare_failed, Status, Output})
     end.
 
-start_vpn(VpnRepo, LogPath) ->
+start_vpn(VpnRepo, LogPath, MnesiaDir) ->
     Parent = self(),
-    Process = spawn(fun() -> vpn_process_owner(Parent, VpnRepo, LogPath) end),
+    Process = spawn(fun() ->
+                            vpn_process_owner(Parent,
+                                              VpnRepo,
+                                              LogPath,
+                                              MnesiaDir)
+                    end),
     receive
         {vpn_process_started, Process} ->
             {ok, Process};
@@ -1237,7 +1246,7 @@ start_vpn(VpnRepo, LogPath) ->
         {error, {vpn_spawn_failed, timeout}}
     end.
 
-vpn_process_owner(Parent, VpnRepo, LogPath) ->
+vpn_process_owner(Parent, VpnRepo, LogPath, MnesiaDir) ->
     process_flag(trap_exit, true),
     case file:open(LogPath, [write, raw, binary]) of
         {ok, Log} ->
@@ -1250,7 +1259,7 @@ vpn_process_owner(Parent, VpnRepo, LogPath) ->
                         "-setcookie", "ias_vpn_ct_cookie",
                         "-config", filename:join(VpnRepo, "config/sys.debug")]
                        ++ code_path_args(EbinPaths)
-                       ++ ["-eval", vpn_start_expression()],
+                       ++ ["-eval", vpn_start_expression(MnesiaDir)],
                 Port = open_port({spawn_executable, Erl},
                                  [{args, Args},
                                   {cd, VpnRepo},
@@ -1284,6 +1293,26 @@ require_executable(Name) ->
         Path -> Path
     end.
 
+reset_vpn_mnesia_dir(MnesiaDir) ->
+    case file:del_dir_r(MnesiaDir) of
+        ok ->
+            ensure_vpn_mnesia_dir(MnesiaDir);
+        {error, enoent} ->
+            ensure_vpn_mnesia_dir(MnesiaDir);
+        {error, Reason} ->
+            ct:fail({vpn_mnesia_reset_failed, MnesiaDir, Reason})
+    end.
+
+ensure_vpn_mnesia_dir(MnesiaDir) ->
+    case filelib:ensure_dir(filename:join(MnesiaDir, "placeholder")) of
+        ok -> ok;
+        {error, Reason} ->
+            ct:fail({vpn_mnesia_dir_unavailable, MnesiaDir, Reason})
+    end.
+
+erl_term_argument(Term) ->
+    lists:flatten(io_lib:format("~tp", [Term])).
+
 vpn_ebin_paths(VpnRepo) ->
     Patterns = [
         filename:join([VpnRepo, "_build", "debug", "lib", "*", "ebin"]),
@@ -1314,7 +1343,9 @@ code_path_args(Paths) ->
     %% remains ahead of any stale default-profile beams.
     lists:append([["-pa", Path] || Path <- lists:reverse(Paths)]).
 
-vpn_start_expression() ->
+vpn_start_expression(MnesiaDir) ->
+    "ok = application:set_env(mnesia, dir, " ++
+    erl_term_argument(MnesiaDir) ++ "), " ++
     "case application:ensure_all_started(vpn) of "
     "{ok, _} -> receive after infinity -> ok end; "
     "{error, Reason} -> io:format(standard_error, "
