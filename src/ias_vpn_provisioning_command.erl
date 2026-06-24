@@ -1,6 +1,7 @@
 -module(ias_vpn_provisioning_command).
 -export([build/1,
          build/2,
+         desired/2,
          summary/1]).
 
 build(DeviceId) ->
@@ -19,6 +20,22 @@ build(DeviceId, Operation) ->
             case device(DeviceId) of
                 {ok, Device} -> build_for_device(Device, Operation);
                 not_found -> {error, not_found}
+            end
+    end.
+
+
+desired(DeviceId, Operation) ->
+    case valid_operation(Operation) of
+        false -> {error, invalid_operation};
+        true ->
+            case device(DeviceId) of
+                {ok, Device} ->
+                    Decision = ias_authorization_decision:device_decision(
+                                 maps:get(id, Device), access_vpn),
+                    Certificate = linked_certificate(maps:get(id, Device)),
+                    {ok, desired_state(Device, Certificate, Decision, Operation)};
+                not_found ->
+                    {error, not_found}
             end
     end.
 
@@ -84,7 +101,7 @@ desired_state(Device, CertificateResult, Decision, Operation) ->
                  authorized => Authorized,
                  authorization_mode => policy,
                  authorization_reason => authorization_reason(Decision, Operation),
-                 certificate_fingerprint => certificate_fingerprint(CertificateResult)},
+                 certificate_fingerprint => runtime_certificate_fingerprint(Device, CertificateResult)},
     maybe_put(profile_id, linked_profile_id(Device, CertificateResult), Desired0).
 
 
@@ -131,6 +148,16 @@ normalize_reason(Reason) ->
                   string:lowercase(unicode:characters_to_list(Text))),
     binary:replace(Lowercase, <<" ">>, <<"_">>, [global]).
 
+runtime_certificate_fingerprint(Device, CertificateResult) ->
+    first_present([dynamic_runtime_fingerprint(Device),
+                   certificate_fingerprint(CertificateResult)]).
+
+dynamic_runtime_fingerprint(Device) ->
+    case ias_vpn_dynamic_pair:enabled() of
+        true -> maps:get(vpn_runtime_certificate_fingerprint, Device, undefined);
+        false -> undefined
+    end.
+
 certificate_fingerprint({ok, Certificate}) ->
     first_present([maps:get(fingerprint_sha256, Certificate, undefined),
                    maps:get(certificate_fingerprint, Certificate, undefined),
@@ -152,9 +179,16 @@ linked_certificate(DeviceId) ->
     end.
 
 peer_id(Device) ->
-    first_present([maps:get(runtime_peer_id, Device, undefined),
+    first_present([dynamic_peer_id(Device),
+                   maps:get(runtime_peer_id, Device, undefined),
                    maps:get(peer_id, Device, undefined),
                    maps:get(id, Device)]).
+
+dynamic_peer_id(Device) ->
+    case ias_vpn_dynamic_pair:enabled() of
+        true -> maps:get(vpn_client_peer_id, Device, undefined);
+        false -> undefined
+    end.
 
 device(DeviceId) ->
     case ias_demo_store:get(DeviceId) of

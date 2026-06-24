@@ -715,3 +715,32 @@ reported by the VPN runtime instead of re-evaluating it as an IAS policy denial.
 All peers in `policy` mode continue to be evaluated against IAS Device and
 Security Profile relationships. The bypass remains a development-only runtime
 contract and must never be inferred from a missing profile.
+
+
+---
+
+## TD-018: Dynamic Pair Bootstrap and Revision Apply Are Two RPC Steps
+
+**Status:** Open
+
+**Area:** IAS to VPN Dynamic Provisioning
+
+### Problem
+
+The first dynamic upsert currently reconciles and establishes the VPN-owned
+client/gateway pair, then applies the canonical IAS revision to the client peer
+through the existing `vpn_provisioning` contract. The split preserves the
+verified lifecycle and revision guards, but the two distributed calls are not a
+single atomic transaction. A transport failure between them can leave a
+revision-zero dynamic pair running while IAS records the upsert as failed.
+
+### Desired Direction
+
+Extend the VPN dynamic-pair contract to accept and atomically commit the
+canonical provisioning revision, operation, and public IAS policy projection as
+part of pair reconciliation. Preserve idempotency and rollback for both registry
+entries and peer processes.
+
+### Priority
+
+High before production deployment

@@ -48,5 +48,25 @@ legacy_default_slot_is_preserved_test() ->
         restore_env(vpn_provisioning_runtime_peer_id, PreviousDefault)
     end.
 
+dynamic_allocation_precedes_static_runtime_slots_test() ->
+    PreviousEnabled = application:get_env(ias, vpn_dynamic_pair_delivery),
+    PreviousSlots = application:get_env(ias, vpn_provisioning_runtime_peer_slots),
+    try
+        application:set_env(ias, vpn_dynamic_pair_delivery, true),
+        application:set_env(ias, vpn_provisioning_runtime_peer_slots,
+                            #{alice => client_a, bob => client_b}),
+        DynamicPeerId = <<"client_dyn_1_instance_1">>,
+        Device = #{id => device_1,
+                   kind => device,
+                   runtime_peer_id => client_a,
+                   vpn_client_peer_id => DynamicPeerId},
+        ?assertEqual(DynamicPeerId,
+                     ias_vpn_wizard_provisioning:runtime_peer_id(
+                       Device, #{user_id => alice}))
+    after
+        restore_env(vpn_dynamic_pair_delivery, PreviousEnabled),
+        restore_env(vpn_provisioning_runtime_peer_slots, PreviousSlots)
+    end.
+
 restore_env(Key, {ok, Value}) -> application:set_env(ias, Key, Value);
 restore_env(Key, undefined) -> application:unset_env(ias, Key).

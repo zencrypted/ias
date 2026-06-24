@@ -20,17 +20,41 @@ deliver(_Command) ->
     {error, invalid_command}.
 
 build_and_deliver(DeviceId, Operation) ->
-    case ias_vpn_provisioning_command:build(DeviceId, Operation) of
-        {ok, Command} ->
-            case deliver(Command) of
-                {ok, Delivery} ->
-                    {ok, #{command => Command, delivery => Delivery}};
+    case prepare_dynamic_pair(DeviceId, Operation) of
+        {ok, DynamicPair} ->
+            case ias_vpn_provisioning_command:build(DeviceId, Operation) of
+                {ok, Command} ->
+                    case deliver(Command) of
+                        {ok, Delivery} ->
+                            Result0 = #{command => Command, delivery => Delivery},
+                            {ok, maybe_put(dynamic_pair, DynamicPair, Result0)};
+                        Error ->
+                            Error
+                    end;
                 Error ->
                     Error
             end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+prepare_dynamic_pair(DeviceId, upsert) ->
+    case ias_vpn_provisioning_command:desired(DeviceId, upsert) of
+        {ok, Desired} ->
+            case ias_vpn_dynamic_pair:ensure(DeviceId, Desired) of
+                {ok, Status} -> {ok, Status};
+                not_dynamic -> {ok, undefined};
+                disabled -> {ok, undefined};
+                {error, Reason} -> {error, Reason}
+            end;
         Error ->
             Error
-    end.
+    end;
+prepare_dynamic_pair(_DeviceId, _Operation) ->
+    {ok, undefined}.
+
+maybe_put(_Key, undefined, Map) -> Map;
+maybe_put(Key, Value, Map) -> Map#{Key => Value}.
 
 status(DeviceId) ->
     ensure(),

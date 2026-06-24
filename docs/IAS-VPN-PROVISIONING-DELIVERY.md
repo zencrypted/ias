@@ -126,6 +126,8 @@ IAS reads these application environment keys:
 - `vpn_provisioning_vpn_node`: distributed Erlang VPN node name
 - `vpn_provisioning_rpc_timeout`: RPC timeout in milliseconds
 - `vpn_dynamic_allocation_reservation`: reserve a VPN-owned dynamic pair before Device CSR preparation
+- `vpn_dynamic_pair_delivery`: reconcile the reserved client/gateway pair before the first upsert
+- `vpn_dynamic_pair_rpc_timeout`: timeout for identity generation, pair startup, and handshake establishment
 
 Default configuration is:
 
@@ -133,6 +135,9 @@ Default configuration is:
 {vpn_provisioning_transport, disabled}
 {vpn_provisioning_vpn_node, 'vpn@127.0.0.1'}
 {vpn_provisioning_rpc_timeout, 5000}
+{vpn_dynamic_allocation_reservation, false}
+{vpn_dynamic_pair_delivery, false}
+{vpn_dynamic_pair_rpc_timeout, 30000}
 ```
 
 `disabled` is the safe default. IAS does not contact VPN unless the transport is
@@ -244,20 +249,32 @@ identity bundles. VPN remains the owner of transport resources and identity
 material. The RPC result is validated against the selected Device ID before it
 is persisted.
 
-This bridge does not yet switch provisioning to the dynamic client peer. The
-existing `alice -> client_a` and `bob -> client_b` runtime-slot mapping remains
-the active delivery path until VPN can atomically reconcile and start both
-sides of an allocator-backed pair. The pending reservation metadata prepares
-the domain model for that later cutover without breaking the verified static
-dataplane. The CSR common name is also unchanged at this stage.
+When `vpn_dynamic_pair_delivery` is enabled, the first wizard upsert now cuts
+over to the reserved dynamic client peer. IAS asks VPN to reconcile the complete
+client/gateway pair, waits for both certificate handshakes to reach
+`established`, validates the returned allocation binding, and persists only the
+dynamic client peer ID plus its public certificate fingerprint. IAS then builds
+the normal revisioned provisioning command and applies revision `1` to that
+client peer. Later disable, enable, and revoke operations continue through the
+existing `vpn_provisioning` contract.
+
+The legacy `alice -> client_a` and `bob -> client_b` mapping remains available
+only as a fallback for Devices without dynamic reservation metadata or when the
+dynamic-pair feature is disabled. The CSR common name is still unchanged at
+this stage; VPN development identity generation owns the dynamic runtime
+certificate used by the pair.
 
 If reservation is enabled and VPN cannot reserve or validate an allocation, CSR
-plan preparation fails closed. Setting the feature to `false` preserves the
-previous isolated/static-preview behavior and performs no allocator RPC.
+plan preparation fails closed. Provisioning also performs an idempotent
+reservation check so existing-certificate flows cannot bypass allocation. If
+pair reconciliation or binding validation fails, no revisioned IAS command is
+delivered. Setting either feature to `false` preserves the corresponding
+isolated/static fallback behavior.
 
-## Verified two-user Provisioning Wizard milestone
+## Verified static two-user milestone and dynamic cutover
 
-The current development configuration contains two trusted VPN runtime slots:
+The development configuration still contains two trusted static VPN runtime
+slots for compatibility and regression coverage:
 
 ```erlang
 #{alice => client_a,
@@ -314,20 +331,20 @@ IAS user profile or positive IAS authorization metadata because they are not
 created by the Provisioning Wizard. Their successful authenticated sessions and
 dataplane reception are the relevant gateway-side signals.
 
-This milestone does not yet provide general multi-user allocation. Adding a
-third user requires another trusted slot and gateway pair. The planned
-production direction is a VPN-owned dynamic allocator that assigns peer IDs,
-interfaces, addresses, ports, identity locations, and gateway sessions without
-hard-coding IAS user names. Durable projection across a complete VPN restart
-also remains future work.
+The normal dynamically reserved wizard flow no longer requires another static
+slot for a third Device. VPN owns peer IDs, interfaces, addresses, ports,
+development identities, and gateway startup. The static pairs remain useful as
+known fixtures for lower-level dataplane and recovery tests. Durable allocation
+projection across a complete VPN restart remains future work.
 
 The existing Common Test suite verifies the revisioned provisioning lifecycle,
 identity and revision guards, encrypted dataplane, authenticated rekey, peer
 restart recovery, replay rejection, previous-epoch expiry, out-of-order frames,
-and one complete wizard-to-runtime provisioning flow. The simultaneous
-Alice/Bob scenario has been verified manually but is not yet asserted as a
-dedicated Common Test case; whether to add that case should be decided based on
-its additional regression value and setup cost.
+and one complete wizard-to-runtime provisioning flow. That wizard case now
+asserts an allocator-backed arbitrary Device, dynamic client/gateway startup,
+both established handshakes, the runtime-generated certificate fingerprint,
+and the revoke barrier. The simultaneous static Alice/Bob scenario remains a
+manual compatibility check rather than a dedicated Common Test case.
 
 Persistence, automatic background retries, and non-RPC transports remain out of
 scope for this stage.

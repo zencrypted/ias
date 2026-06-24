@@ -169,20 +169,24 @@ without invoking a second `rebar3` build, and verifies:
   the retained plaintext a second time;
 - rejected guard checks are retained in the IAS delivery history;
 - the IAS delivery history does not contain private key, OVPN, session-key, or
-  ECDH material.
+  ECDH material;
+- a wizard-selected arbitrary Device receives an allocator-backed dynamic
+  client/gateway pair, both handshakes reach `established`, the runtime-generated
+  client certificate fingerprint is applied to the revisioned command, and the
+  revoke barrier remains effective.
 
-The current demo also supports two simultaneous trusted runtime slots:
+The debug configuration also retains two simultaneous trusted static runtime
+slots for compatibility and lower-level regression tests:
 
 ```text
 Alice -> client_a <-> peer_b
 Bob   -> client_b <-> peer_c
 ```
 
-This two-user flow has been verified manually through the Provisioning Wizard,
-certificate-authenticated session state, registry metadata, and distinct
-encrypted payload delivery for both pairs. It is not yet a dedicated Common Test
-case; the existing suite continues to isolate its dynamic lifecycle fixtures
-from the bounded two-slot wizard configuration.
+This two-user flow has been verified manually through certificate-authenticated
+session state, registry metadata, and distinct encrypted payload delivery for
+both pairs. Normal wizard delivery now uses VPN-owned dynamic allocation when a
+reservation is present; the fixed pairs remain fallback and regression fixtures.
 
 The test uses the fixed debug TUN interfaces and UDP ports from the VPN debug
 configuration. Stop any manually running `vpn@127.0.0.1` node before running

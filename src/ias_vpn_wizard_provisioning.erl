@@ -28,6 +28,12 @@ provision_ready_draft(Draft) ->
 deliver(_Draft, _Transaction, undefined) ->
     {error, device_required};
 deliver(Draft, Transaction, DeviceId) ->
+    case ensure_runtime_allocation(DeviceId) of
+        ok -> deliver_with_runtime_allocation(Draft, Transaction, DeviceId);
+        {error, Reason} -> {error, Reason}
+    end.
+
+deliver_with_runtime_allocation(Draft, Transaction, DeviceId) ->
     case bind_runtime_peer(DeviceId, Draft) of
         {ok, RuntimePeerId} ->
             ok = synchronize_runtime_revision(DeviceId, RuntimePeerId),
@@ -37,8 +43,12 @@ deliver(Draft, Transaction, DeviceId) ->
                            user_id => maps:get(user_id, Draft, undefined),
                            device_id => DeviceId,
                            runtime_peer_id => RuntimePeerId,
+                           allocation_id => device_field(DeviceId, vpn_allocation_id),
+                           gateway_peer_id => device_field(DeviceId, vpn_gateway_peer_id),
+                           allocator_instance_id => device_field(DeviceId, vpn_allocator_instance_id),
                            provisioning_id => maps:get(id, Transaction, undefined),
                            transaction => Transaction,
+                           dynamic_pair => maps:get(dynamic_pair, DeliveryResult, undefined),
                            command => maps:get(command, DeliveryResult, #{}),
                            delivery => maps:get(delivery, DeliveryResult, #{})}};
                 {error, Reason} ->
@@ -62,7 +72,8 @@ bind_runtime_peer(DeviceId, Draft) ->
 
 runtime_peer_id(Device, Draft) when is_map(Device), is_map(Draft) ->
     UserId = maps:get(user_id, Draft, maps:get(owner, Device, undefined)),
-    case first_present([maps:get(runtime_peer_id, Device, undefined),
+    case first_present([dynamic_peer_id(Device),
+                        maps:get(runtime_peer_id, Device, undefined),
                         configured_user_runtime_peer_id(UserId),
                         maps:get(vpn_peer, Device, undefined),
                         application:get_env(ias,
@@ -120,6 +131,29 @@ synchronize_runtime_revision(DeviceId, RuntimePeerId, Node) ->
             ok;
         _ ->
             ok
+    end.
+
+ensure_runtime_allocation(DeviceId) ->
+    case ias_vpn_dynamic_pair:enabled() of
+        false -> ok;
+        true ->
+            case ias_vpn_allocation:ensure(DeviceId) of
+                {ok, _Allocation} -> ok;
+                disabled -> {error, vpn_dynamic_allocation_required};
+                {error, Reason} -> {error, Reason}
+            end
+    end.
+
+dynamic_peer_id(Device) ->
+    case ias_vpn_dynamic_pair:enabled() of
+        true -> maps:get(vpn_client_peer_id, Device, undefined);
+        false -> undefined
+    end.
+
+device_field(DeviceId, Key) ->
+    case ias_demo_store:get(DeviceId) of
+        {ok, Device} -> maps:get(Key, Device, undefined);
+        _ -> undefined
     end.
 
 vpn_node() ->
