@@ -37,8 +37,7 @@ add_import(ImportMap) when is_map(ImportMap) ->
     ImportId = import_id(),
     CreatedAt = created_at(),
     Records = import_records(ImportMap, ImportId, CreatedAt),
-    [ets:insert(?TABLE, {{maps:get(kind, Record), maps:get(id, Record)}, Record})
-     || Record <- Records],
+    [_ = put_runtime_object(Record) || Record <- Records],
     ImportId.
 
 get(undefined) ->
@@ -87,21 +86,26 @@ relationships() ->
 
 runtime_objects() ->
     ensure(),
-    Stored = [Object || {_Key, Object} <- ets:tab2list(?TABLE)],
+    Stored = [durable_overlay(Object) || {_Key, Object} <- ets:tab2list(?TABLE)],
     lists:sort(fun compare_records/2, Stored).
 
 put_runtime_object(#{kind := Kind, id := Id} = Object) ->
     ensure(),
-    ets:insert(?TABLE, {{Kind, Id}, Object}),
-    Object.
+    ok = persist_device_authority(Object),
+    Stored = durable_overlay(Object),
+    true = ets:insert(?TABLE, {{Kind, Id}, Stored}),
+    Stored.
 
-delete_runtime_object(Kind, Id) ->
+delete_runtime_object(Kind, Id0) ->
     ensure(),
-    ets:delete(?TABLE, {Kind, normalize_id(Id)}),
+    Id = normalize_id(Id0),
+    ok = maybe_delete_device_authority(Kind, Id),
+    ets:delete(?TABLE, {Kind, Id}),
     ok.
 
 clear() ->
     ensure(),
+    ok = ias_vpn_authority:reset(),
     ets:delete_all_objects(?TABLE),
     ok.
 
@@ -227,8 +231,7 @@ add_legacy(Kind, Object) ->
                       import_id => ImportId,
                       created_at => maps:get(created_at, Object, CreatedAt)},
     Stored = with_kind_defaults(Kind, Stored0),
-    ets:insert(?TABLE, {{Kind, Id}, Stored}),
-    Stored.
+    put_runtime_object(Stored).
 
 with_kind_defaults(device, Object) ->
     Defaults = ias_device_key_ref:defaults(),
@@ -240,7 +243,7 @@ list(Kind) ->
     [Object || Object <- all(), maps:get(kind, Object, undefined) =:= Kind].
 
 objects() ->
-    Stored = [Object || {_Key, Object} <- ets:tab2list(?TABLE)],
+    Stored = [durable_overlay(Object) || {_Key, Object} <- ets:tab2list(?TABLE)],
     StoredIds = [normalize_id(maps:get(id, Object, undefined)) || Object <- Stored],
     SeedObjects = user_objects() ++ ias_security_profile:policies() ++ ias_security_profile:profiles(),
     Seeded = [Object || Object <- SeedObjects,
@@ -249,6 +252,19 @@ objects() ->
 
 user_objects() ->
     [User#{kind => user, source => demo_catalog} || User <- ias_demo_data:users()].
+
+persist_device_authority(#{kind := device} = Device) ->
+    ias_vpn_authority:sync_device(Device);
+persist_device_authority(_Object) ->
+    ok.
+
+maybe_delete_device_authority(device, Id) ->
+    ias_vpn_authority:delete(Id);
+maybe_delete_device_authority(_Kind, _Id) ->
+    ok.
+
+durable_overlay(Object) ->
+    ias_vpn_authority:overlay_device(Object).
 
 compare_records(A, B) ->
     {maps:get(import_id, A, undefined),

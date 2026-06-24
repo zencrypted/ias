@@ -3,6 +3,7 @@
 -include("bank/phone.hrl").
 -include("bank/account.hrl").
 -include("ent.hrl").
+-include("ias_vpn_authority.hrl").
 -include_lib("kvs/include/metainfo.hrl").
 -include_lib("form/include/meta.hrl").
 
@@ -16,5 +17,8 @@ ias() ->
         #table{name = 'account',     fields=record_info(fields, account), instance = #account{} },
         #table{name = 'client',      fields=record_info(fields, client), instance = #client{}},
         #table{name = 'card',        fields=record_info(fields, card), instance = #card{}},
-        #table{name = 'transaction', fields=record_info(fields, transaction), instance = #transaction{}}
+        #table{name = 'transaction', fields=record_info(fields, transaction), instance = #transaction{}},
+        #table{name = ias_vpn_device_state,
+               fields = record_info(fields, ias_vpn_device_state),
+               instance = #ias_vpn_device_state{}}
     ].

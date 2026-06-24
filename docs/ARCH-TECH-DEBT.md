@@ -757,26 +757,26 @@ releases and is no longer used by current IAS dynamic upsert delivery.
 
 ---
 
-## TD-019: Dynamic Allocation and Decommission Audit Are Volatile
+## TD-019: Durable IAS/VPN Projection Reconciliation
 
-**Status:** Open
+**Status:** Partially resolved
 
 **Area:** IAS/VPN Dynamic Allocation Recovery
 
-### Problem
+### Completed
 
-IAS now clears an active Device binding only after VPN confirms dynamic-pair
-decommission and retains a safe decommission history. VPN allocation ownership,
-revision heads, identity bundles, and decommission tombstones are still backed
-by development-time volatile state. A complete node restart therefore cannot
-reconstruct the same resource lifecycle without an external durable projection.
+VPN persists allocation ownership, generations, revision heads, restrictive
+barriers, and the recoverable registry projection in KVS/Mnesia. IAS persists its
+canonical VPN command ledger and public Device binding/decommission metadata in
+its own KVS/Mnesia table. Both sides now survive independent node restarts without
+silently resetting their local revision or allocation identity.
 
-### Desired Direction
+### Remaining Direction
 
-Persist Device-to-allocation ownership, allocation generations, revision heads,
-revoke/decommission tombstones, and the recovery order for registry and peer
-processes. IAS and VPN must reconcile the same durable allocation identity before
-accepting another provisioning or decommission request.
+IAS and VPN must compare their durable projections after reconnect. IAS-ahead
+state should be replayed idempotently, while VPN-ahead state or an unknown VPN
+allocation must be reported as divergence and handled fail-closed. This is Stage
+8B.2 and remains open.
 
 ### Priority
 

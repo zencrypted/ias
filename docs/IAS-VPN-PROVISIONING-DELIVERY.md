@@ -45,10 +45,12 @@ peers.
 This separation is a control-plane boundary. Distributed Erlang RPC delivers
 IAS desired state to VPN; it is not part of the encrypted packet dataplane.
 
-The current VPN projection is volatile. A VPN node restart does not yet durably
-restore IAS-applied revisions, revocations, tombstones, or delivery history.
-Durable projection or authoritative replay from IAS is a separate recovery
-concern.
+VPN now persists allocator ownership, provisioning revision barriers, restrictive
+tombstones, and the recoverable peer projection in KVS/Mnesia. A VPN node restart
+reconstructs the registry and eligible peer processes before reconciliation starts.
+IAS stores its own canonical command and public Device binding durably as well.
+Cross-node comparison and authoritative replay remain a separate Stage 8B.2
+reconciliation concern.
 
 ## Deployment topology and optional embedded VPN
 
@@ -403,8 +405,9 @@ dataplane reception are the relevant gateway-side signals.
 The normal dynamically reserved wizard flow no longer requires another static
 slot for a third Device. VPN owns peer IDs, interfaces, addresses, ports,
 development identities, and gateway startup. The static pairs remain useful as
-known fixtures for lower-level dataplane and recovery tests. Durable allocation
-projection across a complete VPN restart remains future work.
+known fixtures for lower-level dataplane and recovery tests. VPN now restores the
+durable allocation, provisioning barriers, registry projection, and eligible peer
+runtime across a complete node restart.
 
 The existing Common Test suite verifies the revisioned provisioning lifecycle,
 identity and revision guards, encrypted dataplane, authenticated rekey, peer
@@ -418,5 +421,22 @@ allocation after reprovisioning the same Device. The simultaneous static
 Alice/Bob scenario remains a manual compatibility check rather than a dedicated
 Common Test case.
 
-Persistence, automatic background retries, and non-RPC transports remain out of
-scope for this stage.
+Automatic background reconciliation/retries and non-RPC transports remain out of
+scope for this stage. Local persistence is implemented on both IAS and VPN; the
+remaining work is cross-node comparison and authoritative replay.
+
+## Durable IAS VPN authority (Stage 8B.1)
+
+IAS stores the authoritative VPN control-plane projection in KVS/Mnesia table
+`ias_vpn_device_state`. The durable record contains the canonical revision and
+command digest, the canonical desired command, the public allocation/runtime
+binding, and decommission lifecycle metadata. Private keys, PSKs, runtime
+configuration, session keys, replay windows, and OVPN bodies are rejected.
+
+`ias_demo_store` remains the UI/demo object store. Device reads overlay the
+KVS-backed VPN fields onto the current Device object, while Device writes commit
+VPN authority before publishing the updated object in ETS. Clearing demo state
+is an explicit destructive reset and also clears the durable VPN authority.
+
+Stage 8B.1 does not compare IAS and VPN projections or replay commands after a
+remote divergence. That reconciliation belongs to Stage 8B.2.
