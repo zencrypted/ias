@@ -38,11 +38,18 @@ VPN використовує сертифікати та результати а
 VPN provisioning delivery
 -------------------------
 
-IAS формує канонічні revisioned provisioning commands і може доставляти їх до
-VPN runtime через configurable distributed Erlang RPC. Деталі flow, transport
-configuration, normalized statuses, retry semantics, cookie/node naming, and
-development startup steps are documented in
-`docs/IAS-VPN-PROVISIONING-DELIVERY.md`.
+IAS формує канонічні revisioned provisioning commands і доставляє їх до
+VPN runtime через configurable distributed Erlang RPC. Поточний напрямок
+інтеграції односторонній: `IAS -> VPN`; VPN не викликає IAS під час handshake,
+peer runtime або dataplane processing, а виконує вже доставлений стан локально.
+
+Окремі IAS і VPN ноди є поточною development topology, а не постійною
+архітектурною вимогою. У майбутньому VPN може бути доданий як dependency і
+OTP application до одного IAS release, при цьому provisioning contract,
+ownership model та напрямок `IAS -> VPN` мають залишитися незмінними. Деталі
+flow, runtime boundary, deployment modes, transport configuration, normalized
+statuses, retry semantics, cookie/node naming, and development startup steps are
+documented in `docs/IAS-VPN-PROVISIONING-DELIVERY.md`.
 
 Керування ключами
 -----------------

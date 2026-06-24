@@ -18,6 +18,106 @@ IAS Device
 `ias_vpn_provisioning_state` owns canonical revision assignment. Delivery must
 not mutate the command or create a newer revision on retry.
 
+## RPC direction and runtime boundary
+
+The IAS/VPN integration is intentionally one-way:
+
+```text
+IAS
+-> revisioned provisioning command
+-> distributed Erlang RPC
+-> VPN provisioning API
+-> local VPN desired-state projection
+-> peer reconciliation and runtime
+```
+
+IAS initiates provisioning operations such as `upsert`, `enable`, `disable`,
+`revoke`, and `remove`. VPN does not call IAS during peer startup, certificate
+handshake, session establishment, rekey, peer restart recovery, or dataplane
+packet processing. There is no VPN-to-IAS authorization RPC in the current
+architecture.
+
+After a command has been accepted, VPN enforces the resulting state locally
+through its peer registry and reconciled peer processes. Temporary IAS
+unavailability therefore does not interrupt already provisioned and running VPN
+peers.
+
+This separation is a control-plane boundary. Distributed Erlang RPC delivers
+IAS desired state to VPN; it is not part of the encrypted packet dataplane.
+
+The current VPN projection is volatile. A VPN node restart does not yet durably
+restore IAS-applied revisions, revocations, tombstones, or delivery history.
+Durable projection or authoritative replay from IAS is a separate recovery
+concern.
+
+## Deployment topology and optional embedded VPN
+
+The current development topology uses separate Erlang nodes:
+
+```text
+IAS node
+   |
+   | distributed Erlang RPC
+   v
+VPN node
+```
+
+This is a development and deployment choice, not a permanent architectural
+requirement. VPN may later be added as an IAS dependency and included in the
+same release:
+
+```text
+IAS release
+|-- ias application
+`-- vpn application
+```
+
+Embedding VPN into the IAS release would change physical placement, but it must
+not change logical ownership or the one-way control flow:
+
+```text
+IAS
+-> identity, authorization, certificate binding, and desired peer state
+-> VPN provisioning contract
+-> VPN local runtime projection and enforcement
+```
+
+IAS remains the source of truth for identity, certificate binding,
+authorization, and desired peer state. VPN remains responsible for peer
+reconciliation, session runtime, tunnel processing, and dataplane enforcement.
+VPN must not acquire ownership of IAS policy data merely because both OTP
+applications are packaged together.
+
+The separate-node topology is currently preferred for development because it:
+
+- allows IAS and VPN to be started, stopped, and restarted independently;
+- exercises real distributed RPC failure, timeout, retry, and recovery paths;
+- prevents ordinary IAS development and tests from requiring `/dev/net/tun`,
+  network capabilities, or VPN UDP port configuration;
+- keeps the control-plane and dataplane boundary visible;
+- preserves the option for one IAS instance to provision multiple VPN nodes.
+
+A future embedded mode may keep the existing RPC interface and target the local
+node, or use a local adapter implementing the same provisioning contract. In
+either case, public operation semantics and the IAS-to-VPN direction must remain
+unchanged.
+
+Conceptually, supported deployment modes may be:
+
+```text
+external
+    IAS and VPN run on separate Erlang nodes.
+
+embedded
+    IAS and VPN run as separate OTP applications in one release/node.
+
+disabled
+    VPN integration is not started for static preview or isolated IAS tests.
+```
+
+The current external topology therefore does not prevent a later single-release
+deployment.
+
 ## Transport configuration
 
 IAS reads these application environment keys:
