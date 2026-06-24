@@ -148,8 +148,9 @@ without invoking a second `rebar3` build, and verifies:
 - the repeated revision is unchanged;
 - disable stops the peer;
 - enable starts it again;
-- revoke stops and locks the peer;
-- enable after revoke is rejected;
+- revoke stops and locks the client peer;
+- a dynamic companion gateway is quiesced without being marked revoked;
+- enable after revoke is rejected and neither side of the dynamic pair restarts;
 - the IAS and runtime certificate fingerprints match;
 - a mismatched IAS certificate fingerprint is rejected before a peer starts;
 - a stale provisioning revision is rejected without rolling the runtime state

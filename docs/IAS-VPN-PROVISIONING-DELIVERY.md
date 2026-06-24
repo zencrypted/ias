@@ -256,7 +256,10 @@ client/gateway pair, waits for both certificate handshakes to reach
 dynamic client peer ID plus its public certificate fingerprint. IAS then builds
 the normal revisioned provisioning command and applies revision `1` to that
 client peer. Later disable, enable, and revoke operations continue through the
-existing `vpn_provisioning` contract.
+existing `vpn_provisioning` contract. Revoking a dynamic client also quiesces its
+companion gateway in the same registry batch. The client remains permanently
+revoked, while the gateway is disabled and stopped without being marked revoked;
+a rejected client re-enable leaves both sides stopped.
 
 The legacy `alice -> client_a` and `bob -> client_b` mapping remains available
 only as a fallback for Devices without dynamic reservation metadata or when the
@@ -352,7 +355,8 @@ restart recovery, replay rejection, previous-epoch expiry, out-of-order frames,
 and one complete wizard-to-runtime provisioning flow. That wizard case now
 asserts an allocator-backed arbitrary Device, dynamic client/gateway startup,
 both established handshakes, the runtime-generated certificate fingerprint,
-and the revoke barrier. The simultaneous static Alice/Bob scenario remains a
+and pair-aware revoke semantics that stop both sides while preserving the
+client-only revoke barrier. The simultaneous static Alice/Bob scenario remains a
 manual compatibility check rather than a dedicated Common Test case.
 
 Persistence, automatic background retries, and non-RPC transports remain out of
