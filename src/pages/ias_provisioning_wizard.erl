@@ -622,6 +622,8 @@ wizard_runtime_state({ok, #{revoked := true}}) -> revoked;
 wizard_runtime_state({ok, #{enabled := false}}) -> disabled;
 wizard_runtime_state({ok, #{authorized := true}}) -> enabled;
 wizard_runtime_state({ok, _Peer}) -> available;
+wizard_runtime_state({unavailable, _Reason}) -> unavailable;
+wizard_runtime_state({error, _Reason}) -> unavailable;
 wizard_runtime_state(Value) -> Value.
 
 wizard_runtime_value(authorized, {ok, #{revoked := true}}) -> false;

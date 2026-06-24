@@ -6,31 +6,33 @@ device_vpn_access_controls_follow_runtime_state_test_() ->
      fun setup/0,
      fun cleanup/1,
      fun(Context) ->
-         Device = maps:get(device, Context),
-         Summary = vpn_summary(),
+         fun() ->
+             Device = maps:get(device, Context),
+             Summary = vpn_summary(),
 
-         set_runtime_peer(enabled_peer()),
-         EnabledHtml = render(Device, Summary),
-         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"id=\"device_vpn_access\"">>)),
-         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"VPN Access">>)),
-         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"client_b">>)),
-         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"established">>)),
-         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Disable VPN Access">>)),
-         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Revoke VPN Access">>)),
-         ?assertEqual(nomatch, binary:match(EnabledHtml, <<"Enable VPN Access">>)),
+             set_runtime_peer(enabled_peer()),
+             EnabledHtml = render(Device, Summary),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, <<"id=\"device_vpn_access\"">>)),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, <<"VPN Access">>)),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, <<"client_b">>)),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, <<"established">>)),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Disable VPN Access">>)),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Revoke VPN Access">>)),
+             ?assertEqual(nomatch, binary:match(EnabledHtml, <<"Enable VPN Access">>)),
 
-         set_runtime_peer(disabled_peer()),
-         DisabledHtml = render(Device, Summary),
-         ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Enable VPN Access">>)),
-         ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Revoke VPN Access">>)),
-         ?assertEqual(nomatch, binary:match(DisabledHtml, <<"Disable VPN Access">>)),
+             set_runtime_peer(disabled_peer()),
+             DisabledHtml = render(Device, Summary),
+             ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Enable VPN Access">>)),
+             ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Revoke VPN Access">>)),
+             ?assertEqual(nomatch, binary:match(DisabledHtml, <<"Disable VPN Access">>)),
 
-         set_runtime_peer(revoked_peer()),
-         RevokedHtml = render(Device, Summary),
-         ?assertMatch({_, _}, binary:match(RevokedHtml, <<"VPN Access Revoked">>)),
-         ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Enable VPN Access">>)),
-         ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Disable VPN Access">>)),
-         ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Revoke VPN Access">>))
+             set_runtime_peer(revoked_peer()),
+             RevokedHtml = render(Device, Summary),
+             ?assertMatch({_, _}, binary:match(RevokedHtml, <<"VPN Access Revoked">>)),
+             ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Enable VPN Access">>)),
+             ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Disable VPN Access">>)),
+             ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Revoke VPN Access">>))
+         end
      end}.
 
 unprovisioned_device_shows_guidance_test_() ->
@@ -38,14 +40,16 @@ unprovisioned_device_shows_guidance_test_() ->
      fun setup/0,
      fun cleanup/1,
      fun(_Context) ->
-         Device = ias_demo_store:add_device(#{id => <<"unprovisioned-device">>,
-                                              owner => alice,
-                                              source => manual_device}),
-         Html = render(Device, {error, unavailable}),
-         ?assertMatch({_, _}, binary:match(Html, <<"VPN access not provisioned">>)),
-         ?assertMatch({_, _}, binary:match(Html, <<"Open Provisioning Wizard">>)),
-         ?assertEqual(nomatch, binary:match(Html, <<"Disable VPN Access">>)),
-         ?assertEqual(nomatch, binary:match(Html, <<"Revoke VPN Access">>))
+         fun() ->
+             Device = ias_demo_store:add_device(#{id => <<"unprovisioned-device">>,
+                                                  owner => alice,
+                                                  source => manual_device}),
+             Html = render(Device, {error, unavailable}),
+             ?assertMatch({_, _}, binary:match(Html, <<"VPN access not provisioned">>)),
+             ?assertMatch({_, _}, binary:match(Html, <<"Open Provisioning Wizard">>)),
+             ?assertEqual(nomatch, binary:match(Html, <<"Disable VPN Access">>)),
+             ?assertEqual(nomatch, binary:match(Html, <<"Revoke VPN Access">>))
+         end
      end}.
 
 setup() ->
