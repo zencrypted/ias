@@ -366,16 +366,36 @@ peer_row(Peer, Devices, Profiles) ->
 policy_decision(Peer, Devices, Profiles) ->
     case authorization_mode(Peer) of
         development_bypass ->
-            #{profile_id => undefined,
+            #{profile_id => runtime_profile_id(Peer),
               authorized => runtime_authorized(Peer),
               reason => runtime_authorization_reason(Peer),
               authorization_mode => development_bypass};
         policy ->
-            PeerId = ias_vpn_runtime:field(Peer, [<<"id">>, id, peer, name]),
-            ProfileId = profile_id(PeerId, Devices),
-            Profile = profile(ProfileId, Profiles),
-            (ias_policy:evaluate_vpn(Profile))#{profile_id => ProfileId,
-                                                authorization_mode => policy}
+            case runtime_profile_id(Peer) of
+                undefined ->
+                    legacy_policy_decision(Peer, Devices, Profiles);
+                ProfileId ->
+                    #{profile_id => ProfileId,
+                      authorized => runtime_authorized(Peer),
+                      reason => runtime_authorization_reason(Peer),
+                      authorization_mode => policy}
+            end
+    end.
+
+legacy_policy_decision(Peer, Devices, Profiles) ->
+    PeerId = ias_vpn_runtime:field(Peer, [<<"id">>, id, peer, name]),
+    ProfileId = profile_id(PeerId, Devices),
+    Profile = profile(ProfileId, Profiles),
+    (ias_policy:evaluate_vpn(Profile))#{profile_id => ProfileId,
+                                        authorization_mode => policy}.
+
+runtime_profile_id(Peer) ->
+    case ias_vpn_runtime:field(Peer, [profile_id, profile]) of
+        undefined -> undefined;
+        null -> undefined;
+        <<>> -> undefined;
+        "" -> undefined;
+        ProfileId -> ProfileId
     end.
 
 authorization_mode(Peer) ->
@@ -401,6 +421,12 @@ runtime_authorization_reason(Peer) ->
         development_bypass -> <<"development bypass">>;
         <<"development_bypass">> -> <<"development bypass">>;
         "development_bypass" -> <<"development bypass">>;
+        profile_allows_vpn -> <<"profile allows vpn">>;
+        <<"profile_allows_vpn">> -> <<"profile allows vpn">>;
+        "profile_allows_vpn" -> <<"profile allows vpn">>;
+        vpn_not_permitted_by_profile -> <<"vpn not permitted by profile">>;
+        <<"vpn_not_permitted_by_profile">> -> <<"vpn not permitted by profile">>;
+        "vpn_not_permitted_by_profile" -> <<"vpn not permitted by profile">>;
         Reason -> Reason
     end.
 

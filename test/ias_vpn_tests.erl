@@ -92,7 +92,22 @@ vpn_page_honors_runtime_development_bypass_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"270622203259Z">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"vpn not permitted by profile">>)).
 
-vpn_page_keeps_ias_policy_evaluation_for_policy_mode_test() ->
+vpn_page_prefers_runtime_policy_metadata_test() ->
+    Summary = #{<<"counts">> => #{},
+                <<"peers">> => [#{<<"id">> => <<"wizard_peer">>,
+                                    <<"running">> => true,
+                                    <<"authorization_mode">> => <<"policy">>,
+                                    <<"profile_id">> => <<"administrator">>,
+                                    <<"authorized">> => false,
+                                    <<"authorization_reason">> => <<"vpn not permitted by profile">>}]},
+
+    Html = iolist_to_binary(nitro:render(ias_vpn:content({ok, Summary}))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"wizard_peer">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"administrator">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn not permitted by profile">>)).
+
+vpn_page_falls_back_to_ias_policy_for_legacy_runtime_peer_test() ->
     Summary = #{<<"counts">> => #{},
                 <<"peers">> => [#{<<"id">> => <<"unmanaged_peer">>,
                                     <<"running">> => true,
