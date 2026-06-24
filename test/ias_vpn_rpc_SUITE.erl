@@ -9,6 +9,7 @@
          end_per_suite/1,
          provisioning_lifecycle/1,
          provisioning_identity_and_revision_guards/1,
+         read_only_reconciliation_reports_synchronized_state/1,
          provisioned_peer_transfers_dataplane_payload/1,
          dataplane_survives_authenticated_rekey/1,
          dataplane_recovers_after_peer_restart/1,
@@ -25,6 +26,7 @@
 all() ->
     [provisioning_lifecycle,
      provisioning_identity_and_revision_guards,
+     read_only_reconciliation_reports_synchronized_state,
      provisioned_peer_transfers_dataplane_payload,
      dataplane_survives_authenticated_rekey,
      dataplane_recovers_after_peer_restart,
@@ -283,6 +285,36 @@ provisioning_identity_and_revision_guards(Config) ->
     ?assertEqual(1, maps:get(revision, Latest)),
     ?assertEqual(false, history_contains(History, <<"private_key">>)),
     ?assertEqual(false, history_contains(History, <<"session_key">>)),
+    ok.
+
+read_only_reconciliation_reports_synchronized_state(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_reconciliation_">>),
+    ok = reset_ias_state(),
+    allow = prepare_authorized_device(DeviceId, ActualFingerprint),
+
+    {ok, UpsertResult} =
+        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+    ?assertEqual(applied, delivery_status(UpsertResult)),
+    ?assertEqual(1, command_revision(UpsertResult)),
+
+    {ok, Reconciliation} = ias_vpn_reconciliation:device(DeviceId),
+    ?assertEqual(synchronized, maps:get(status, Reconciliation)),
+    ?assertEqual(in_sync, maps:get(reason, Reconciliation)),
+    ?assertEqual(true, maps:get(read_only, Reconciliation)),
+    ?assertEqual(none, maps:get(automatic_action, Reconciliation)),
+    ?assertEqual(false, maps:get(replay_performed, Reconciliation)),
+    ?assertEqual(true, maps:get(digest_match, Reconciliation)),
+    IasSnapshot = maps:get(ias, Reconciliation),
+    VpnSnapshot = maps:get(vpn, Reconciliation),
+    ?assertEqual(1, maps:get(revision, IasSnapshot)),
+    ?assertEqual(1, maps:get(revision, maps:get(head, VpnSnapshot))),
+    ?assertEqual([DeviceId], maps:get(expected_registry_peer_ids, IasSnapshot)),
+    [RegistryEntry] = maps:get(registry, VpnSnapshot),
+    ?assertEqual(DeviceId, maps:get(id, RegistryEntry)),
+    ?assertEqual(DeviceId, maps:get(device_id, RegistryEntry)),
     ok.
 
 provisioned_peer_transfers_dataplane_payload(Config) ->

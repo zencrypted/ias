@@ -422,8 +422,9 @@ Alice/Bob scenario remains a manual compatibility check rather than a dedicated
 Common Test case.
 
 Automatic background reconciliation/retries and non-RPC transports remain out of
-scope for this stage. Local persistence is implemented on both IAS and VPN; the
-remaining work is cross-node comparison and authoritative replay.
+scope for this stage. Local persistence is implemented on both IAS and VPN.
+Stage 8B.2A adds explicit read-only cross-node comparison below; authoritative
+replay remains a later boundary.
 
 ## Durable IAS VPN authority (Stage 8B.1)
 
@@ -440,3 +441,34 @@ is an explicit destructive reset and also clears the durable VPN authority.
 
 Stage 8B.1 does not compare IAS and VPN projections or replay commands after a
 remote divergence. That reconciliation belongs to Stage 8B.2.
+
+## Read-only IAS/VPN reconciliation (Stage 8B.2A)
+
+`ias_vpn_reconciliation` compares the durable IAS authority with two safe,
+read-only VPN snapshots: validated provisioning recovery heads and public peer
+registry entries. It never calls provisioning apply/ensure functions, never
+replays a command, and never writes reconciliation results into either Mnesia
+projection.
+
+`device/1` returns one structured comparison. `report/0` compares all IAS
+records and also reports IAS-managed VPN Devices for which IAS has no authority
+record. The result distinguishes:
+
+* `synchronized` — revision, VPN command digest, and expected registry presence
+  agree;
+* `vpn_behind` — VPN has an older revision or an equal pending command;
+* `divergence` — VPN is ahead, the digest differs, identity differs, or runtime
+  presence contradicts the desired lifecycle;
+* `missing_in_vpn` — the durable provisioning head or expected registry entry
+  is absent;
+* `orphan` — an IAS-sourced VPN Device exists without IAS authority;
+* `authority_only` — IAS has durable binding metadata but no canonical command
+  to compare yet.
+
+IAS computes the expected VPN digest from the full canonical command, including
+its revision, because the VPN ledger digest intentionally differs from the
+internal IAS command-change digest stored by Stage 8B.1. Returned snapshots are
+filtered to public provisioning and registry fields only.
+
+Safe replay of `vpn_behind` and `missing_in_vpn` states, plus explicit handling
+of divergence and orphan records, remain Stage 8B.2B/8B.2C work.
