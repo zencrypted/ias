@@ -5,6 +5,7 @@
 
 -export([all/0,
          init_per_suite/1,
+         init_per_testcase/2,
          end_per_suite/1,
          provisioning_lifecycle/1,
          provisioning_identity_and_revision_guards/1,
@@ -46,7 +47,7 @@ init_per_suite(Config) ->
     {ok, VpnProcess} = start_vpn(VpnRepo, LogPath),
     case wait_for_vpn_ready(?VPN_NODE, VpnProcess, ?STARTUP_TIMEOUT_MS) of
         ok ->
-            ok = configure_vpn_test_runtime(?VPN_NODE),
+            {ok, RuntimeTemplates} = configure_vpn_test_runtime(?VPN_NODE),
             application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
             application:set_env(ias, vpn_provisioning_vpn_node, ?VPN_NODE),
             application:set_env(ias, vpn_provisioning_rpc_timeout, ?RPC_TIMEOUT_MS),
@@ -56,7 +57,8 @@ init_per_suite(Config) ->
             [{vpn_repo, VpnRepo},
              {vpn_node, ?VPN_NODE},
              {vpn_process, VpnProcess},
-             {vpn_log, LogPath} | Config];
+             {vpn_log, LogPath},
+             {vpn_runtime_templates, RuntimeTemplates} | Config];
         {error, Reason} ->
             _ = stop_vpn_process(VpnProcess),
             ct:fail({vpn_startup_failed, Reason, read_log(LogPath)})
@@ -71,6 +73,11 @@ configure_vpn_test_runtime(VpnNode) ->
         {ok, Templates} when is_map(Templates) ->
             case maps:find(client_a, Templates) of
                 {ok, ClientATemplate} when is_map(ClientATemplate) ->
+                    DynamicTemplate =
+                        ClientATemplate#{id => ias_ct_dynamic_template,
+                                         ifname => <<"tun11">>,
+                                         ip => "10.20.30.11",
+                                         local_udp_port => 5561},
                     ok = rpc:call(VpnNode,
                                   application,
                                   unset_env,
@@ -79,19 +86,42 @@ configure_vpn_test_runtime(VpnNode) ->
                     ok = rpc:call(VpnNode,
                                   application,
                                   set_env,
-                                  [vpn, runtime_config_template, ClientATemplate],
+                                  [vpn, runtime_config_template, DynamicTemplate],
                                   ?RPC_TIMEOUT_MS),
-                    ok;
+                    {ok, Templates};
                 _ ->
                     ct:fail({vpn_client_a_template_missing, Templates})
             end;
         undefined ->
-            ok;
+            {ok, undefined};
         {badrpc, Reason} ->
             ct:fail({vpn_test_runtime_config_failed, Reason});
         Other ->
             ct:fail({invalid_vpn_runtime_templates, Other})
     end.
+
+init_per_testcase(wizard_provisions_device_into_vpn_runtime, Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config, ?VPN_NODE),
+    Templates = proplists:get_value(vpn_runtime_templates, Config, undefined),
+    ok = restore_vpn_slot_templates(VpnNode, Templates),
+    Config;
+init_per_testcase(_TestCase, Config) ->
+    Config.
+
+restore_vpn_slot_templates(_VpnNode, undefined) ->
+    ok;
+restore_vpn_slot_templates(VpnNode, Templates) when is_map(Templates) ->
+    ok = rpc:call(VpnNode,
+                  application,
+                  unset_env,
+                  [vpn, runtime_config_template],
+                  ?RPC_TIMEOUT_MS),
+    ok = rpc:call(VpnNode,
+                  application,
+                  set_env,
+                  [vpn, runtime_config_templates, Templates],
+                  ?RPC_TIMEOUT_MS),
+    ok.
 
 end_per_suite(Config) ->
     VpnNode = proplists:get_value(vpn_node, Config, ?VPN_NODE),
@@ -1304,7 +1334,7 @@ vpn_process_loop(Port, Log, OsPid) ->
     end.
 
 ensure_vpn_test_ports_available() ->
-    Ports = [5556, 5560, 5561],
+    Ports = [5556, 5557, 5560, 5561, 5562],
     case [Port || Port <- Ports, not udp_port_available(Port)] of
         [] ->
             ok;
