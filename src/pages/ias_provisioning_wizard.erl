@@ -571,13 +571,15 @@ wizard_vpn_lifecycle_actions(_WizardId, {ok, #{revoked := true}}) ->
     [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
 wizard_vpn_lifecycle_actions(WizardId, {ok, #{enabled := false}}) ->
-    [#link{class = [button, sgreen],
+    [#link{id = wizard_vpn_lifecycle_action_id(enable, WizardId),
+           class = [button, sgreen],
            body = ias_html:text("Enable VPN Access"),
            postback = {wizard_enable_vpn_access, WizardId}},
      #link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
 wizard_vpn_lifecycle_actions(WizardId, {ok, _Peer}) ->
-    [#link{class = [button, more],
+    [#link{id = wizard_vpn_lifecycle_action_id(disable, WizardId),
+           class = [button, more],
            body = ias_html:text("Disable VPN Access"),
            postback = {wizard_disable_vpn_access, WizardId}},
      #link{url = <<"/app/vpn.htm">>, class = [button, more],
@@ -585,6 +587,9 @@ wizard_vpn_lifecycle_actions(WizardId, {ok, _Peer}) ->
 wizard_vpn_lifecycle_actions(_WizardId, _Runtime) ->
     [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}].
+
+wizard_vpn_lifecycle_action_id(Operation, WizardId) ->
+    ias_html:join([<<"wizard_vpn_lifecycle_">>, Operation, <<"_">>, WizardId]).
 
 wizard_runtime_state({ok, #{revoked := true}}) -> revoked;
 wizard_runtime_state({ok, #{enabled := false}}) -> disabled;
