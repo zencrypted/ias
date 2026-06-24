@@ -634,8 +634,12 @@ replayed_dataplane_frame_is_rejected(Config) ->
                                               DeviceId,
                                               client_a),
     ?assertEqual(applied, maps:get(delivery_status, UpsertDelivery)),
-    timer:sleep(500),
-    ?assert(lists:member(client_a, running_peers(VpnNode))),
+    {ok, ClientSession} =
+        wait_for_session_established(VpnNode, client_a, 5000),
+    {ok, GatewaySession} =
+        wait_for_session_established(VpnNode, peer_b, 5000),
+    ?assertEqual(established, maps:get(handshake_status, ClientSession)),
+    ?assertEqual(established, maps:get(handshake_status, GatewaySession)),
 
     ok = rpc:call(VpnNode,
                   vpn_manager,
