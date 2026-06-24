@@ -2,10 +2,10 @@
 %% @doc IAS-to-VPN durable state reconciliation and explicit safe replay.
 %%
 %% Read-only reports compare IAS durable authority with the VPN provisioning
-%% projection and safe peer registry snapshots. Stage 8B.2B adds an explicit
-%% replay action for the two recoverable states only: vpn_behind and
-%% missing_in_vpn. Divergence, orphan, and authority-only records remain
-%% fail-closed and are never overwritten automatically.
+%% projection and safe peer registry snapshots. Explicit safe replay is
+%% limited to vpn_behind and missing_in_vpn. Divergence and orphan snapshots
+%% can be recorded in a durable incident ledger, but remain fail-closed and
+%% are never overwritten or adopted automatically.
 %%%-------------------------------------------------------------------
 -module(ias_vpn_reconciliation).
 
@@ -13,7 +13,12 @@
          report/0,
          status/0,
          replay/0,
-         replay/1]).
+         replay/1,
+         scan_incidents/0,
+         incidents/0,
+         incident/1,
+         acknowledge_incident/4,
+         resolve_incident/4]).
 
 -define(DEFAULT_TIMEOUT, 5000).
 
@@ -72,6 +77,77 @@ report() ->
 
 status() ->
     report().
+
+%% @doc Explicitly persist the current divergence and orphan snapshots.
+-spec scan_incidents() -> {ok, map()} | {error, term()}.
+scan_incidents() ->
+    case report() of
+        {ok, Report} ->
+            Entries = maps:get(entries, Report, []),
+            case ias_vpn_reconciliation_incidents:scan(Entries) of
+                {ok, _Scanned} ->
+                    case incidents() of
+                        {ok, IncidentList} ->
+                            {ok, #{requested_action => scan_incidents,
+                                   automatic_action => none,
+                                   active_records => length([Entry || Entry <- Entries,
+                                                                      dangerous_entry(Entry)]),
+                                   incidents => IncidentList,
+                                   report => Report}};
+                        {error, _} = Error -> Error
+                    end;
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
+    end.
+
+-spec incidents() -> {ok, [map()]} | {error, term()}.
+incidents() ->
+    ias_vpn_reconciliation_incidents:all().
+
+-spec incident(term()) -> {ok, map()} | not_found | {error, term()}.
+incident(DeviceId) ->
+    ias_vpn_reconciliation_incidents:get(DeviceId).
+
+-spec acknowledge_incident(term(), binary(), term(), term()) ->
+          {ok, map()} | {error, term()}.
+acknowledge_incident(DeviceId0, Token, Actor, Note) ->
+    DeviceId = normalize_id(DeviceId0),
+    case current_report_entry(DeviceId) of
+        {ok, Entry} when is_map(Entry) ->
+            case dangerous_entry(Entry) of
+                true ->
+                    ias_vpn_reconciliation_incidents:acknowledge(
+                      DeviceId, Token, Actor, Note, Entry);
+                false ->
+                    {error, {vpn_incident_not_active,
+                             maps:get(status, Entry, undefined)}}
+            end;
+        not_found -> {error, vpn_incident_snapshot_missing};
+        {error, _} = Error -> Error
+    end.
+
+-spec resolve_incident(term(), binary(), term(), term()) ->
+          {ok, map()} | {error, term()}.
+resolve_incident(DeviceId0, Token, Actor, Note) ->
+    DeviceId = normalize_id(DeviceId0),
+    case incident(DeviceId) of
+        {ok, Stored} ->
+            case incident_clearance(DeviceId, Stored) of
+                {ok, Clearance} ->
+                    case ias_vpn_reconciliation_incidents:resolve(
+                           DeviceId, Token, Actor, Note, Clearance) of
+                        {ok, Resolved} ->
+                            verify_incident_resolution(DeviceId,
+                                                       Resolved,
+                                                       Clearance);
+                        {error, _} = Error -> Error
+                    end;
+                {error, _} = Error -> Error
+            end;
+        not_found -> {error, vpn_incident_not_found};
+        {error, _} = Error -> Error
+    end.
 
 %% @doc Replay every currently recoverable authority record.
 %%
@@ -742,6 +818,58 @@ sort_entries(Entries) ->
           maps:get(device_id, A) =< maps:get(device_id, B)
       end,
       Entries).
+
+dangerous_entry(#{status := divergence}) -> true;
+dangerous_entry(#{status := orphan}) -> true;
+dangerous_entry(_) -> false.
+
+current_report_entry(DeviceId) ->
+    case report() of
+        {ok, Report} ->
+            find_report_entry(DeviceId, maps:get(entries, Report, []));
+        {error, _} = Error -> Error
+    end.
+
+find_report_entry(DeviceId, Entries) ->
+    case [Entry || Entry <- Entries,
+                   maps:get(device_id, Entry, undefined) =:= DeviceId] of
+        [Entry | _] -> {ok, Entry};
+        [] -> not_found
+    end.
+
+incident_clearance(DeviceId, _Stored) ->
+    case current_report_entry(DeviceId) of
+        {ok, #{status := synchronized} = Entry} ->
+            {ok, #{state => synchronized, snapshot => Entry}};
+        {ok, Entry} ->
+            {error, {vpn_incident_still_active,
+                     maps:get(status, Entry, undefined),
+                     maps:get(reason, Entry, undefined)}};
+        not_found ->
+            {ok, #{state => absent,
+                   snapshot => #{device_id => DeviceId, status => absent}}};
+        {error, _} = Error -> Error
+    end.
+
+verify_incident_resolution(DeviceId, Resolved, Clearance) ->
+    case current_report_entry(DeviceId) of
+        {ok, Entry} ->
+            case dangerous_entry(Entry) of
+                true ->
+                    _ = ias_vpn_reconciliation_incidents:scan([Entry]),
+                    {error, {vpn_incident_resolution_raced,
+                             maps:get(status, Entry, undefined),
+                             maps:get(reason, Entry, undefined)}};
+                false ->
+                    {ok, Resolved#{verified_clearance => Clearance}}
+            end;
+        not_found ->
+            case maps:get(state, Clearance, undefined) of
+                absent -> {ok, Resolved#{verified_clearance => Clearance}};
+                _ -> {error, vpn_incident_resolution_raced}
+            end;
+        {error, _} = Error -> Error
+    end.
 
 call_rpc(Module, Function, Args) ->
     case rpc_fun() of

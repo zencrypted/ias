@@ -122,3 +122,56 @@ vpn_page_falls_back_to_ias_policy_for_legacy_runtime_peer_test() ->
 
     ?assertMatch({_, _}, binary:match(Html, <<"vpn not permitted by profile">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"runtime allow must not override IAS">>)).
+
+vpn_page_renders_reconciliation_controls_test() ->
+    Html = iolist_to_binary(nitro:render(ias_vpn:content({error, unavailable}))),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"VPN Reconciliation">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_refresh">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_replay_all">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_scan_incidents">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_actor">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_note">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Force overwrite">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Adopt orphan">>)).
+
+vpn_reconciliation_panel_renders_safe_actions_and_incidents_test() ->
+    DeviceId = <<"ui-device">>,
+    Token = <<7:256>>,
+    Report = #{state => drift_detected,
+               counts => #{synchronized => 1,
+                           vpn_behind => 1,
+                           missing_in_vpn => 0,
+                           divergence => 1,
+                           orphan => 0,
+                           authority_only => 0},
+               entries => [#{device_id => DeviceId,
+                              status => vpn_behind,
+                              reason => vpn_revision_behind,
+                              digest_match => true,
+                              ias => #{revision => 2},
+                              vpn => #{head => #{revision => 1}, registry => []}},
+                           #{device_id => <<"blocked-device">>,
+                              status => divergence,
+                              reason => command_digest_mismatch,
+                              digest_match => false,
+                              ias => #{revision => 2},
+                              vpn => #{head => #{revision => 2}, registry => []}}]},
+    Incidents = [#{device_id => <<"blocked-device">>,
+                   kind => divergence,
+                   reason => command_digest_mismatch,
+                   token => Token,
+                   status => open,
+                   occurrences => 1,
+                   last_seen => 1782340000}],
+
+    Html = iolist_to_binary(
+             nitro:render(#panel{body = ias_vpn:reconciliation_panel({ok, Report},
+                                                                      {ok, Incidents})})),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"Safe replay">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Blocked">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Acknowledge">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Resolve after verification">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_revision_behind">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"command_digest_mismatch">>)).

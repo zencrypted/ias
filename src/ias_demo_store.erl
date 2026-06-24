@@ -106,6 +106,7 @@ delete_runtime_object(Kind, Id0) ->
 clear() ->
     ensure(),
     ok = ias_vpn_authority:reset(),
+    ok = ias_vpn_reconciliation_incidents:reset(),
     ets:delete_all_objects(?TABLE),
     ok.
 

@@ -359,3 +359,63 @@ vpn_digest(Command) ->
 
 restore_env(Key, {ok, Value}) -> application:set_env(ias, Key, Value);
 restore_env(Key, undefined) -> application:unset_env(ias, Key).
+
+divergence_incident_requires_current_token_and_verified_resolution_test_() ->
+    reconciliation_fixture(
+      fun(DeviceId, PeerId, Command) ->
+          Conflicting = (head(Command, applied))#{digest => <<0:256>>},
+          set_snapshot(#{PeerId => Conflicting},
+                       [registry_entry(DeviceId, PeerId, Command)]),
+          {ok, Scan} = ias_vpn_reconciliation:scan_incidents(),
+          ?assertEqual(1, maps:get(active_records, Scan)),
+          {ok, Incident0} = ias_vpn_reconciliation:incident(DeviceId),
+          Token = maps:get(token, Incident0),
+          ?assertEqual(32, byte_size(Token)),
+          ?assertEqual(disc_copies,
+                       mnesia:table_info(ias_vpn_reconciliation_incident,
+                                         storage_type)),
+          ?assertEqual(open, maps:get(status, Incident0)),
+          ?assertEqual(divergence, maps:get(kind, Incident0)),
+          ?assertMatch({error, _},
+                       ias_vpn_reconciliation:acknowledge_incident(
+                         DeviceId, <<0:256>>, <<"admin">>, <<"stale">>)),
+          {ok, Incident1} = ias_vpn_reconciliation:acknowledge_incident(
+                              DeviceId, Token, <<"admin">>, <<"reviewed">>),
+          ?assertEqual(acknowledged, maps:get(status, Incident1)),
+          ?assertMatch({error, {vpn_incident_still_active, divergence, _}},
+                       ias_vpn_reconciliation:resolve_incident(
+                         DeviceId, Token, <<"admin">>, <<"too early">>)),
+
+          set_snapshot(#{PeerId => head(Command, applied)},
+                       [registry_entry(DeviceId, PeerId, Command)]),
+          {ok, Resolved} = ias_vpn_reconciliation:resolve_incident(
+                             DeviceId, Token, <<"admin">>, <<"verified">>),
+          ?assertEqual(resolved, maps:get(status, Resolved)),
+          ?assertEqual(synchronized,
+                       maps:get(state, maps:get(verified_clearance, Resolved)))
+      end).
+
+orphan_incident_resolves_only_after_vpn_state_disappears_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-orphan-incident-device">>,
+             PeerId = <<"vpn-orphan-incident-peer">>,
+             Command = (command(DeviceId, PeerId, upsert, true))#{revision => 4},
+             set_snapshot(#{PeerId => head(Command, applied)},
+                          [registry_entry(DeviceId, PeerId, Command)]),
+             {ok, _} = ias_vpn_reconciliation:scan_incidents(),
+             {ok, Incident0} = ias_vpn_reconciliation:incident(DeviceId),
+             Token = maps:get(token, Incident0),
+             ?assertEqual(orphan, maps:get(kind, Incident0)),
+
+             set_snapshot(#{}, []),
+             {ok, Resolved} = ias_vpn_reconciliation:resolve_incident(
+                                DeviceId, Token, <<"admin">>, <<"removed">>),
+             ?assertEqual(resolved, maps:get(status, Resolved)),
+             ?assertEqual(absent,
+                          maps:get(state, maps:get(verified_clearance, Resolved)))
+         end
+     end}.

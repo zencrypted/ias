@@ -1,6 +1,7 @@
 -module(ias_vpn).
--export([event/1, content/1, create_vpn_service/4, create_vpn_service/6,
-         runtime_status_panel/1, runtime_summary_panel/1]).
+-export([event/1, content/1, content/3, create_vpn_service/4, create_vpn_service/6,
+         runtime_status_panel/1, runtime_summary_panel/1,
+         reconciliation_panel/2]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
@@ -9,7 +10,32 @@ event(refresh_vpn_runtime) ->
     Summary = ias_vpn_runtime:summary(),
     nitro:update(vpn_runtime_refresh_status, runtime_status_panel(Summary)),
     nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary)),
+    update_reconciliation_content(),
     nitro:wire(refresh_complete_js());
+event(refresh_vpn_reconciliation) ->
+    update_reconciliation_ui({ok, refreshed});
+event(safe_replay_all) ->
+    update_reconciliation_ui(ias_vpn_reconciliation:replay());
+event({safe_replay, DeviceId}) ->
+    update_reconciliation_ui(ias_vpn_reconciliation:replay(DeviceId));
+event(scan_vpn_incidents) ->
+    update_reconciliation_ui(ias_vpn_reconciliation:scan_incidents());
+event({acknowledge_vpn_incident, DeviceId, Token}) ->
+    Actor = field_value(nitro:q(vpn_reconciliation_actor), <<"ias-ui-admin">>),
+    Note = field_value(nitro:q(vpn_reconciliation_note), <<>>),
+    Result = ias_vpn_reconciliation:acknowledge_incident(DeviceId,
+                                                          Token,
+                                                          Actor,
+                                                          Note),
+    update_reconciliation_ui(Result);
+event({resolve_vpn_incident, DeviceId, Token}) ->
+    Actor = field_value(nitro:q(vpn_reconciliation_actor), <<"ias-ui-admin">>),
+    Note = field_value(nitro:q(vpn_reconciliation_note), <<>>),
+    Result = ias_vpn_reconciliation:resolve_incident(DeviceId,
+                                                      Token,
+                                                      Actor,
+                                                      Note),
+    update_reconciliation_ui(Result);
 event(create_vpn_service) ->
     Name = field_value(nitro:q(vpn_service_name), <<"OpenVPN">>),
     Host = field_value(nitro:q(vpn_remote_host), <<>>),
@@ -26,19 +52,28 @@ event(_) ->
 render() ->
     logger:info("IAS VPN page init"),
     Summary = ias_vpn_runtime:summary(),
+    {Reconciliation, Incidents} = reconciliation_state(),
     logger:info("IAS VPN summary result: ~p", [summary_shape(Summary)]),
     nitro:clear(stand),
-    nitro:insert_bottom(stand, content(Summary)),
+    nitro:insert_bottom(stand, content(Summary, Reconciliation, Incidents)),
     nitro:wire(auto_refresh_js()).
 
 content(Summary) ->
+    content(Summary,
+            {error, reconciliation_not_loaded},
+            {ok, []}).
+
+content(Summary, Reconciliation, Incidents) ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("VPN")},
-        #p{body = ias_html:text("VPN runtime status and manually managed VPN service definitions for IAS provisioning.")},
+        #p{body = ias_html:text("VPN runtime status, reconciliation, and manually managed VPN service definitions for IAS provisioning.")},
         create_service_panel(),
         #panel{id = vpn_services_list, body = managed_services_panel()},
         runtime_refresh_controls(Summary),
-        runtime_summary_panel(Summary)
+        runtime_summary_panel(Summary),
+        reconciliation_controls(),
+        #panel{id = vpn_reconciliation_action_result},
+        reconciliation_content_panel(Reconciliation, Incidents)
     ]}.
 
 runtime_refresh_controls(Summary) ->
@@ -140,6 +175,268 @@ refresh_complete_js() ->
       "window.requestAnimationFrame(function(){window.scrollTo(0,scrollY);});",
       "}",
       "if(window.iasVpnSyncAutoRefresh){window.iasVpnSyncAutoRefresh();}">>.
+
+reconciliation_state() ->
+    {ias_vpn_reconciliation:report(),
+     ias_vpn_reconciliation:incidents()}.
+
+update_reconciliation_content() ->
+    {Reconciliation, Incidents} = reconciliation_state(),
+    nitro:update(vpn_reconciliation_content,
+                 reconciliation_content_panel(Reconciliation, Incidents)).
+
+update_reconciliation_ui(Result) ->
+    nitro:update(vpn_reconciliation_action_result,
+                 reconciliation_action_result(Result)),
+    update_reconciliation_content().
+
+reconciliation_content_panel(Reconciliation, Incidents) ->
+    #panel{id = vpn_reconciliation_content,
+           body = reconciliation_panel(Reconciliation, Incidents)}.
+
+reconciliation_controls() ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("VPN Reconciliation")},
+        #p{style = <<"font-size:12px;margin:0 0 10px;color:#64748b;">>,
+           body = ias_html:text("Compares durable IAS authority with the VPN projection. Only explicit safe replay may repair recoverable drift; divergence and orphan state remain fail-closed.")},
+        #panel{style = <<"display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:8px 0;">>,
+               body = [
+                   #link{id = vpn_reconciliation_refresh,
+                         class = [button, sgreen],
+                         body = ias_html:text("Refresh reconciliation"),
+                         postback = refresh_vpn_reconciliation},
+                   #link{id = vpn_reconciliation_replay_all,
+                         class = [button],
+                         body = ias_html:text("Safe replay all"),
+                         postback = safe_replay_all},
+                   #link{id = vpn_reconciliation_scan_incidents,
+                         class = [button],
+                         body = ias_html:text("Scan incidents"),
+                         postback = scan_vpn_incidents}
+               ]},
+        #panel{style = <<"display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px;">>,
+               body = [
+                   #label{for = vpn_reconciliation_actor,
+                          style = <<"font-size:12px;font-weight:600;color:#334155;">>,
+                          body = ias_html:text("Admin actor")},
+                   #input{id = vpn_reconciliation_actor,
+                          type = <<"text">>,
+                          value = <<"ias-ui-admin">>,
+                          style = <<"min-width:160px;">>},
+                   #label{for = vpn_reconciliation_note,
+                          style = <<"font-size:12px;font-weight:600;color:#334155;">>,
+                          body = ias_html:text("Incident note")},
+                   #input{id = vpn_reconciliation_note,
+                          type = <<"text">>,
+                          value = <<>>,
+                          style = <<"min-width:260px;max-width:520px;width:100%;">>}
+               ]},
+        #p{style = <<"font-size:11px;margin:8px 0 0;color:#64748b;">>,
+           body = ias_html:text("Unsafe overwrite and automatic orphan adoption are not available.")}
+    ]}.
+
+reconciliation_panel({ok, Report}, {ok, Incidents})
+  when is_map(Report), is_list(Incidents) ->
+    [reconciliation_summary(Report),
+     reconciliation_entries(maps:get(entries, Report, [])),
+     reconciliation_incidents(Incidents)];
+reconciliation_panel({error, Reason}, {ok, Incidents}) ->
+    [reconciliation_unavailable(Reason), reconciliation_incidents(Incidents)];
+reconciliation_panel({ok, Report}, {error, Reason}) when is_map(Report) ->
+    [reconciliation_summary(Report),
+     reconciliation_entries(maps:get(entries, Report, [])),
+     incident_unavailable(Reason)];
+reconciliation_panel({error, ReportReason}, {error, IncidentReason}) ->
+    [reconciliation_unavailable(ReportReason),
+     incident_unavailable(IncidentReason)];
+reconciliation_panel(_Report, _Incidents) ->
+    reconciliation_unavailable(invalid_reconciliation_state).
+
+reconciliation_summary(Report) ->
+    Counts = maps:get(counts, Report, #{}),
+    #panel{class = <<"ias-summary">>, body = [
+        summary("Synchronized", maps:get(synchronized, Counts, 0)),
+        summary("VPN Behind", maps:get(vpn_behind, Counts, 0)),
+        summary("Missing in VPN", maps:get(missing_in_vpn, Counts, 0)),
+        summary("Divergence", maps:get(divergence, Counts, 0)),
+        summary("Orphan", maps:get(orphan, Counts, 0)),
+        summary("Authority Only", maps:get(authority_only, Counts, 0))
+    ]}.
+
+reconciliation_entries([]) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Reconciliation Records")},
+        #p{body = ias_html:text("No IAS-managed VPN authority records or VPN orphans were reported.")}
+    ]};
+reconciliation_entries(Entries) ->
+    #panel{class = <<"ias-table-container">>, body = [
+        #h3{body = ias_html:text("Reconciliation Records")},
+        #table{class = <<"ias-table">>,
+               header = header(["Device", "Status", "Reason", "IAS Revision",
+                                "VPN Revision", "Digest", "Runtime Entries", "Action"]),
+               body = #tbody{body = [reconciliation_entry_row(Entry)
+                                      || Entry <- Entries]}}
+    ]}.
+
+reconciliation_entry_row(Entry) ->
+    DeviceId = maps:get(device_id, Entry, undefined),
+    Status = maps:get(status, Entry, undefined),
+    #tr{cells = [
+        #td{body = ias_html:text(DeviceId)},
+        #td{body = status_badge(Status)},
+        #td{body = ias_html:text(maps:get(reason, Entry, undefined))},
+        #td{body = ias_html:text(ias_revision(Entry))},
+        #td{body = ias_html:text(vpn_revision(Entry))},
+        #td{body = ias_html:text(maps:get(digest_match, Entry, undefined))},
+        #td{body = ias_html:text(registry_count(Entry))},
+        #td{body = replay_button(DeviceId, Status)}
+    ]}.
+
+ias_revision(#{ias := Ias}) when is_map(Ias) -> maps:get(revision, Ias, undefined);
+ias_revision(_Entry) -> undefined.
+
+vpn_revision(#{vpn := Vpn}) when is_map(Vpn) ->
+    case maps:get(head, Vpn, undefined) of
+        Head when is_map(Head) -> maps:get(revision, Head, undefined);
+        _ -> undefined
+    end;
+vpn_revision(_Entry) -> undefined.
+
+registry_count(#{vpn := Vpn}) when is_map(Vpn) ->
+    case maps:get(registry, Vpn, []) of
+        Registry when is_list(Registry) -> length(Registry);
+        _ -> 0
+    end;
+registry_count(_Entry) -> 0.
+
+replay_button(DeviceId, Status)
+  when Status =:= vpn_behind; Status =:= missing_in_vpn ->
+    #link{class = [button, sgreen],
+          body = ias_html:text("Safe replay"),
+          postback = {safe_replay, DeviceId}};
+replay_button(_DeviceId, synchronized) ->
+    #span{style = <<"font-size:12px;color:#15803d;">>,
+          body = ias_html:text("No action")};
+replay_button(_DeviceId, _Status) ->
+    #span{style = <<"font-size:12px;color:#b91c1c;">>,
+          body = ias_html:text("Blocked") }.
+
+reconciliation_incidents([]) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Reconciliation Incidents")},
+        #p{body = ias_html:text("No durable divergence or orphan incidents. Use Scan incidents after refreshing reconciliation.")}
+    ]};
+reconciliation_incidents(Incidents) ->
+    #panel{class = <<"ias-table-container">>, body = [
+        #h3{body = ias_html:text("Reconciliation Incidents")},
+        #table{class = <<"ias-table">>,
+               header = header(["Device", "Kind", "Reason", "State", "Occurrences",
+                                "Snapshot Token", "Last Seen", "Action"]),
+               body = #tbody{body = [incident_row(Incident)
+                                      || Incident <- Incidents]}}
+    ]}.
+
+incident_row(Incident) ->
+    DeviceId = maps:get(device_id, Incident, undefined),
+    Token = maps:get(token, Incident, undefined),
+    Status = maps:get(status, Incident, undefined),
+    #tr{cells = [
+        #td{body = ias_html:text(DeviceId)},
+        #td{body = status_badge(maps:get(kind, Incident, undefined))},
+        #td{body = ias_html:text(maps:get(reason, Incident, undefined))},
+        #td{body = status_badge(Status)},
+        #td{body = ias_html:text(maps:get(occurrences, Incident, 0))},
+        #td{body = #span{style = <<"font-family:monospace;font-size:11px;">>,
+                         body = incident_token_text(Token)}},
+        #td{body = ias_html:text(maps:get(last_seen, Incident, undefined))},
+        #td{body = incident_actions(DeviceId, Token, Status)}
+    ]}.
+
+incident_actions(DeviceId, Token, open) ->
+    #panel{style = <<"display:flex;gap:6px;flex-wrap:wrap;">>, body = [
+        #link{class = [button],
+              body = ias_html:text("Acknowledge"),
+              source = [vpn_reconciliation_actor, vpn_reconciliation_note],
+              postback = {acknowledge_vpn_incident, DeviceId, Token}},
+        #link{class = [button, sgreen],
+              body = ias_html:text("Resolve after verification"),
+              source = [vpn_reconciliation_actor, vpn_reconciliation_note],
+              postback = {resolve_vpn_incident, DeviceId, Token}}
+    ]};
+incident_actions(DeviceId, Token, acknowledged) ->
+    #link{class = [button, sgreen],
+          body = ias_html:text("Resolve after verification"),
+          source = [vpn_reconciliation_actor, vpn_reconciliation_note],
+          postback = {resolve_vpn_incident, DeviceId, Token}};
+incident_actions(_DeviceId, _Token, resolved) ->
+    #span{style = <<"font-size:12px;color:#15803d;">>,
+          body = ias_html:text("Verified resolved")};
+incident_actions(_DeviceId, _Token, _Status) ->
+    #span{body = ias_html:text("Unavailable")}.
+
+status_badge(Status) ->
+    #span{style = status_style(Status), body = ias_html:text(Status)}.
+
+status_style(synchronized) -> <<"display:inline-block;padding:3px 7px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700;">>;
+status_style(resolved) -> <<"display:inline-block;padding:3px 7px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700;">>;
+status_style(vpn_behind) -> <<"display:inline-block;padding:3px 7px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;">>;
+status_style(missing_in_vpn) -> <<"display:inline-block;padding:3px 7px;border-radius:999px;background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;">>;
+status_style(acknowledged) -> <<"display:inline-block;padding:3px 7px;border-radius:999px;background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:700;">>;
+status_style(_Status) -> <<"display:inline-block;padding:3px 7px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:11px;font-weight:700;">>.
+
+incident_token_text(Token) when is_binary(Token) ->
+    Hex = iolist_to_binary([io_lib:format("~2.16.0B", [Byte]) || <<Byte>> <= Token]),
+    case byte_size(Hex) > 20 of
+        true -> <<(binary:part(Hex, 0, 20))/binary, "...">>;
+        false -> Hex
+    end;
+incident_token_text(_Token) -> <<"-">>.
+
+reconciliation_unavailable(Reason) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Reconciliation unavailable")},
+        #p{body = ias_html:join(["IAS could not read the VPN reconciliation snapshot: ",
+                                 term_text(Reason)])}
+    ]}.
+
+incident_unavailable(Reason) ->
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Incident ledger unavailable")},
+        #p{body = ias_html:join(["IAS could not read the durable incident ledger: ",
+                                 term_text(Reason)])}
+    ]}.
+
+reconciliation_action_result({ok, refreshed}) ->
+    action_message(ok, "Reconciliation snapshot refreshed.");
+reconciliation_action_result({ok, Result}) when is_map(Result) ->
+    Outcome = first_action_value(Result),
+    action_message(ok, ias_html:join(["Action completed: ", Outcome]));
+reconciliation_action_result(not_found) ->
+    action_message(error, "The selected IAS VPN authority record was not found.");
+reconciliation_action_result({error, Reason}) ->
+    action_message(error, ias_html:join(["Action failed: ", term_text(Reason)]));
+reconciliation_action_result(Result) ->
+    action_message(error, ias_html:join(["Unexpected action result: ", term_text(Result)])).
+
+first_action_value(Result) ->
+    case maps:get(outcome, Result, undefined) of
+        undefined -> maps:get(state, Result,
+                              maps:get(status, Result,
+                                       maps:get(requested_action, Result, completed)));
+        Value -> Value
+    end.
+
+action_message(ok, Text) ->
+    #panel{style = <<"margin:10px 0;padding:10px;border:1px solid #86efac;border-radius:6px;background:#f0fdf4;color:#166534;">>,
+           body = ias_html:text(Text)};
+action_message(error, Text) ->
+    #panel{style = <<"margin:10px 0;padding:10px;border:1px solid #fca5a5;border-radius:6px;background:#fef2f2;color:#991b1b;">>,
+           body = ias_html:text(Text)}.
+
+term_text(Value) when is_atom(Value); is_binary(Value); is_integer(Value); is_boolean(Value) ->
+    ias_html:text(Value);
+term_text(Value) ->
+    iolist_to_binary(io_lib:format("~p", [Value])).
 
 create_service_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
