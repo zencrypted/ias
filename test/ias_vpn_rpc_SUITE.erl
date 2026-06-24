@@ -41,7 +41,7 @@ init_per_suite(Config) ->
     ok = validate_vpn_repo(VpnRepo),
     ok = ensure_no_conflicting_vpn_node(),
     ok = ensure_vpn_test_ports_available(),
-    RuntimeRoot = filename:join([cwd(), "_build", "test", "logs", "ias_vpn_rpc"]),
+    RuntimeRoot = vpn_test_runtime_root(Config),
     LogPath = filename:join(RuntimeRoot, "vpn.log"),
     MnesiaDir = filename:join(RuntimeRoot, "mnesia"),
     ok = filelib:ensure_dir(LogPath),
@@ -1296,18 +1296,23 @@ require_executable(Name) ->
 reset_vpn_mnesia_dir(MnesiaDir) ->
     case file:del_dir_r(MnesiaDir) of
         ok ->
-            ensure_vpn_mnesia_dir(MnesiaDir);
+            ensure_vpn_mnesia_parent(MnesiaDir);
         {error, enoent} ->
-            ensure_vpn_mnesia_dir(MnesiaDir);
+            ensure_vpn_mnesia_parent(MnesiaDir);
         {error, Reason} ->
             ct:fail({vpn_mnesia_reset_failed, MnesiaDir, Reason})
+    end,
+    case filelib:is_dir(MnesiaDir) of
+        false -> ok;
+        true -> ct:fail({vpn_mnesia_dir_was_not_removed, MnesiaDir})
     end.
 
-ensure_vpn_mnesia_dir(MnesiaDir) ->
-    case filelib:ensure_dir(filename:join(MnesiaDir, "placeholder")) of
+ensure_vpn_mnesia_parent(MnesiaDir) ->
+    Parent = filename:dirname(MnesiaDir),
+    case filelib:ensure_dir(filename:join(Parent, "placeholder")) of
         ok -> ok;
         {error, Reason} ->
-            ct:fail({vpn_mnesia_dir_unavailable, MnesiaDir, Reason})
+            ct:fail({vpn_mnesia_parent_unavailable, Parent, Reason})
     end.
 
 erl_term_argument(Term) ->
@@ -1348,14 +1353,8 @@ vpn_start_expression(MnesiaDir) ->
     "ok = application:set_env(mnesia, dir, " ++
     MnesiaDirArgument ++ "), " ++
     "io:format(standard_error, "
-    "\"VPN CT startup: preparing Mnesia schema in ~ts~n\", [" ++
+    "\"VPN CT startup: using fresh Mnesia directory ~ts~n\", [" ++
     MnesiaDirArgument ++ "]), " ++
-    "case mnesia:create_schema([node()]) of "
-    "ok -> ok; "
-    "{error, {_, {already_exists, _}}} -> ok; "
-    "{error, SchemaReason} -> io:format(standard_error, "
-    "\"VPN Mnesia schema creation failed: ~p~n\", [SchemaReason]), "
-    "halt(1) end, " ++
     "io:format(standard_error, "
     "\"VPN CT startup: starting VPN application~n\", []), " ++
     "case application:ensure_all_started(vpn) of "
@@ -2059,9 +2058,13 @@ unique_id(Prefix) ->
     Suffix = integer_to_binary(erlang:unique_integer([positive, monotonic])),
     iolist_to_binary([Prefix, Suffix]).
 
-cwd() ->
-    {ok, Cwd} = file:get_cwd(),
-    Cwd.
+vpn_test_runtime_root(Config) ->
+    case proplists:get_value(priv_dir, Config) of
+        PrivDir when is_list(PrivDir), PrivDir =/= [] ->
+            filename:absname(filename:join(PrivDir, "ias_vpn_rpc"));
+        Invalid ->
+            ct:fail({vpn_ct_priv_dir_unavailable, Invalid})
+    end.
 
 shell_quote(Value) ->
     Flat = lists:flatten(Value),
