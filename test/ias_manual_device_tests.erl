@@ -151,3 +151,12 @@ valid_fields() ->
       tunnel_device => <<"tun">>,
       transport => <<"udp">>,
       endpoint => <<"10.0.0.10">>}.
+
+manual_device_preserves_owner_test() ->
+    ias_demo_store:clear(),
+    {ok, Device} = ias_manual_device:create(#{name => <<"Owned Laptop">>,
+                                               type => <<"vpn-client">>,
+                                               tunnel_device => <<"tun">>,
+                                               transport => <<"udp">>,
+                                               owner => bob}),
+    ?assertEqual(bob, maps:get(owner, Device)).

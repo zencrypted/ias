@@ -9,6 +9,9 @@
          clear/0,
          next/1,
          back/1,
+         select_user/2,
+         select_existing_user/2,
+         selected_user/1,
          select_device/2,
          select_existing_device/2,
          selected_device/1,
@@ -53,7 +56,8 @@ new(device_bound) ->
     Draft = #{
         id => Id,
         scenario => device_bound,
-        current_step => device,
+        current_step => user,
+        user_id => undefined,
         device_id => undefined,
         security_profile_id => undefined,
         vpn_service_id => undefined,
@@ -148,17 +152,65 @@ next(Id) ->
 back(Id) ->
     move(Id, previous_step).
 
-select_device(Id, DeviceId) ->
-    case valid_device(DeviceId) of
-        {ok, Device} ->
-            update(Id, reset_completion(#{device_id => maps:get(id, Device),
-                                         pending_private_key_reference => undefined,
-                                         pending_csr_filename => undefined,
-                                         pending_enrollment_common_name => undefined,
+select_user(Id, UserId) ->
+    case valid_user(UserId) of
+        {ok, User} ->
+            update(Id, reset_completion(#{user_id => maps:get(id, User),
+                                         device_id => undefined,
+                                         client_certificate_id => undefined,
                                          relationships_applied => false}));
         {error, Reason} ->
             {error, Reason}
     end.
+
+select_existing_user(Id, UserId) ->
+    auto_advance_after_selection(Id, user, select_user(Id, UserId)).
+
+selected_user(Draft) when is_map(Draft) ->
+    case maps:get(user_id, Draft, undefined) of
+        undefined -> not_selected;
+        UserId -> valid_user(UserId)
+    end.
+
+select_device(Id, DeviceId) ->
+    case {get(Id), valid_device(DeviceId)} of
+        {{ok, Draft}, {ok, Device0}} ->
+            SelectedUser = maps:get(user_id, Draft, undefined),
+            Owner0 = maps:get(owner, Device0, undefined),
+            case resolve_device_owner(SelectedUser, Owner0) of
+                {ok, Owner} ->
+                    Device = maybe_claim_device(Device0, Owner),
+                    CurrentStep = case maps:get(current_step, Draft, user) of
+                                      user -> device;
+                                      Step -> Step
+                                  end,
+                    update(Id, reset_completion(#{user_id => Owner,
+                                                 device_id => maps:get(id, Device),
+                                                 current_step => CurrentStep,
+                                                 pending_private_key_reference => undefined,
+                                                 pending_csr_filename => undefined,
+                                                 pending_enrollment_common_name => undefined,
+                                                 relationships_applied => false}));
+                {error, Reason} -> {error, Reason}
+            end;
+        {not_found, _} -> {error, not_found};
+        {_, {error, Reason}} -> {error, Reason}
+    end.
+
+resolve_device_owner(undefined, undefined) ->
+    case ias_demo_store:users() of
+        [User | _] -> {ok, maps:get(id, User)};
+        [] -> {error, user_required}
+    end;
+resolve_device_owner(UserId, undefined) when UserId =/= undefined -> {ok, UserId};
+resolve_device_owner(undefined, Owner) when Owner =/= undefined -> {ok, Owner};
+resolve_device_owner(UserId, UserId) when UserId =/= undefined -> {ok, UserId};
+resolve_device_owner(_UserId, _Owner) -> {error, device_belongs_to_other_user}.
+
+maybe_claim_device(#{owner := Owner} = Device, Owner) -> Device;
+maybe_claim_device(Device, Owner) ->
+    Updated = Device#{owner => Owner},
+    ias_demo_store:put_runtime_object(Updated).
 
 select_existing_device(Id, DeviceId) ->
     auto_advance_after_selection(Id, device, select_device(Id, DeviceId)).
@@ -441,6 +493,7 @@ apply_relationships(Id) ->
 
 steps() ->
     [scheme,
+     user,
      device,
      security_profile,
      vpn_service,
@@ -451,6 +504,7 @@ steps() ->
      provisioning].
 
 step_title(scheme) -> <<"Scheme">>;
+step_title(user) -> <<"User">>;
 step_title(device) -> <<"Device">>;
 step_title(security_profile) -> <<"Security Profile & Policy">>;
 step_title(vpn_service) -> <<"VPN Service">>;
@@ -463,6 +517,8 @@ step_title(Step) -> ias_html:text(Step).
 
 step_description(scheme) ->
     <<"Choose the provisioning scenario. Stage 24A enables device-bound VPN profile orchestration only.">>;
+step_description(user) ->
+    <<"Select the IAS User who owns the Device and receives VPN access.">>;
 step_description(device) ->
     <<"Select an existing runtime Device or create a new demo Device that will own the VPN profile.">>;
 step_description(security_profile) ->
@@ -619,6 +675,12 @@ current_draft(Id, Fallback) ->
         not_found -> {ok, Fallback}
     end.
 
+movement_allowed(next_step, user, Draft) ->
+    case selected_user(Draft) of
+        {ok, _User} -> ok;
+        not_selected -> {error, user_required};
+        {error, _Reason} -> {error, selected_user_missing}
+    end;
 movement_allowed(next_step, device, Draft) ->
     case selected_device(Draft) of
         {ok, _Device} -> ok;
@@ -676,6 +738,17 @@ movement_allowed(next_step, material_readiness, Draft) ->
     end;
 movement_allowed(_Direction, _Current, _Draft) ->
     ok.
+
+valid_user(undefined) ->
+    {error, user_required};
+valid_user(<<>>) ->
+    {error, user_required};
+valid_user(UserId) ->
+    case ias_demo_store:get(normalize_id(UserId)) of
+        {ok, #{kind := user} = User} -> {ok, User};
+        {ok, _Other} -> {error, invalid_user};
+        not_found -> {error, selected_user_missing}
+    end.
 
 valid_device(undefined) ->
     {error, device_required};
@@ -796,7 +869,7 @@ clamp(Value, _Min, _Max) ->
     Value.
 
 validate_restored_draft(Draft) ->
-    Allowed = [id, scenario, current_step, device_id, security_profile_id,
+    Allowed = [id, scenario, current_step, user_id, device_id, security_profile_id,
                vpn_service_id, ca_certificate_id, client_certificate_id,
                pending_private_key_reference, pending_csr_filename,
                pending_enrollment_common_name,
@@ -813,6 +886,7 @@ validate_restored_draft(Draft) ->
           maps:get(current_step, Safe, undefined)} of
         {Id, device_bound, Step} ->
             case usable_restore_id(Id) andalso lists:member(Step, steps())
+                 andalso valid_optional_reference(maps:get(user_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(device_id, Safe, undefined))
                  andalso valid_optional_profile_reference(maps:get(security_profile_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(vpn_service_id, Safe, undefined))

@@ -7,7 +7,8 @@ draft_creation_test() ->
     {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
     ?assertMatch(<<"provisioning_wizard_", _/binary>>, maps:get(id, Draft)),
     ?assertEqual(device_bound, maps:get(scenario, Draft)),
-    ?assertEqual(device, maps:get(current_step, Draft)),
+    ?assertEqual(user, maps:get(current_step, Draft)),
+    ?assertEqual(undefined, maps:get(user_id, Draft)),
     ?assertEqual(undefined, maps:get(device_id, Draft)),
     ?assertMatch({ok, Draft}, ias_provisioning_wizard_store:get(maps:get(id, Draft))).
 
@@ -17,11 +18,20 @@ unique_ids_test() ->
     {ok, Second} = ias_provisioning_wizard_store:new(device_bound),
     ?assertNotEqual(maps:get(id, First), maps:get(id, Second)).
 
-scenario_selection_starts_device_step_test() ->
+scenario_selection_starts_user_step_test() ->
     ias_provisioning_wizard_store:clear(),
     {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
     ?assertEqual(device_bound, maps:get(scenario, Draft)),
-    ?assertEqual(device, maps:get(current_step, Draft)).
+    ?assertEqual(user, maps:get(current_step, Draft)).
+
+user_selection_advances_to_device_test() ->
+    ias_demo_store:clear(),
+    ias_provisioning_wizard_store:clear(),
+    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Advanced} = ias_provisioning_wizard_store:select_existing_user(
+        maps:get(id, Draft), bob),
+    ?assertEqual(bob, maps:get(user_id, Advanced)),
+    ?assertEqual(device, maps:get(current_step, Advanced)).
 
 next_and_back_test() ->
     ias_demo_store:clear(),
@@ -39,7 +49,9 @@ next_and_back_test() ->
 device_step_requires_selection_test() ->
     ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
-    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft} = ias_provisioning_wizard_store:select_existing_user(
+        maps:get(id, Draft0), alice),
     ?assertEqual({error, device_required},
                  ias_provisioning_wizard_store:next(maps:get(id, Draft))),
     {ok, StillDevice} = ias_provisioning_wizard_store:get(maps:get(id, Draft)),

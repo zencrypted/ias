@@ -16,6 +16,8 @@ event({wizard_next, WizardId}) ->
         {ok, Draft} -> nitro:redirect(wizard_url(maps:get(id, Draft)));
         {error, Reason} -> nitro:update(wizard_feedback, wizard_error(Reason))
     end;
+event({wizard_select_user, WizardId, UserId}) ->
+    redirect_after(ias_provisioning_wizard_store:select_existing_user(WizardId, UserId));
 event({wizard_select_device, WizardId, DeviceId}) ->
     redirect_after(ias_provisioning_wizard_store:select_existing_device(WizardId, DeviceId));
 event({wizard_select_security_profile, WizardId, ProfileId}) ->
@@ -129,7 +131,8 @@ event({wizard_create_vpn_service, WizardId}) ->
             nitro:update(wizard_feedback, wizard_error(Reason))
     end;
 event({wizard_create_device, WizardId}) ->
-    Fields = #{name => nitro:q(wizard_device_name),
+    Fields = #{owner => selected_user_id(WizardId),
+               name => nitro:q(wizard_device_name),
                type => nitro:q(wizard_device_type),
                tunnel_device => nitro:q(wizard_device_tunnel_device),
                transport => nitro:q(wizard_device_transport),
@@ -250,6 +253,7 @@ existing_wizard_draft_card(Draft) ->
                    body = ias_html:text(WizardId)},
                key_value_table([
                    {"Scenario", maps:get(scenario, Draft, undefined)},
+            {"User", user_link(maps:get(user_id, Draft, undefined))},
                    {"Current Step", maps:get(current_step, Draft, undefined)},
                    {"Status", draft_status(Draft)},
                    {"Device", draft_reference(maps:get(device_id, Draft, undefined))},
@@ -306,6 +310,7 @@ draft_summary(Draft) ->
         key_value_table([
             {"Wizard ID", maps:get(id, Draft, undefined)},
             {"Scenario", maps:get(scenario, Draft, undefined)},
+            {"User", user_link(maps:get(user_id, Draft, undefined))},
             {"Current Step", maps:get(current_step, Draft, undefined)},
             {"Status", draft_status(Draft)},
             {"Provisioning", draft_reference(maps:get(provisioning_id, Draft, undefined))},
@@ -350,6 +355,8 @@ step_heading(Step) ->
 
 step_content(scheme, _Draft) ->
     #panel{body = [scheme_panel(undefined)]};
+step_content(user, Draft) ->
+    user_step(Draft);
 step_content(device, Draft) ->
     device_step(Draft);
 step_content(security_profile, Draft) ->
@@ -390,6 +397,7 @@ provisioning_final_summary(Draft, Readiness) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Final Provisioning Summary")},
         key_value_table([
+            {"User", user_link(maps:get(user_id, Draft, undefined))},
             {"Device", device_link(maps:get(device_id, Draft, undefined))},
             {"Security Profile", selected_profile_value(Draft)},
             {"Security Policy", derived_policy_value(Draft)},
@@ -1855,6 +1863,58 @@ profile_choice_style(false, {warning, _}) ->
 profile_choice_style(false, {blocked, _}) ->
     <<"padding:12px;border:1px solid rgba(220,38,38,0.18);border-radius:6px;background:#f8fafc;opacity:0.8;">>.
 
+selected_user_id(WizardId) ->
+    case ias_provisioning_wizard_store:get(WizardId) of
+        {ok, Draft} -> maps:get(user_id, Draft, undefined);
+        not_found -> undefined
+    end.
+
+user_link(undefined) -> undefined;
+user_link(UserId) ->
+    #link{url = ias_html:join([<<"/app/user.htm?id=">>, ias_html:text(UserId)]),
+          body = ias_html:text(UserId)}.
+
+user_step(Draft) ->
+    Users = ias_demo_store:users(),
+    SelectedId = maps:get(user_id, Draft, undefined),
+    #panel{body = [selected_user_panel(Draft),
+                   #panel{class = <<"ias-status-card">>, body = [
+                       #h3{body = ias_html:text("Select Existing User")},
+                       user_choices(Users, maps:get(id, Draft), SelectedId)
+                   ]}] }.
+
+selected_user_panel(Draft) ->
+    case ias_provisioning_wizard_store:selected_user(Draft) of
+        {ok, User} ->
+            #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+                   body = [#h3{body = ias_html:text("Selected User")},
+                           key_value_table([{"User", user_link(maps:get(id, User, undefined))},
+                                            {"Name", maps:get(name, User, undefined)},
+                                            {"Role", maps:get(role, User, undefined)},
+                                            {"Security Profile", maps:get(profile_id, User, undefined)}]) ]};
+        _ -> wizard_notice("No User selected", "Select the IAS User who owns the VPN Device.")
+    end.
+
+user_choices([], _WizardId, _SelectedId) ->
+    #p{body = ias_html:text("No IAS Users are available.")};
+user_choices(Users, WizardId, SelectedId) ->
+    #panel{style = <<"display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:8px;">>,
+           body = [user_choice(User, WizardId, SelectedId) || User <- Users]}.
+
+user_choice(User, WizardId, SelectedId) ->
+    UserId = maps:get(id, User, undefined),
+    IsSelected = UserId =:= SelectedId,
+    #panel{style = device_choice_style(IsSelected), body = [
+        #h3{style = <<"margin:0 0 6px;font-size:14px;">>,
+            body = ias_html:text(maps:get(name, User, UserId))},
+        #p{style = <<"margin:0 0 8px;font-size:12px;color:#64748b;">>,
+           body = ias_html:join([<<"role ">>, maps:get(role, User, <<"-">>),
+                                 <<" / profile ">>, maps:get(profile_id, User, <<"-">>)])},
+        #link{class = [button, sgreen],
+              body = ias_html:text(case IsSelected of true -> "Selected"; false -> "Select" end),
+              postback = {wizard_select_user, WizardId, UserId}}
+    ]}.
+
 device_step(Draft) ->
     #panel{body = [
         selected_device_panel(Draft),
@@ -1891,7 +1951,9 @@ selected_device_panel(Draft) ->
     end.
 
 existing_devices_panel(Draft) ->
-    Devices = ias_demo_store:devices(),
+    UserId = maps:get(user_id, Draft, undefined),
+    Devices = [Device || Device <- ias_demo_store:devices(),
+                         maps:get(owner, Device, undefined) =:= UserId],
     WizardId = maps:get(id, Draft),
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Use Existing Device")},
@@ -1968,6 +2030,14 @@ wizard_notice(Title, Text) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(37,99,235,0.2);border-radius:6px;background:#eff6ff;">>,
            body = [#h3{body = ias_html:text(Title)}, #p{body = ias_html:text(Text)}]}.
 
+wizard_error(user_required) ->
+    wizard_error_panel("Select a User before continuing.");
+wizard_error(selected_user_missing) ->
+    wizard_error_panel("The selected User no longer exists. Select another User.");
+wizard_error(device_belongs_to_other_user) ->
+    wizard_error_panel("The selected Device belongs to another User.");
+wizard_error(device_owner_missing) ->
+    wizard_error_panel("The selected Device has no User owner. Create a Device for the selected User.");
 wizard_error(device_required) ->
     wizard_error_panel("Select or create a Device before continuing.");
 wizard_error(selected_device_missing) ->

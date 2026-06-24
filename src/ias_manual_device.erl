@@ -17,7 +17,8 @@ normalize_fields(Fields) ->
       transport => trim(maps:get(transport, Fields, <<"udp">>)),
       endpoint => trim(maps:get(endpoint, Fields, <<>>)),
       private_key_provider => trim(maps:get(private_key_provider, Fields, <<"device_file">>)),
-      private_key_ref => trim(maps:get(private_key_ref, Fields, <<"client.key">>))}.
+      private_key_ref => trim(maps:get(private_key_ref, Fields, <<"client.key">>)),
+      owner => normalize_owner(maps:get(owner, Fields, undefined))}.
 
 validate(#{name := <<>>}) ->
     {error, <<"Device Name is required">>};
@@ -52,6 +53,7 @@ store_device(Values) ->
         id => Id,
         kind => device,
         source => manual_device,
+        owner => maps:get(owner, Values, undefined),
         import_id => Id,
         name => maps:get(name, Values),
         type => maps:get(type, Values),
@@ -66,6 +68,11 @@ store_device(Values) ->
         ca_body_stored => false
     },
     ias_demo_store:put_runtime_object(Device).
+
+normalize_owner(undefined) -> undefined;
+normalize_owner(<<>>) -> undefined;
+normalize_owner(Value) when is_atom(Value) -> Value;
+normalize_owner(Value) -> ias_html:text(Value).
 
 endpoint_value(<<>>) ->
     <<"">>;

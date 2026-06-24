@@ -189,7 +189,7 @@ restore_wizard_drafts(Drafts) ->
     end, 0, Drafts).
 
 sanitize_wizard_draft(Draft) ->
-    maps:with([id, scenario, current_step, device_id, security_profile_id,
+    maps:with([id, scenario, current_step, user_id, device_id, security_profile_id,
                vpn_service_id, ca_certificate_id, client_certificate_id,
                relationships_applied, provisioning_id, completed, completed_at,
                created_at, updated_at], Draft).
