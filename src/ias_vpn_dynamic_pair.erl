@@ -1,12 +1,13 @@
 -module(ias_vpn_dynamic_pair).
--export([enabled/0, ensure/2]).
+-export([enabled/0, ensure/2, delivery_mode/1, accept/3, needs_binding_recovery/1]).
 
 -define(DEFAULT_TIMEOUT, 30000).
 
-%% IAS asks VPN to reconcile an allocator-backed pair only when a Device already
-%% carries a complete reservation. VPN remains the owner of transport and
-%% identity material; IAS persists only the public runtime binding required for
-%% subsequent revisioned lifecycle commands.
+%% IAS routes allocator-backed upserts through vpn_provisioning:apply_dynamic/2
+%% only when a Device carries a complete reservation. This module validates the
+%% returned safe pair projection and persists the public runtime binding. The
+%% legacy ensure/2 path remains only for compatibility with older delivery code.
+%% VPN remains the owner of transport and identity material.
 enabled() ->
     case application:get_env(ias, vpn_dynamic_pair_delivery, false) of
         true -> true;
@@ -15,6 +16,65 @@ enabled() ->
         <<"true">> -> true;
         _ -> false
     end.
+
+delivery_mode(DeviceId0) ->
+    case enabled() of
+        false ->
+            static;
+        true ->
+            with_device(
+              DeviceId0,
+              fun(_DeviceId, Device) ->
+                  case reservation(Device) of
+                      {ok, _Reservation} -> dynamic;
+                      not_dynamic -> static;
+                      {error, _Reason} = Error -> Error
+                  end
+              end)
+    end.
+
+accept(DeviceId0, Command, Status) when is_map(Command), is_map(Status) ->
+    with_device(
+      DeviceId0,
+      fun(DeviceId, Device) ->
+          case reservation(Device) of
+              {ok, Reservation} ->
+                  accept_provisioned_status(DeviceId,
+                                            Device,
+                                            Reservation,
+                                            Command,
+                                            Status);
+              not_dynamic ->
+                  {error, vpn_dynamic_allocation_required};
+              {error, _Reason} = Error ->
+                  Error
+          end
+      end);
+accept(_DeviceId, _Command, _Status) ->
+    {error, invalid_vpn_dynamic_pair_status}.
+
+needs_binding_recovery(DeviceId0) ->
+    with_device(
+      DeviceId0,
+      fun(_DeviceId, Device) ->
+          case reservation(Device) of
+              {ok, Reservation} ->
+                  ClientPeerId = maps:get(client_peer_id, Reservation),
+                  not (maps:get(runtime_peer_id, Device, undefined) =:= ClientPeerId
+                       andalso maps:get(vpn_peer, Device, undefined) =:= ClientPeerId
+                       andalso nonempty_binary(
+                                 maps:get(vpn_runtime_certificate_fingerprint,
+                                          Device,
+                                          undefined))
+                       andalso maps:get(vpn_dynamic_pair_state,
+                                        Device,
+                                        undefined) =:= established);
+              not_dynamic ->
+                  false;
+              {error, _Reason} = Error ->
+                  Error
+          end
+      end).
 
 ensure(DeviceId0, Desired0) when is_map(Desired0) ->
     case enabled() of
@@ -111,7 +171,29 @@ dynamic_desired(DeviceId, Desired) ->
                 Desired#{device_id => DeviceId})).
 
 accept_status(Device, Reservation, Status) ->
-    case safe_status(Device, Reservation, Status) of
+    accept_status(Device, Reservation, Status, legacy).
+
+accept_provisioned_status(DeviceId, Device, Reservation, Command, Status) ->
+    Desired = maps:get(desired_state, Command, #{}),
+    Revision = maps:get(revision, Command, undefined),
+    Source = maps:get(source, Command, undefined),
+    Checks = [maps:get(operation, Command, undefined) =:= upsert,
+              maps:get(peer_id, Command, undefined) =:=
+                  maps:get(client_peer_id, Reservation),
+              maps:get(device_id, Desired, DeviceId) =:= DeviceId,
+              is_integer(Revision) andalso Revision > 0],
+    case lists:all(fun(Value) -> Value =:= true end, Checks) of
+        true ->
+            accept_status(Device,
+                          Reservation,
+                          Status,
+                          #{revision => Revision, source => Source});
+        false ->
+            {error, invalid_vpn_dynamic_pair_status}
+    end.
+
+accept_status(Device, Reservation, Status, Expectations) ->
+    case safe_status(Device, Reservation, Status, Expectations) of
         {ok, Safe, ClientRegistry} ->
             Fingerprint = maps:get(certificate_fingerprint, ClientRegistry),
             Updated = Device#{runtime_peer_id => maps:get(client_peer_id, Reservation),
@@ -125,7 +207,7 @@ accept_status(Device, Reservation, Status) ->
             {error, Reason}
     end.
 
-safe_status(Device, Reservation, Status) ->
+safe_status(Device, Reservation, Status, Expectations) ->
     Client = maps:get(client, Status, #{}),
     Gateway = maps:get(gateway, Status, #{}),
     ClientRegistry = maps:get(registry, Client, #{}),
@@ -140,8 +222,8 @@ safe_status(Device, Reservation, Status) ->
                   maps:get(client_peer_id, Reservation),
               maps:get(gateway_peer_id, Status, undefined) =:=
                   maps:get(gateway_peer_id, Reservation),
-              valid_side(Client, client, Reservation, DeviceId),
-              valid_side(Gateway, gateway, Reservation, DeviceId),
+              valid_side(Client, client, Reservation, DeviceId, Expectations),
+              valid_side(Gateway, gateway, Reservation, DeviceId, Expectations),
               nonempty_binary(maps:get(certificate_fingerprint,
                                        ClientRegistry,
                                        undefined)),
@@ -163,7 +245,7 @@ safe_status(Device, Reservation, Status) ->
             {error, invalid_vpn_dynamic_pair_status}
     end.
 
-valid_side(Side, Role, Reservation, DeviceId) when is_map(Side) ->
+valid_side(Side, Role, Reservation, DeviceId, Expectations) when is_map(Side) ->
     Registry = maps:get(registry, Side, #{}),
     PeerId = case Role of
                  client -> maps:get(client_peer_id, Reservation);
@@ -182,9 +264,17 @@ valid_side(Side, Role, Reservation, DeviceId) when is_map(Side) ->
                     maps:get(slot, Reservation)
         andalso maps:get(allocation_generation, Registry, undefined) =:=
                     maps:get(generation, Reservation)
-        andalso maps:get(allocation_role, Registry, undefined) =:= Role;
-valid_side(_Side, _Role, _Reservation, _DeviceId) ->
+        andalso maps:get(allocation_role, Registry, undefined) =:= Role
+        andalso valid_provisioning_metadata(Registry, Expectations);
+valid_side(_Side, _Role, _Reservation, _DeviceId, _Expectations) ->
     false.
+
+valid_provisioning_metadata(_Registry, legacy) ->
+    true;
+valid_provisioning_metadata(Registry, #{revision := Revision, source := Source}) ->
+    maps:get(revision, Registry, undefined) =:= Revision
+        andalso maps:get(provisioning_source, Registry, undefined) =:= Source
+        andalso maps:get(last_provisioning_operation, Registry, undefined) =:= upsert.
 
 safe_side(Side) ->
     Registry = maps:get(registry, Side, #{}),
@@ -206,7 +296,9 @@ safe_side(Side) ->
                              allocator_instance_id,
                              allocation_slot,
                              allocation_generation,
-                             allocation_role],
+                             allocation_role,
+                             last_provisioning_operation,
+                             updated_at],
                             Registry)}.
 
 call_rpc(Module, Function, Args) ->

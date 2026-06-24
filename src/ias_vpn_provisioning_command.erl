@@ -149,14 +149,26 @@ normalize_reason(Reason) ->
     binary:replace(Lowercase, <<" ">>, <<"_">>, [global]).
 
 runtime_certificate_fingerprint(Device, CertificateResult) ->
-    first_present([dynamic_runtime_fingerprint(Device),
-                   certificate_fingerprint(CertificateResult)]).
-
-dynamic_runtime_fingerprint(Device) ->
-    case ias_vpn_dynamic_pair:enabled() of
-        true -> maps:get(vpn_runtime_certificate_fingerprint, Device, undefined);
-        false -> undefined
+    case dynamic_runtime_identity(Device) of
+        true -> undefined;
+        false -> certificate_fingerprint(CertificateResult)
     end.
+
+%% Dynamic client identity is generated and owned by VPN. IAS cannot know its
+%% certificate fingerprint before the first single-RPC bootstrap, so the
+%% fingerprint is validated from the returned pair status and retained only as
+%% operational binding metadata on the Device. Keeping it out of the canonical
+%% command also makes retries of the accepted revision byte-for-byte stable.
+dynamic_runtime_identity(Device) ->
+    ias_vpn_dynamic_pair:enabled()
+        andalso nonempty_value(maps:get(vpn_allocation_id, Device, undefined))
+        andalso nonempty_value(maps:get(vpn_client_peer_id, Device, undefined))
+        andalso nonempty_value(maps:get(vpn_gateway_peer_id, Device, undefined)).
+
+nonempty_value(undefined) -> false;
+nonempty_value(<<>>) -> false;
+nonempty_value([]) -> false;
+nonempty_value(_Value) -> true.
 
 certificate_fingerprint({ok, Certificate}) ->
     first_present([maps:get(fingerprint_sha256, Certificate, undefined),

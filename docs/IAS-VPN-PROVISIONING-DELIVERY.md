@@ -126,7 +126,7 @@ IAS reads these application environment keys:
 - `vpn_provisioning_vpn_node`: distributed Erlang VPN node name
 - `vpn_provisioning_rpc_timeout`: RPC timeout in milliseconds
 - `vpn_dynamic_allocation_reservation`: reserve a VPN-owned dynamic pair before Device CSR preparation
-- `vpn_dynamic_pair_delivery`: reconcile the reserved client/gateway pair before the first upsert
+- `vpn_dynamic_pair_delivery`: route a reserved dynamic upsert through `vpn_provisioning:apply_dynamic/2`
 - `vpn_dynamic_pair_rpc_timeout`: timeout for identity generation, pair startup, and handshake establishment
 
 Default configuration is:
@@ -249,17 +249,43 @@ identity bundles. VPN remains the owner of transport resources and identity
 material. The RPC result is validated against the selected Device ID before it
 is persisted.
 
-When `vpn_dynamic_pair_delivery` is enabled, the first wizard upsert now cuts
-over to the reserved dynamic client peer. IAS asks VPN to reconcile the complete
-client/gateway pair, waits for both certificate handshakes to reach
-`established`, validates the returned allocation binding, and persists only the
-dynamic client peer ID plus its public certificate fingerprint. IAS then builds
-the normal revisioned provisioning command and applies revision `1` to that
-client peer. Later disable, enable, and revoke operations continue through the
-existing `vpn_provisioning` contract. Revoking a dynamic client also quiesces its
-companion gateway in the same registry batch. The client remains permanently
-revoked, while the gateway is disabled and stopped without being marked revoked;
-a rejected client re-enable leaves both sides stopped.
+When `vpn_dynamic_pair_delivery` is enabled, the first wizard upsert cuts over
+to the reserved dynamic client peer through one revisioned provisioning RPC:
+
+```text
+IAS canonical revisioned upsert
+-> vpn_provisioning:apply_dynamic(DeviceId, Command)
+-> allocation ownership validation
+-> identity materialization and pair resolution
+-> client/gateway registry batch with the final IAS revision
+-> intended process-generation replacement and both established handshakes
+-> provisioning-head commit
+```
+
+IAS builds revision `1` before VPN starts either peer. The dynamic command omits
+`certificate_fingerprint` because the development client identity is generated
+and owned by VPN and its fingerprint is not known before bootstrap. VPN returns
+a safe pair projection after establishment. IAS validates the Device, allocation,
+allocator instance, peer IDs, slot, generation, both registry revisions, source,
+and operation; it then persists only the dynamic client peer ID and the returned
+public certificate fingerprint as Device operational metadata. The canonical
+command remains unchanged, so an exact retry is idempotent instead of becoming a
+new revision merely because the runtime fingerprint is now known.
+
+A duplicate returns `unchanged`. If the original successful reply was lost and
+IAS has not yet accepted the local runtime binding, IAS performs one recovery
+read through `vpn_dynamic_pair:status/1`, validates the same allocation and
+revision metadata, and restores the Device peer/fingerprint binding. Once the
+local binding is complete, ordinary duplicate delivery remains a single RPC.
+
+Stale or conflicting revisions are rejected before runtime mutation. Resolution,
+registry, process-start, or handshake failure rolls VPN back to the previous
+registry/runtime state and does not advance the provisioning head. Later
+disable, enable, and revoke operations continue through
+`vpn_provisioning:apply/1`. Revoking a dynamic client also quiesces its companion
+gateway in the same registry batch. The client remains permanently revoked,
+while the gateway is disabled and stopped without being marked revoked; a
+rejected client re-enable leaves both sides stopped.
 
 The legacy `alice -> client_a` and `bob -> client_b` mapping remains available
 only as a fallback for Devices without dynamic reservation metadata or when the
@@ -308,9 +334,11 @@ client/gateway sessions.
 If reservation is enabled and VPN cannot reserve or validate an allocation, CSR
 plan preparation fails closed. Provisioning also performs an idempotent
 reservation check so existing-certificate flows cannot bypass allocation. If
-pair reconciliation or binding validation fails, no revisioned IAS command is
-delivered. Setting either feature to `false` preserves the corresponding
-isolated/static fallback behavior.
+VPN rejects the command, the delivery remains retryable under the normal
+revision rules. If the returned pair projection fails IAS allocation, revision,
+or ownership validation, IAS fails closed, records the unexpected delivery, and
+does not accept the runtime binding. Setting either feature to `false` preserves
+the corresponding isolated/static fallback behavior.
 
 ## Verified static two-user milestone and dynamic cutover
 

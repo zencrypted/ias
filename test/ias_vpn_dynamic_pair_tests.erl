@@ -1,7 +1,7 @@
 -module(ias_vpn_dynamic_pair_tests).
 -include_lib("eunit/include/eunit.hrl").
 
-dynamic_pair_delivery_cutover_test() ->
+dynamic_pair_single_rpc_cutover_test() ->
     Previous = save_env(),
     try
         prepare_env(),
@@ -10,6 +10,7 @@ dynamic_pair_delivery_cutover_test() ->
         ClientPeerId = maps:get(client_peer_id, Context),
         GatewayPeerId = maps:get(gateway_peer_id, Context),
         DynamicFingerprint = <<"DYNAMIC-CERT-FINGERPRINT">>,
+        put(dynamic_rpc_calls, 0),
         application:set_env(
           ias,
           vpn_provisioning_rpc_fun,
@@ -24,12 +25,21 @@ dynamic_pair_delivery_cutover_test() ->
         Desired = maps:get(desired_state, Command),
         DynamicPair = maps:get(dynamic_pair, Result),
 
+        ?assertEqual(1, get(dynamic_rpc_calls)),
         ?assertEqual(ClientPeerId, maps:get(peer_id, Command)),
-        ?assertEqual(DynamicFingerprint,
-                     maps:get(certificate_fingerprint, Desired)),
+        ?assertEqual(1, maps:get(revision, Command)),
+        ?assertEqual(false, maps:is_key(certificate_fingerprint, Desired)),
         ?assertEqual(maps:get(allocation_id, Context),
                      maps:get(allocation_id, DynamicPair)),
         ?assertEqual(established, maps:get(state, DynamicPair)),
+        ?assertEqual(1,
+                     maps:get(revision,
+                              maps:get(registry,
+                                       maps:get(client, DynamicPair)))),
+        ?assertEqual(1,
+                     maps:get(revision,
+                              maps:get(registry,
+                                       maps:get(gateway, DynamicPair)))),
         ?assertEqual(applied,
                      maps:get(delivery_status, maps:get(delivery, Result))),
 
@@ -41,8 +51,12 @@ dynamic_pair_delivery_cutover_test() ->
                               StoredDevice)),
         ?assertEqual(established,
                      maps:get(vpn_dynamic_pair_state, StoredDevice)),
-        ?assertEqual(false, contains_secret(Result))
+        ?assertEqual(false, contains_secret(Result)),
+
+        {ok, RetryCommand} = ias_vpn_provisioning_command:build(DeviceId, upsert),
+        ?assertEqual(Command, RetryCommand)
     after
+        erase(dynamic_rpc_calls),
         cleanup_env(Previous)
     end.
 
@@ -57,13 +71,19 @@ dynamic_pair_status_mismatch_is_rejected_test() ->
         application:set_env(
           ias,
           vpn_provisioning_rpc_fun,
-          fun(_Node, vpn_dynamic_pair, ensure, [_RequestedDeviceId, _Desired], _Timeout) ->
-                  {ok, pair_status(<<"other-device">>,
-                                   maps:get(allocation_id, Context),
-                                   maps:get(allocator_instance_id, Context),
-                                   ClientPeerId,
-                                   GatewayPeerId,
-                                   <<"DYNAMIC-CERT-FINGERPRINT">>)};
+          fun(_Node,
+              vpn_provisioning,
+              apply_dynamic,
+              [_RequestedDeviceId, Command],
+              _Timeout) ->
+                  {ok, #{operation => upsert,
+                         pair => pair_status(<<"other-device">>,
+                                             maps:get(allocation_id, Context),
+                                             maps:get(allocator_instance_id, Context),
+                                             ClientPeerId,
+                                             GatewayPeerId,
+                                             <<"DYNAMIC-CERT-FINGERPRINT">>,
+                                             maps:get(revision, Command))}};
              (_Node, _Module, _Function, _Args, _Timeout) ->
                   {error, unexpected_rpc_call}
           end),
@@ -75,8 +95,74 @@ dynamic_pair_status_mismatch_is_rejected_test() ->
         ?assertEqual(undefined,
                      maps:get(vpn_runtime_certificate_fingerprint,
                               StoredDevice,
-                              undefined))
+                              undefined)),
+        [Attempt] = ias_vpn_provisioning_delivery:history(DeviceId),
+        ?assertEqual(unexpected_result,
+                     maps:get(delivery_status, Attempt))
     after
+        cleanup_env(Previous)
+    end.
+
+dynamic_pair_unchanged_recovers_missing_binding_test() ->
+    Previous = save_env(),
+    try
+        prepare_env(),
+        Context = prepare_authorized_device(),
+        DeviceId = maps:get(device_id, Context),
+        ClientPeerId = maps:get(client_peer_id, Context),
+        GatewayPeerId = maps:get(gateway_peer_id, Context),
+        Fingerprint = <<"RECOVERED-DYNAMIC-FINGERPRINT">>,
+        put(dynamic_rpc_calls, []),
+        application:set_env(
+          ias,
+          vpn_provisioning_rpc_fun,
+          fun(_Node,
+              vpn_provisioning,
+              apply_dynamic,
+              [RequestedDeviceId, Command],
+              Timeout) ->
+                  put(dynamic_rpc_calls,
+                      [{apply_dynamic, RequestedDeviceId, Timeout}
+                       | get(dynamic_rpc_calls)]),
+                  ?assertEqual(DeviceId, RequestedDeviceId),
+                  ?assertEqual(1, maps:get(revision, Command)),
+                  {ok, unchanged};
+             (_Node,
+              vpn_dynamic_pair,
+              status,
+              [RequestedDeviceId],
+              Timeout) ->
+                  put(dynamic_rpc_calls,
+                      [{status, RequestedDeviceId, Timeout}
+                       | get(dynamic_rpc_calls)]),
+                  {ok, pair_status(DeviceId,
+                                   maps:get(allocation_id, Context),
+                                   maps:get(allocator_instance_id, Context),
+                                   ClientPeerId,
+                                   GatewayPeerId,
+                                   Fingerprint,
+                                   1)};
+             (_Node, _Module, _Function, _Args, _Timeout) ->
+                  {error, unexpected_rpc_call}
+          end),
+
+        {ok, Result} = ias_vpn_provisioning_delivery:build_and_deliver(
+                         DeviceId, upsert),
+        ?assertEqual(unchanged,
+                     maps:get(delivery_status, maps:get(delivery, Result))),
+        ?assertEqual(established,
+                     maps:get(state, maps:get(dynamic_pair, Result))),
+        ?assertEqual([{status, DeviceId, 4321},
+                      {apply_dynamic, DeviceId, 4321}],
+                     get(dynamic_rpc_calls)),
+        {ok, StoredDevice} = ias_demo_store:get(DeviceId),
+        ?assertEqual(Fingerprint,
+                     maps:get(vpn_runtime_certificate_fingerprint,
+                              StoredDevice)),
+        ?assertEqual(established,
+                     maps:get(vpn_dynamic_pair_state, StoredDevice))
+    after
+        erase(dynamic_rpc_calls),
         cleanup_env(Previous)
     end.
 
@@ -139,34 +225,29 @@ prepare_authorized_device() ->
       gateway_peer_id => GatewayPeerId}.
 
 rpc_fun(DeviceId, ClientPeerId, GatewayPeerId, Fingerprint) ->
-    fun(_Node, vpn_dynamic_pair, ensure, [RequestedDeviceId, Desired], _Timeout) ->
+    fun(_Node,
+        vpn_provisioning,
+        apply_dynamic,
+        [RequestedDeviceId, Command],
+        Timeout) ->
+            put(dynamic_rpc_calls, get(dynamic_rpc_calls) + 1),
+            Desired = maps:get(desired_state, Command),
+            Revision = maps:get(revision, Command),
+            ?assertEqual(4321, Timeout),
             ?assertEqual(DeviceId, RequestedDeviceId),
             ?assertEqual(DeviceId, maps:get(device_id, Desired)),
-            ?assertEqual(false, maps:is_key(certificate_fingerprint, Desired)),
-            {ok, pair_status(DeviceId,
-                             <<"dynamic-vpn-3-instance123456-9">>,
-                             <<"instance123456">>,
-                             ClientPeerId,
-                             GatewayPeerId,
-                             Fingerprint)};
-       (_Node, vpn_provisioning, apply, [Command], _Timeout) ->
-            Desired = maps:get(desired_state, Command),
             ?assertEqual(ClientPeerId, maps:get(peer_id, Command)),
-            ?assertEqual(Fingerprint,
-                         maps:get(certificate_fingerprint, Desired)),
-            {ok, #{operation => maps:get(operation, Command),
-                   peer => #{id => ClientPeerId,
-                             device_id => DeviceId,
-                             enabled => maps:get(enabled, Desired),
-                             authorized => maps:get(authorized, Desired),
-                             authorization_mode => maps:get(authorization_mode, Desired),
-                             authorization_reason => maps:get(authorization_reason, Desired),
-                             profile_id => maps:get(profile_id, Desired),
-                             certificate_fingerprint => Fingerprint,
-                             revision => maps:get(revision, Command),
-                             revoked => maps:get(revoked, Desired, false),
-                             provisioning_source => ias,
-                             last_provisioning_operation => maps:get(operation, Command)}}};
+            ?assertEqual(upsert, maps:get(operation, Command)),
+            ?assertEqual(ias, maps:get(source, Command)),
+            ?assertEqual(false, maps:is_key(certificate_fingerprint, Desired)),
+            {ok, #{operation => upsert,
+                   pair => pair_status(DeviceId,
+                                       <<"dynamic-vpn-3-instance123456-9">>,
+                                       <<"instance123456">>,
+                                       ClientPeerId,
+                                       GatewayPeerId,
+                                       Fingerprint,
+                                       Revision)}};
        (_Node, _Module, _Function, _Args, _Timeout) ->
             {error, unexpected_rpc_call}
     end.
@@ -176,13 +257,15 @@ pair_status(DeviceId,
             AllocatorInstanceId,
             ClientPeerId,
             GatewayPeerId,
-            Fingerprint) ->
+            Fingerprint,
+            Revision) ->
     #{allocation_id => AllocationId,
       allocator_instance_id => AllocatorInstanceId,
       device_id => DeviceId,
       client_peer_id => ClientPeerId,
       gateway_peer_id => GatewayPeerId,
       state => reserved,
+      outcome => reconciled,
       client => #{peer_id => ClientPeerId,
                   running => true,
                   handshake_status => established,
@@ -200,9 +283,11 @@ pair_status(DeviceId,
                                 authorization_mode => policy,
                                 authorization_reason => profile_allows_vpn,
                                 certificate_fingerprint => Fingerprint,
-                                revision => 0,
+                                revision => Revision,
                                 revoked => false,
-                                provisioning_source => dynamic_pair}},
+                                provisioning_source => ias,
+                                last_provisioning_operation => upsert,
+                                updated_at => 1782302000}},
       gateway => #{peer_id => GatewayPeerId,
                    running => true,
                    handshake_status => established,
@@ -218,9 +303,11 @@ pair_status(DeviceId,
                                  authorized => true,
                                  authorization_mode => development_bypass,
                                  authorization_reason => dynamic_development_identity,
-                                 revision => 0,
+                                 revision => Revision,
                                  revoked => false,
-                                 provisioning_source => dynamic_pair}}}.
+                                 provisioning_source => ias,
+                                 last_provisioning_operation => upsert,
+                                 updated_at => 1782302000}}}.
 
 prepare_env() ->
     ias_demo_store:clear(),

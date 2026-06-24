@@ -719,31 +719,41 @@ contract and must never be inferred from a missing profile.
 
 ---
 
-## TD-018: Dynamic Pair Bootstrap and Revision Apply Are Two RPC Steps
+## Completed — TD-018 Single-RPC Dynamic Pair Bootstrap
 
-**Status:** Open
+**Status:** Completed
 
 **Area:** IAS to VPN Dynamic Provisioning
 
-### Problem
+The first allocator-backed dynamic upsert now uses one serialized VPN boundary:
 
-The first dynamic upsert currently reconciles and establishes the VPN-owned
-client/gateway pair, then applies the canonical IAS revision to the client peer
-through the existing `vpn_provisioning` contract. The split preserves the
-verified lifecycle and revision guards, but the two distributed calls are not a
-single atomic transaction. A transport failure between them can leave a
-revision-zero dynamic pair running while IAS records the upsert as failed.
+```erlang
+vpn_provisioning:apply_dynamic(DeviceId, Command).
+```
 
-### Desired Direction
+IAS builds the positive-revision canonical command before any pair is started.
+VPN validates the Device/allocation/client-peer binding, materializes the
+development identity, writes both registry entries with the final IAS revision,
+waits for both intended runtime generations and certificate-control handshakes,
+and commits the provisioning head only after success. Resolution, registry,
+startup, or handshake failure rolls the pair back and leaves the same revision
+safe to retry.
 
-Extend the VPN dynamic-pair contract to accept and atomically commit the
-canonical provisioning revision, operation, and public IAS policy projection as
-part of pair reconciliation. Preserve idempotency and rollback for both registry
-entries and peer processes.
+The runtime-generated client certificate fingerprint is not guessed or copied
+from the IAS enrollment certificate into the first command. VPN returns it in
+the safe pair projection; IAS validates the complete allocation/revision binding
+and stores the fingerprint only as Device operational metadata. This keeps the
+canonical command stable across retries while VPN remains the owner of dynamic
+identity material.
 
-### Priority
+If an applied reply is lost, retry returns `unchanged`; IAS recovers a missing
+local Device binding with one validated `vpn_dynamic_pair:status/1` read. This
+keeps the accepted revision idempotent without requiring the normal bootstrap to
+return to a two-step mutating flow.
 
-High before production deployment
+The former `vpn_dynamic_pair:ensure/2` followed by
+`vpn_provisioning:apply/1` path remains compatibility-only for older IAS
+releases and is no longer used by current IAS dynamic upsert delivery.
 
 ---
 

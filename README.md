@@ -175,10 +175,12 @@ without invoking a second `rebar3` build, and verifies:
 - the IAS delivery history does not contain private key, OVPN, session-key, or
   ECDH material;
 - a wizard-selected arbitrary Device receives an allocator-backed dynamic
-  client/gateway pair, both handshakes reach `established`, the runtime-generated
-  client certificate fingerprint is applied to the revisioned command, the
-  revoke barrier remains effective, and the revoked pair can be decommissioned
-  before the same Device is provisioned again with a fresh allocation.
+  client/gateway pair through one `apply_dynamic/2` RPC, both registry entries
+  carry the final IAS revision before establishment, the runtime-generated
+  client certificate fingerprint is validated and stored as Device operational
+  metadata without changing the canonical command, the revoke barrier remains
+  effective, and the revoked pair can be decommissioned before the same Device
+  is provisioned again with a fresh allocation.
 
 The debug configuration also retains two simultaneous trusted static runtime
 slots for compatibility and lower-level regression tests:
