@@ -106,6 +106,33 @@ provisioning_step_renders_create_and_completed_states_test() ->
     ?assertMatch({_, _}, binary:match(HtmlAfter, <<"Create Another Transaction">>)),
     ?assertMatch({_, _}, binary:match(HtmlAfter, <<">Completed</span>">>)).
 
+dynamic_allocation_is_rendered_in_completed_wizard_test() ->
+    Draft = setup_ready_wizard(),
+    DeviceId = maps:get(device_id, Draft),
+    {ok, Device} = ias_demo_store:get(DeviceId),
+    DynamicDevice = Device#{runtime_peer_id => <<"client_dyn_wizard_ui">>,
+                            vpn_peer => <<"client_dyn_wizard_ui">>,
+                            vpn_allocation_id => <<"dynamic-vpn-wizard-ui">>,
+                            vpn_allocator_instance_id => <<"allocator-wizard-ui">>,
+                            vpn_client_peer_id => <<"client_dyn_wizard_ui">>,
+                            vpn_gateway_peer_id => <<"gateway_dyn_wizard_ui">>,
+                            vpn_allocation_slot => 4,
+                            vpn_allocation_generation => 12,
+                            vpn_allocation_state => reserved,
+                            vpn_allocation_persistence => volatile,
+                            vpn_dynamic_pair_state => established,
+                            vpn_dynamic_pair_reconciled_at => 1782290100},
+    _ = ias_demo_store:put_runtime_object(DynamicDevice),
+    {ok, Completed, _Transaction} =
+        ias_provisioning_wizard_store:create_provisioning(maps:get(id, Draft)),
+    Html = render(ias_provisioning_wizard:content_for({draft, Completed})),
+    ?assertMatch({_, _}, binary:match(Html, <<"Dynamic VPN Allocation">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"dynamic-vpn-wizard-ui">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"client_dyn_wizard_ui">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"gateway_dyn_wizard_ui">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"allocator-wizard-ui">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<">dynamic</td>">>)).
+
 vpn_lifecycle_actions_follow_runtime_state_test() ->
     Draft = setup_ready_wizard(),
     {ok, Completed, _Transaction} =

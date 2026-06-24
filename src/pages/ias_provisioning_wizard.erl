@@ -388,8 +388,6 @@ step_content(_Step, _Draft) ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px dashed rgba(15,23,42,0.2);border-radius:6px;background:#f8fafc;">>,
            body = ias_html:text("Placeholder only. Selection and validation for this step will be implemented in a later stage.")}.
 
-
-
 draft_status(Draft) ->
     case maps:get(completed, Draft, false) of
         true -> completed;
@@ -494,16 +492,34 @@ wizard_vpn_provisioning_result_panel(WizardId, {ok, Result}) ->
     Command = maps:get(command, Result, #{}),
     [wizard_notice("VPN Provisioning Delivery",
                    "The IAS provisioning command was delivered to the configured VPN runtime."),
-     key_value_table([
-         {"Peer", maps:get(peer_id, Command, maps:get(device_id, Result, undefined))},
-         {"Operation", maps:get(operation, Delivery, upsert)},
-         {"Revision", maps:get(revision, Delivery, maps:get(revision, Command, undefined))},
-         {"Delivery", maps:get(delivery_status, Delivery, undefined)}
-     ])
+     key_value_table(wizard_vpn_delivery_rows(Result, Command, Delivery))
      | wizard_vpn_lifecycle_status_body(WizardId, wizard_vpn_lifecycle_status(WizardId))];
 wizard_vpn_provisioning_result_panel(WizardId, {error, Reason}) ->
     [wizard_error_panel(Reason)
      | wizard_vpn_lifecycle_status_body(WizardId, wizard_vpn_lifecycle_status(WizardId))].
+
+wizard_vpn_delivery_rows(Result, Command, Delivery) ->
+    Base = [{"Peer", maps:get(peer_id,
+                               Command,
+                               maps:get(device_id, Result, undefined))},
+            {"Operation", maps:get(operation, Delivery, upsert)},
+            {"Revision", maps:get(revision,
+                                    Delivery,
+                                    maps:get(revision, Command, undefined))},
+            {"Delivery", maps:get(delivery_status, Delivery, undefined)}],
+    case maps:get(allocation_id, Result, undefined) of
+        undefined -> Base;
+        <<>> -> Base;
+        AllocationId ->
+            Base ++ [{"Binding", dynamic},
+                     {"Allocation ID", AllocationId},
+                     {"Gateway Peer", maps:get(gateway_peer_id,
+                                                Result,
+                                                undefined)},
+                     {"Allocator Instance", maps:get(allocator_instance_id,
+                                                      Result,
+                                                      undefined)}]
+    end.
 
 wizard_vpn_lifecycle_action(WizardId, Operation) ->
     Result = case wizard_device_id(WizardId) of
@@ -567,7 +583,9 @@ wizard_vpn_lifecycle_status_body(_WizardId, {error, Reason}) ->
 wizard_vpn_lifecycle_status_body(WizardId, Status) ->
     Provisioning = maps:get(provisioning, Status, #{}),
     Runtime = maps:get(runtime, Status, disabled),
+    Allocation = maps:get(allocation, Status, undefined),
     [key_value_table([
+         {"Binding", maps:get(binding_mode, Status, static)},
          {"Runtime Peer", maps:get(runtime_peer_id, Status, undefined)},
          {"Last Operation", maps:get(last_operation, Provisioning, undefined)},
          {"Revision", maps:get(last_revision, Provisioning,
@@ -578,8 +596,36 @@ wizard_vpn_lifecycle_status_body(WizardId, Status) ->
          {"Authorized", wizard_runtime_value(authorized, Runtime)},
          {"Revoked", wizard_runtime_value(revoked, Runtime)}
      ]),
+     wizard_vpn_allocation_panel(Allocation),
      #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
             body = wizard_vpn_lifecycle_actions(WizardId, Runtime)}].
+
+wizard_vpn_allocation_panel(undefined) ->
+    #panel{body = []};
+wizard_vpn_allocation_panel(Allocation) ->
+    #panel{style = <<"margin-top:12px;">>,
+           body = [
+               #p{style = <<"font-weight:600;margin-bottom:6px;">>,
+                  body = ias_html:text("Dynamic VPN Allocation")},
+               key_value_table([
+                   {"Allocation ID", maps:get(allocation_id, Allocation, undefined)},
+                   {"Allocator Instance", maps:get(allocator_instance_id,
+                                                    Allocation,
+                                                    undefined)},
+                   {"Client Peer", maps:get(client_peer_id, Allocation, undefined)},
+                   {"Gateway Peer", maps:get(gateway_peer_id, Allocation, undefined)},
+                   {"Slot", maps:get(slot, Allocation, undefined)},
+                   {"Generation", maps:get(generation, Allocation, undefined)},
+                   {"Reservation", maps:get(state, Allocation, undefined)},
+                   {"Persistence", maps:get(persistence, Allocation, undefined)},
+                   {"Pair Reconciliation", maps:get(pair_state,
+                                                     Allocation,
+                                                     undefined)},
+                   {"Reconciled At", maps:get(reconciled_at,
+                                               Allocation,
+                                               undefined)}
+               ])
+           ]}.
 
 wizard_vpn_lifecycle_actions(_WizardId, {ok, #{revoked := true}}) ->
     [#span{class = [button, more],
@@ -831,7 +877,6 @@ relationship_remediation_action(Draft, _Review) ->
           body = ias_html:text("Review Relationships"),
           postback = {wizard_review_relationships, maps:get(id, Draft)}}.
 
-
 device_remediation_action(Readiness, DeviceId) ->
     RelationshipStatus = readiness_status(relationships, Readiness),
     PolicyStatus = readiness_status(security_policy, Readiness),
@@ -895,7 +940,6 @@ readiness_status(Key, Readiness) ->
 
 readiness_statuses_positive(Checks) ->
     lists:all(fun({Status, Allowed}) -> lists:member(Status, Allowed) end, Checks).
-
 
 client_verification_action(Draft) ->
     WizardId = maps:get(id, Draft, undefined),
@@ -1879,7 +1923,6 @@ service_link(undefined) -> undefined;
 service_link(ServiceId) ->
     #link{url = ias_html:join([<<"/app/demo.htm?id=">>, ias_html:text(ServiceId)]),
           body = ias_html:text(ServiceId)}.
-
 
 security_profile_step(Draft) ->
     #panel{body = [

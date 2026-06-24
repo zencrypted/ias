@@ -11,8 +11,11 @@ status(DeviceId) ->
         {ok, Device} ->
             RuntimePeerId = runtime_peer_id(Device),
             DeliveryStatus = ias_vpn_provisioning_delivery:status(DeviceId),
+            Allocation = allocation_status(Device),
             #{device_id => maps:get(id, Device),
               runtime_peer_id => RuntimePeerId,
+              binding_mode => binding_mode(Allocation),
+              allocation => Allocation,
               provisioning => DeliveryStatus,
               runtime => runtime_status(RuntimePeerId)};
         not_found ->
@@ -112,6 +115,35 @@ synchronize_runtime_revision(DeviceId, RuntimePeerId) ->
         _ ->
             ok
     end.
+
+allocation_status(Device) ->
+    Allocation = #{allocation_id => maps:get(vpn_allocation_id, Device, undefined),
+                   allocator_instance_id => maps:get(vpn_allocator_instance_id,
+                                                     Device,
+                                                     undefined),
+                   client_peer_id => maps:get(vpn_client_peer_id, Device, undefined),
+                   gateway_peer_id => maps:get(vpn_gateway_peer_id, Device, undefined),
+                   slot => maps:get(vpn_allocation_slot, Device, undefined),
+                   generation => maps:get(vpn_allocation_generation, Device, undefined),
+                   state => maps:get(vpn_allocation_state, Device, undefined),
+                   persistence => maps:get(vpn_allocation_persistence,
+                                           Device,
+                                           undefined),
+                   created_at => maps:get(vpn_allocation_created_at,
+                                          Device,
+                                          undefined),
+                   pair_state => maps:get(vpn_dynamic_pair_state, Device, undefined),
+                   reconciled_at => maps:get(vpn_dynamic_pair_reconciled_at,
+                                             Device,
+                                             undefined)},
+    case maps:get(allocation_id, Allocation, undefined) of
+        undefined -> undefined;
+        <<>> -> undefined;
+        _AllocationId -> Allocation
+    end.
+
+binding_mode(undefined) -> static;
+binding_mode(_Allocation) -> dynamic.
 
 runtime_peer_id(Device) ->
     first_present([maps:get(runtime_peer_id, Device, undefined),

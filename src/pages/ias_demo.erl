@@ -385,6 +385,7 @@ device_vpn_access_status_body(Device, Status, VpnSummary) ->
     RuntimePeerId = maps:get(runtime_peer_id, Status, undefined),
     Runtime = maps:get(runtime, Status, not_bound),
     Provisioning = maps:get(provisioning, Status, #{}),
+    Allocation = maps:get(allocation, Status, undefined),
     case device_vpn_access_provisioned(RuntimePeerId, Runtime) of
         false ->
             [#h3{body = ias_html:text("VPN Access")},
@@ -392,6 +393,7 @@ device_vpn_access_status_body(Device, Status, VpnSummary) ->
              #p{style = <<"font-size:12px;color:#64748b;">>,
                 body = ias_html:text(
                     "Complete the provisioning wizard before lifecycle controls become available.")},
+             device_vpn_allocation_panel(Allocation),
              #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
                     body = [
                         #link{url = <<"/app/provisioning-wizard.htm">>,
@@ -407,6 +409,7 @@ device_vpn_access_status_body(Device, Status, VpnSummary) ->
              key_value_table([
                  {"User", user_ref(maps:get(owner, Device, undefined))},
                  {"Device", maps:get(id, Device, undefined)},
+                 {"Binding", maps:get(binding_mode, Status, static)},
                  {"Runtime Peer", RuntimePeerId},
                  {"Profile", device_vpn_runtime_value(profile_id, Runtime,
                                                        maps:get(profile_id, Device, undefined))},
@@ -420,6 +423,7 @@ device_vpn_access_status_body(Device, Status, VpnSummary) ->
                  {"Authorized", device_vpn_runtime_value(authorized, Runtime, undefined)},
                  {"Revoked", device_vpn_runtime_value(revoked, Runtime, undefined)}
              ]),
+             device_vpn_allocation_panel(Allocation),
              #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
                     body = device_vpn_access_actions(DeviceId, Runtime)},
              device_vpn_artifact_panel(DeviceId, Runtime)]
@@ -429,6 +433,33 @@ device_vpn_access_provisioned(undefined, _Runtime) -> false;
 device_vpn_access_provisioned(<<>>, _Runtime) -> false;
 device_vpn_access_provisioned(_RuntimePeerId, not_bound) -> false;
 device_vpn_access_provisioned(_RuntimePeerId, _Runtime) -> true.
+
+device_vpn_allocation_panel(undefined) ->
+    #panel{body = []};
+device_vpn_allocation_panel(Allocation) ->
+    #panel{style = <<"margin-top:12px;">>,
+           body = [
+               #p{style = <<"font-weight:600;margin-bottom:6px;">>,
+                  body = ias_html:text("Dynamic VPN Allocation")},
+               key_value_table([
+                   {"Allocation ID", maps:get(allocation_id, Allocation, undefined)},
+                   {"Allocator Instance", maps:get(allocator_instance_id,
+                                                    Allocation,
+                                                    undefined)},
+                   {"Client Peer", maps:get(client_peer_id, Allocation, undefined)},
+                   {"Gateway Peer", maps:get(gateway_peer_id, Allocation, undefined)},
+                   {"Slot", maps:get(slot, Allocation, undefined)},
+                   {"Generation", maps:get(generation, Allocation, undefined)},
+                   {"Reservation", maps:get(state, Allocation, undefined)},
+                   {"Persistence", maps:get(persistence, Allocation, undefined)},
+                   {"Pair Reconciliation", maps:get(pair_state,
+                                                     Allocation,
+                                                     undefined)},
+                   {"Reconciled At", maps:get(reconciled_at,
+                                               Allocation,
+                                               undefined)}
+               ])
+           ]}.
 
 device_vpn_access_actions(_DeviceId, {ok, #{revoked := true}}) ->
     [#span{class = [button, more],

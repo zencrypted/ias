@@ -14,7 +14,11 @@ device_vpn_access_controls_follow_runtime_state_test_() ->
              EnabledHtml = render(Device, Summary),
              ?assertMatch({_, _}, binary:match(EnabledHtml, <<"id=\"device_vpn_access\"">>)),
              ?assertMatch({_, _}, binary:match(EnabledHtml, <<"VPN Access">>)),
-             ?assertMatch({_, _}, binary:match(EnabledHtml, <<"client_b">>)),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, client_peer_id())),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Dynamic VPN Allocation">>)),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, allocation_id())),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, gateway_peer_id())),
+             ?assertMatch({_, _}, binary:match(EnabledHtml, <<">dynamic</td>">>)),
              ?assertMatch({_, _}, binary:match(EnabledHtml, <<"established">>)),
              ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Disable VPN Access">>)),
              ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Revoke VPN Access">>)),
@@ -35,6 +39,28 @@ device_vpn_access_controls_follow_runtime_state_test_() ->
          end
      end}.
 
+reserved_device_shows_dynamic_allocation_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             Device = ias_demo_store:add_device(
+                        maps:merge(
+                          #{id => <<"reserved-device">>,
+                            owner => alice,
+                            source => manual_device},
+                          allocation_fields())),
+             Html = render(Device, {error, unavailable}),
+             ?assertMatch({_, _}, binary:match(Html, <<"VPN access not provisioned">>)),
+             ?assertMatch({_, _}, binary:match(Html, <<"Dynamic VPN Allocation">>)),
+             ?assertMatch({_, _}, binary:match(Html, allocation_id())),
+             ?assertMatch({_, _}, binary:match(Html, client_peer_id())),
+             ?assertMatch({_, _}, binary:match(Html, gateway_peer_id())),
+             ?assertMatch({_, _}, binary:match(Html, <<">reserved</td>">>))
+         end
+     end}.
+
 unprovisioned_device_shows_guidance_test_() ->
     {setup,
      fun setup/0,
@@ -47,6 +73,7 @@ unprovisioned_device_shows_guidance_test_() ->
              Html = render(Device, {error, unavailable}),
              ?assertMatch({_, _}, binary:match(Html, <<"VPN access not provisioned">>)),
              ?assertMatch({_, _}, binary:match(Html, <<"Open Provisioning Wizard">>)),
+             ?assertEqual(nomatch, binary:match(Html, <<"Dynamic VPN Allocation">>)),
              ?assertEqual(nomatch, binary:match(Html, <<"Disable VPN Access">>)),
              ?assertEqual(nomatch, binary:match(Html, <<"Revoke VPN Access">>))
          end
@@ -58,12 +85,16 @@ setup() ->
     ias_demo_store:clear(),
     ias_vpn_provisioning_state:reset(),
     ias_vpn_provisioning_delivery:reset(),
-    Device = ias_demo_store:add_device(#{id => <<"bob-device-ui">>,
-                                         owner => bob,
-                                         profile_id => default_user,
-                                         runtime_peer_id => client_b,
-                                         vpn_peer => client_b,
-                                         source => manual_device}),
+    Device = ias_demo_store:add_device(
+               maps:merge(
+                 #{id => <<"bob-device-ui">>,
+                   owner => bob,
+                   profile_id => default_user,
+                   runtime_peer_id => client_peer_id(),
+                   vpn_peer => client_peer_id(),
+                   source => manual_device},
+                 (allocation_fields())#{vpn_dynamic_pair_state => established,
+                                      vpn_dynamic_pair_reconciled_at => 1782290000})),
     application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
     set_runtime_peer(enabled_peer()),
     #{device => Device,
@@ -78,15 +109,19 @@ cleanup(Context) ->
     ias_vpn_provisioning_delivery:reset().
 
 set_runtime_peer(Peer) ->
+    ClientPeerId = client_peer_id(),
     application:set_env(
       ias,
       vpn_provisioning_rpc_fun,
-      fun(_Node, vpn_peer_registry, get, [client_b], _Timeout) -> {ok, Peer};
-         (_Node, _Module, _Function, _Args, _Timeout) -> {error, unsupported_call}
+      fun(_Node, vpn_peer_registry, get, [PeerId], _Timeout)
+            when PeerId =:= ClientPeerId ->
+              {ok, Peer};
+         (_Node, _Module, _Function, _Args, _Timeout) ->
+              {error, unsupported_call}
       end).
 
 enabled_peer() ->
-    #{id => client_b,
+    #{id => client_peer_id(),
       device_id => <<"bob-device-ui">>,
       profile_id => default_user,
       enabled => true,
@@ -108,9 +143,24 @@ revoked_peer() ->
                       last_provisioning_operation => revoke}.
 
 vpn_summary() ->
-    {ok, #{<<"peers">> => [#{<<"id">> => <<"client_b">>,
+    {ok, #{<<"peers">> => [#{<<"id">> => client_peer_id(),
                                <<"running">> => true,
                                <<"handshake_status">> => <<"established">>}]}}.
+
+allocation_fields() ->
+    #{vpn_allocation_id => allocation_id(),
+      vpn_allocator_instance_id => <<"allocator-ui-test">>,
+      vpn_client_peer_id => client_peer_id(),
+      vpn_gateway_peer_id => gateway_peer_id(),
+      vpn_allocation_slot => 3,
+      vpn_allocation_generation => 9,
+      vpn_allocation_state => reserved,
+      vpn_allocation_persistence => volatile,
+      vpn_allocation_created_at => 1782289900}.
+
+allocation_id() -> <<"dynamic-vpn-3_allocator-ui-test_9">>.
+client_peer_id() -> <<"client_dyn_3_allocator-ui-test_9">>.
+gateway_peer_id() -> <<"gateway_dyn_3_allocator-ui-test_9">>.
 
 render(Device, Summary) ->
     iolist_to_binary(nitro:render(ias_demo:vpn_access_preview(Device, Summary))).

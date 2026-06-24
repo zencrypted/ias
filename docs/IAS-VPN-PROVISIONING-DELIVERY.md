@@ -264,6 +264,15 @@ dynamic-pair feature is disabled. The CSR common name is still unchanged at
 this stage; VPN development identity generation owns the dynamic runtime
 certificate used by the pair.
 
+The Provisioning Wizard and Device detail page now expose the safe dynamic
+binding as operational metadata. Administrators can see the allocation ID,
+allocator instance, client and gateway peer IDs, slot, generation, reservation
+state, persistence mode, and pair-reconciliation state. The Device page also
+shows a reservation before the first runtime upsert, while lifecycle controls
+remain unavailable until the client peer has actually been provisioned. No
+transport addresses, interface names, identity paths, PEM bodies, or private
+material are rendered.
+
 If reservation is enabled and VPN cannot reserve or validate an allocation, CSR
 plan preparation fails closed. Provisioning also performs an idempotent
 reservation check so existing-certificate flows cannot bypass allocation. If
