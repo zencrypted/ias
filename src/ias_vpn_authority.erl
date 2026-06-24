@@ -118,14 +118,14 @@ ensure_minimum_revision(_DeviceId, _Revision) ->
     {error, invalid_revision}.
 
 current_revision(DeviceId) ->
-    case get(DeviceId) of
+    case ?MODULE:get(DeviceId) of
         {ok, State} -> maps:get(revision, State, 0);
         not_found -> 0;
         {error, Reason} -> exit({vpn_authority_read_failed, Reason})
     end.
 
 last_command(DeviceId) ->
-    case get(DeviceId) of
+    case ?MODULE:get(DeviceId) of
         {ok, #{canonical_command := Command}} when is_map(Command), map_size(Command) > 0 ->
             {ok, Command};
         {ok, _} -> not_found;
@@ -174,7 +174,7 @@ sync_device(_Object) ->
     ok.
 
 overlay_device(#{kind := device, id := DeviceId} = Device) ->
-    case get(DeviceId) of
+    case ?MODULE:get(DeviceId) of
         {ok, State} -> overlay_state(Device, State);
         not_found -> Device;
         {error, Reason} -> exit({vpn_authority_overlay_failed, Reason})
