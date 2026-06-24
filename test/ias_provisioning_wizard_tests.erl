@@ -140,7 +140,9 @@ cancel_does_not_delete_created_device_test() ->
 device_next_is_disabled_until_selection_test() ->
     ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
-    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft} = ias_provisioning_wizard_store:select_existing_user(
+        maps:get(id, Draft0), alice),
     Html = render(ias_provisioning_wizard:content_for({draft, Draft})),
     ?assertMatch({_, _}, binary:match(Html, <<">Next</span>">>)).
 
@@ -148,7 +150,9 @@ device_step_renders_selection_and_creation_test() ->
     ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
     _Device = demo_device(<<"wizard_render_device">>),
-    {ok, Draft} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    {ok, Draft} = ias_provisioning_wizard_store:select_existing_user(
+        maps:get(id, Draft0), alice),
     Html = render(ias_provisioning_wizard:content_for({draft, Draft})),
     ?assertMatch({_, _}, binary:match(Html, <<"Use Existing Device">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Create New Demo Device">>)),

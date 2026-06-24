@@ -886,7 +886,7 @@ validate_restored_draft(Draft) ->
           maps:get(current_step, Safe, undefined)} of
         {Id, device_bound, Step} ->
             case usable_restore_id(Id) andalso lists:member(Step, steps())
-                 andalso valid_optional_reference(maps:get(user_id, Safe, undefined))
+                 andalso valid_optional_user_reference(maps:get(user_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(device_id, Safe, undefined))
                  andalso valid_optional_profile_reference(maps:get(security_profile_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(vpn_service_id, Safe, undefined))
@@ -912,6 +912,10 @@ usable_restore_id(_) -> false.
 
 valid_optional_reference(undefined) -> true;
 valid_optional_reference(Id) -> usable_restore_id(Id).
+
+valid_optional_user_reference(undefined) -> true;
+valid_optional_user_reference(Id) when is_atom(Id) -> true;
+valid_optional_user_reference(Id) -> usable_restore_id(Id).
 
 valid_optional_profile_reference(undefined) -> true;
 valid_optional_profile_reference(Id) when is_atom(Id) -> true;
