@@ -127,10 +127,18 @@ enable_advances_revision(Context) ->
     maps:get(delivery_status, Result) =:= applied.
 
 revoke_advances_revision(Context) ->
+    ExpectedRevision = maps:get(initial_runtime_revision, Context) + 3,
     {ok, Result} = ias_vpn_access_lifecycle:revoke(maps:get(device_id, Context)),
-    maps:get(operation, Result) =:= revoke andalso
-    maps:get(revision, Result) =:= maps:get(initial_runtime_revision, Context) + 3 andalso
-    maps:get(delivery_status, Result) =:= applied.
+    {ok, RuntimePeer} = maps:get(runtime, Result),
+    revoke = maps:get(operation, Result),
+    ExpectedRevision = maps:get(revision, Result),
+    applied = maps:get(delivery_status, Result),
+    false = maps:get(enabled, RuntimePeer),
+    false = maps:get(authorized, RuntimePeer),
+    true = maps:get(revoked, RuntimePeer),
+    certificate_revoked = maps:get(authorization_reason, RuntimePeer),
+    revoke = maps:get(last_provisioning_operation, RuntimePeer),
+    true.
 
 status_reports_latest_delivery(Context) ->
     Status = ias_vpn_access_lifecycle:status(maps:get(device_id, Context)),

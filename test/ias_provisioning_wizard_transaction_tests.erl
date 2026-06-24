@@ -113,14 +113,24 @@ vpn_lifecycle_actions_follow_runtime_state_test() ->
     with_vpn_runtime_peer(true, true, false, fun() ->
         EnabledHtml = render(ias_provisioning_wizard:content_for({draft, Completed})),
         ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Disable VPN Access">>)),
+        ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Revoke VPN Access">>)),
+        ?assertMatch({_, _}, binary:match(EnabledHtml, <<"Revoke VPN access permanently?">>)),
         ?assertEqual(nomatch, binary:match(EnabledHtml, <<"Enable VPN Access">>)),
         ?assertMatch({_, _}, binary:match(EnabledHtml, <<">enabled</td>">>))
     end),
     with_vpn_runtime_peer(false, false, false, fun() ->
         DisabledHtml = render(ias_provisioning_wizard:content_for({draft, Completed})),
         ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Enable VPN Access">>)),
+        ?assertMatch({_, _}, binary:match(DisabledHtml, <<"Revoke VPN Access">>)),
         ?assertEqual(nomatch, binary:match(DisabledHtml, <<"Disable VPN Access">>)),
         ?assertMatch({_, _}, binary:match(DisabledHtml, <<">disabled</td>">>))
+    end),
+    with_vpn_runtime_peer(false, false, true, fun() ->
+        RevokedHtml = render(ias_provisioning_wizard:content_for({draft, Completed})),
+        ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Enable VPN Access">>)),
+        ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Disable VPN Access">>)),
+        ?assertEqual(nomatch, binary:match(RevokedHtml, <<"Revoke VPN Access">>)),
+        ?assertMatch({_, _}, binary:match(RevokedHtml, <<">revoked</td>">>))
     end).
 
 completed_wizard_roundtrips_through_demo_state_test() ->

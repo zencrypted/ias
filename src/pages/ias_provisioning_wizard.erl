@@ -89,6 +89,8 @@ event({wizard_disable_vpn_access, WizardId}) ->
     wizard_vpn_lifecycle_action(WizardId, disable);
 event({wizard_enable_vpn_access, WizardId}) ->
     wizard_vpn_lifecycle_action(WizardId, enable);
+event({wizard_revoke_vpn_access, WizardId}) ->
+    wizard_vpn_lifecycle_action(WizardId, revoke);
 event({wizard_download_device_bound_ovpn, ProvisioningId}) ->
     wizard_download_device_bound_ovpn(
         ias_device_bound_ovpn:download_response(ProvisioningId));
@@ -511,7 +513,9 @@ wizard_vpn_lifecycle_action(WizardId, Operation) ->
 apply_wizard_vpn_lifecycle_operation(disable, DeviceId) ->
     ias_vpn_access_lifecycle:disable(DeviceId);
 apply_wizard_vpn_lifecycle_operation(enable, DeviceId) ->
-    ias_vpn_access_lifecycle:enable(DeviceId).
+    ias_vpn_access_lifecycle:enable(DeviceId);
+apply_wizard_vpn_lifecycle_operation(revoke, DeviceId) ->
+    ias_vpn_access_lifecycle:revoke(DeviceId).
 
 wizard_device_id(WizardId) ->
     case ias_provisioning_wizard_store:get(WizardId) of
@@ -581,6 +585,7 @@ wizard_vpn_lifecycle_actions(WizardId, {ok, #{enabled := false}}) ->
            class = [button, sgreen],
            body = ias_html:text("Enable VPN Access"),
            postback = {wizard_enable_vpn_access, WizardId}},
+     wizard_vpn_revoke_action(WizardId),
      #link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
 wizard_vpn_lifecycle_actions(WizardId, {ok, _Peer}) ->
@@ -588,11 +593,20 @@ wizard_vpn_lifecycle_actions(WizardId, {ok, _Peer}) ->
            class = [button, more],
            body = ias_html:text("Disable VPN Access"),
            postback = {wizard_disable_vpn_access, WizardId}},
+     wizard_vpn_revoke_action(WizardId),
      #link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}];
 wizard_vpn_lifecycle_actions(_WizardId, _Runtime) ->
     [#link{url = <<"/app/vpn.htm">>, class = [button, more],
            body = ias_html:text("Open VPN Runtime")}].
+
+wizard_vpn_revoke_action(WizardId) ->
+    #link{id = wizard_vpn_lifecycle_action_id(revoke, WizardId),
+          class = [button, more],
+          body = ias_html:text("Revoke VPN Access"),
+          actions = [#confirm{
+              text = "Revoke VPN access permanently? Enabling the peer later will not bypass the revoke barrier.",
+              postback = {wizard_revoke_vpn_access, WizardId}}]}.
 
 wizard_vpn_lifecycle_action_id(Operation, WizardId) ->
     ias_html:join([<<"wizard_vpn_lifecycle_">>, Operation, <<"_">>, WizardId]).
