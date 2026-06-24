@@ -9,7 +9,7 @@ event(refresh_vpn_runtime) ->
     Summary = ias_vpn_runtime:summary(),
     nitro:update(vpn_runtime_refresh_status, runtime_status_panel(Summary)),
     nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary)),
-    nitro:wire(<<"window.iasVpnRefreshBusy=false;">>);
+    nitro:wire(refresh_complete_js());
 event(create_vpn_service) ->
     Name = field_value(nitro:q(vpn_service_name), <<"OpenVPN">>),
     Host = field_value(nitro:q(vpn_remote_host), <<>>),
@@ -45,10 +45,21 @@ runtime_refresh_controls(Summary) ->
     #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 8px;">>,
            body = [
                runtime_status_panel(Summary),
-               #link{id = vpn_runtime_refresh_now,
-                     class = [button, sgreen],
-                     body = ias_html:text("Refresh now"),
-                     postback = refresh_vpn_runtime},
+               #input{id = vpn_runtime_refresh_now,
+                      type = <<"button">>,
+                      class = [button, sgreen],
+                      value = ias_html:text("Refresh now"),
+                      onclick = <<"window.iasVpnRequestRefresh&&window.iasVpnRequestRefresh();">>},
+               #label{for = vpn_runtime_auto_refresh_enabled,
+                      style = <<"display:inline-flex;gap:6px;align-items:center;font-size:12px;color:#475569;cursor:pointer;">>,
+                      body = [
+                          #input{id = vpn_runtime_auto_refresh_enabled,
+                                 type = <<"checkbox">>,
+                                 checked = true,
+                                 onchange = <<"window.iasVpnSetAutoRefresh&&window.iasVpnSetAutoRefresh(this.checked);">>},
+                          #span{id = vpn_runtime_auto_refresh_state,
+                                body = ias_html:text("Auto-refresh every 5s")}
+                      ]},
                #link{id = vpn_runtime_auto_refresh,
                      style = <<"display:none;">>,
                      body = ias_html:text("Auto refresh VPN runtime"),
@@ -66,11 +77,11 @@ runtime_summary_panel(Summary) ->
 refresh_status({ok, Data}) when is_map(Data) ->
     ias_html:join([<<"Runtime: connected | Last update: ">>,
                    utc_time_text(),
-                   <<" UTC | Auto-refresh: 2s">>]);
+                   <<" UTC">>]);
 refresh_status(_) ->
     ias_html:join([<<"Runtime: unavailable | Last attempt: ">>,
                    utc_time_text(),
-                   <<" UTC | Auto-refresh: 2s">>]).
+                   <<" UTC">>]).
 
 utc_time_text() ->
     {{_Year, _Month, _Day}, {Hour, Minute, Second}} = calendar:universal_time(),
@@ -78,12 +89,57 @@ utc_time_text() ->
 
 auto_refresh_js() ->
     <<"if(window.iasVpnRefreshTimer){clearInterval(window.iasVpnRefreshTimer);}",
+      "if(window.iasVpnRefreshGuard){clearTimeout(window.iasVpnRefreshGuard);}",
       "window.iasVpnRefreshBusy=false;",
-      "window.iasVpnRefreshTimer=setInterval(function(){",
-      "if(document.hidden||window.iasVpnRefreshBusy){return;}",
+      "window.iasVpnRefreshScrollY=null;",
+      "if(typeof window.iasVpnAutoRefreshEnabled!=='boolean'){window.iasVpnAutoRefreshEnabled=true;}",
+      "window.iasVpnSyncAutoRefresh=function(){",
+      "var toggle=document.getElementById('vpn_runtime_auto_refresh_enabled');",
+      "var state=document.getElementById('vpn_runtime_auto_refresh_state');",
+      "if(toggle){toggle.checked=window.iasVpnAutoRefreshEnabled;}",
+      "if(state){state.textContent=window.iasVpnAutoRefreshEnabled?'Auto-refresh every 5s':'Auto-refresh off';}",
+      "};",
+      "window.iasVpnSetAutoRefresh=function(enabled){",
+      "window.iasVpnAutoRefreshEnabled=!!enabled;",
+      "window.iasVpnSyncAutoRefresh();",
+      "};",
+      "window.iasVpnRequestRefresh=function(){",
+      "if(window.iasVpnRefreshBusy){return false;}",
       "var refresh=document.getElementById('vpn_runtime_auto_refresh');",
-      "if(refresh){window.iasVpnRefreshBusy=true;refresh.click();}",
-      "},2000);">>.
+      "if(!refresh){",
+      "if(window.iasVpnRefreshTimer){clearInterval(window.iasVpnRefreshTimer);window.iasVpnRefreshTimer=null;}",
+      "return false;",
+      "}",
+      "window.iasVpnRefreshBusy=true;",
+      "window.iasVpnRefreshScrollY=window.scrollY||window.pageYOffset||0;",
+      "if(window.iasVpnRefreshGuard){clearTimeout(window.iasVpnRefreshGuard);}",
+      "window.iasVpnRefreshGuard=setTimeout(function(){window.iasVpnRefreshBusy=false;},15000);",
+      "refresh.click();",
+      "return true;",
+      "};",
+      "var refresh=document.getElementById('vpn_runtime_auto_refresh');",
+      "if(refresh&&!refresh.dataset.iasNoNavigation){",
+      "refresh.addEventListener('click',function(event){event.preventDefault();});",
+      "refresh.dataset.iasNoNavigation='true';",
+      "}",
+      "window.iasVpnSyncAutoRefresh();",
+      "window.iasVpnRefreshTimer=setInterval(function(){",
+      "if(!document.getElementById('vpn_runtime_auto_refresh')){",
+      "clearInterval(window.iasVpnRefreshTimer);window.iasVpnRefreshTimer=null;return;",
+      "}",
+      "if(document.hidden||!window.iasVpnAutoRefreshEnabled){return;}",
+      "window.iasVpnRequestRefresh();",
+      "},5000);">>.
+
+refresh_complete_js() ->
+    <<"window.iasVpnRefreshBusy=false;",
+      "if(window.iasVpnRefreshGuard){clearTimeout(window.iasVpnRefreshGuard);window.iasVpnRefreshGuard=null;}",
+      "if(window.iasVpnRefreshScrollY!==null){",
+      "var scrollY=window.iasVpnRefreshScrollY;",
+      "window.iasVpnRefreshScrollY=null;",
+      "window.requestAnimationFrame(function(){window.scrollTo(0,scrollY);});",
+      "}",
+      "if(window.iasVpnSyncAutoRefresh){window.iasVpnSyncAutoRefresh();}">>.
 
 create_service_panel() ->
     #panel{class = <<"ias-status-card">>, body = [

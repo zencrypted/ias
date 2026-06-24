@@ -56,8 +56,11 @@ vpn_page_renders_create_service_form_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Managed VPN Services">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_summary">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_auto_refresh">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_auto_refresh_enabled">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_auto_refresh_state">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Refresh now">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"Auto-refresh: 2s">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Auto-refresh every 5s">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Auto-refresh: 2s">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Runtime: unavailable | Last attempt:">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"·">>)).
 

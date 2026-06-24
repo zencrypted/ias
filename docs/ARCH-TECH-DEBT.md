@@ -771,3 +771,30 @@ accepting another provisioning or decommission request.
 ### Priority
 
 High before production deployment
+
+---
+
+## TD-020: VPN Runtime Auto-refresh Disrupted Browser Position
+
+**Status:** Resolved
+
+**Area:** IAS VPN Runtime UI
+
+### Problem
+
+The VPN runtime page refreshed its two runtime panels every two seconds by
+programmatically clicking a hidden Nitro link. Browser anchor handling could
+move the viewport to the beginning of the page after each refresh, which made
+long runtime tables difficult to inspect. The timer also remained active until
+its next tick after navigation away from the page.
+
+### Resolution
+
+The page now routes both manual and automatic refresh through one client-side
+trigger, prevents hidden-link navigation, records and restores the current
+scroll position after the Nitro response, and stops the timer when the VPN page
+is no longer present. Auto-refresh uses a five-second interval and has a visible
+on/off control; `Refresh now` remains available independently.
+
+The server-side refresh boundary is unchanged: only
+`vpn_runtime_refresh_status` and `vpn_runtime_summary` are replaced.
