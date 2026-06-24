@@ -36,10 +36,18 @@ peers(_) ->
 peer(undefined, _Summary) ->
     undefined;
 peer(PeerId, Summary) ->
-    case [Peer || Peer <- peers(Summary), field(Peer, [<<"id">>, id, peer, name]) =:= PeerId] of
+    case [Peer || Peer <- peers(Summary),
+                  same_peer_id(field(Peer, [<<"id">>, id, peer, name]), PeerId)] of
         [Peer | _] -> Peer;
         [] -> undefined
     end.
+
+same_peer_id(undefined, _PeerId) ->
+    false;
+same_peer_id(_Value, undefined) ->
+    false;
+same_peer_id(Value, PeerId) ->
+    ias_html:text(Value) =:= ias_html:text(PeerId).
 
 running(Peer) ->
     case field(Peer, [<<"running">>, running, is_running, status]) of

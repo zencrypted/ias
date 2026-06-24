@@ -3,7 +3,8 @@
          operational_readiness_preview/1, effective_status_preview/1,
          authorization_decision_preview/1, authorization_matrix_preview/1,
          authorization_enforcement_preview/1, ovpn_export_preview/1,
-         ovpn_material_preview/1, relationship_preview/1]).
+         ovpn_material_preview/1, relationship_preview/1,
+         vpn_access_preview/1, vpn_access_preview/2]).
 -include_lib("n2o/include/n2o.hrl").
 -include_lib("nitro/include/nitro.hrl").
 
@@ -64,6 +65,16 @@ event({update_device_key_reference, DeviceId}) ->
             nitro:update(device_key_reference_feedback,
                          device_key_reference_error(Reason))
     end;
+event({device_disable_vpn_access, DeviceId}) ->
+    device_vpn_lifecycle_action(DeviceId, disable);
+event({device_enable_vpn_access, DeviceId}) ->
+    device_vpn_lifecycle_action(DeviceId, enable);
+event({device_confirm_revoke_vpn_access, DeviceId}) ->
+    nitro:wire(#confirm{
+        text = device_vpn_revoke_confirm_text(),
+        postback = {device_revoke_vpn_access, DeviceId}});
+event({device_revoke_vpn_access, DeviceId}) ->
+    device_vpn_lifecycle_action(DeviceId, revoke);
 event(_) ->
     ok.
 
@@ -97,6 +108,7 @@ detail(Object0) ->
         #h3{body = title(Object)},
         key_value_table(rows(Object)),
         device_key_reference_preview(Object),
+        vpn_access_preview(Object),
         certificate_material_preview(Object),
         ovpn_material_preview(Object),
         certificate_lifecycle_preview(Object),
@@ -346,6 +358,235 @@ device_key_reference_preview(#{kind := device} = Device) ->
     ]};
 device_key_reference_preview(_Object) ->
     #panel{body = []}.
+
+vpn_access_preview(#{kind := device} = Device) ->
+    vpn_access_preview(Device, ias_vpn_runtime:summary());
+vpn_access_preview(_Object) ->
+    #panel{body = []}.
+
+vpn_access_preview(#{kind := device} = Device, VpnSummary) ->
+    DeviceId = maps:get(id, Device, undefined),
+    Status = ias_vpn_access_lifecycle:status(DeviceId),
+    device_vpn_access_container(
+        device_vpn_access_status_body(Device, Status, VpnSummary));
+vpn_access_preview(_Object, _VpnSummary) ->
+    #panel{body = []}.
+
+device_vpn_access_container(Body) ->
+    #panel{id = device_vpn_access,
+           class = <<"ias-status-card">>,
+           body = Body}.
+
+device_vpn_access_status_body(_Device, {error, Reason}, _VpnSummary) ->
+    [#h3{body = ias_html:text("VPN Access")},
+     device_vpn_error_panel(Reason)];
+device_vpn_access_status_body(Device, Status, VpnSummary) ->
+    DeviceId = maps:get(id, Device, undefined),
+    RuntimePeerId = maps:get(runtime_peer_id, Status, undefined),
+    Runtime = maps:get(runtime, Status, not_bound),
+    Provisioning = maps:get(provisioning, Status, #{}),
+    case device_vpn_access_provisioned(RuntimePeerId, Runtime) of
+        false ->
+            [#h3{body = ias_html:text("VPN Access")},
+             #p{body = ias_html:text("VPN access not provisioned")},
+             #p{style = <<"font-size:12px;color:#64748b;">>,
+                body = ias_html:text(
+                    "Complete the provisioning wizard before lifecycle controls become available.")},
+             #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
+                    body = [
+                        #link{url = <<"/app/provisioning-wizard.htm">>,
+                              class = [button, sgreen],
+                              body = ias_html:text("Open Provisioning Wizard")},
+                        #link{url = <<"/app/vpn.htm">>,
+                              class = [button, more],
+                              body = ias_html:text("Open VPN Runtime")}
+                    ]}];
+        true ->
+            State = device_vpn_runtime_state(Runtime),
+            [#h3{body = ias_html:text("VPN Access")},
+             key_value_table([
+                 {"User", user_ref(maps:get(owner, Device, undefined))},
+                 {"Device", maps:get(id, Device, undefined)},
+                 {"Runtime Peer", RuntimePeerId},
+                 {"Profile", device_vpn_runtime_value(profile_id, Runtime,
+                                                       maps:get(profile_id, Device, undefined))},
+                 {"VPN Access", State},
+                 {"Revision", maps:get(last_revision, Provisioning,
+                                       maps:get(current_revision, Provisioning, undefined))},
+                 {"Last Operation", maps:get(last_operation, Provisioning, undefined)},
+                 {"Last Delivery", maps:get(last_delivery_status, Provisioning, undefined)},
+                 {"Delivered At", maps:get(last_delivered_at, Provisioning, undefined)},
+                 {"Session", device_vpn_session(RuntimePeerId, Runtime, VpnSummary)},
+                 {"Authorized", device_vpn_runtime_value(authorized, Runtime, undefined)},
+                 {"Revoked", device_vpn_runtime_value(revoked, Runtime, undefined)}
+             ]),
+             #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
+                    body = device_vpn_access_actions(DeviceId, Runtime)},
+             device_vpn_artifact_panel(DeviceId, Runtime)]
+    end.
+
+device_vpn_access_provisioned(undefined, _Runtime) -> false;
+device_vpn_access_provisioned(<<>>, _Runtime) -> false;
+device_vpn_access_provisioned(_RuntimePeerId, not_bound) -> false;
+device_vpn_access_provisioned(_RuntimePeerId, _Runtime) -> true.
+
+device_vpn_access_actions(_DeviceId, {ok, #{revoked := true}}) ->
+    [#span{class = [button, more],
+           body = ias_html:text("VPN Access Revoked")},
+     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("Open VPN Runtime")}];
+device_vpn_access_actions(DeviceId, {ok, #{enabled := false}}) ->
+    [#link{id = device_vpn_enable,
+           class = [button, sgreen],
+           body = ias_html:text("Enable VPN Access"),
+           postback = {device_enable_vpn_access, DeviceId}},
+     device_vpn_revoke_action(DeviceId),
+     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("Open VPN Runtime")}];
+device_vpn_access_actions(DeviceId, {ok, _Peer}) ->
+    [#link{id = device_vpn_disable,
+           class = [button, more],
+           body = ias_html:text("Disable VPN Access"),
+           postback = {device_disable_vpn_access, DeviceId}},
+     device_vpn_revoke_action(DeviceId),
+     #link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("Open VPN Runtime")}];
+device_vpn_access_actions(_DeviceId, _Runtime) ->
+    [#link{url = <<"/app/vpn.htm">>, class = [button, more],
+           body = ias_html:text("Open VPN Runtime")}].
+
+device_vpn_revoke_action(DeviceId) ->
+    #link{id = device_vpn_revoke,
+          class = [button, more],
+          body = ias_html:text("Revoke VPN Access"),
+          postback = {device_confirm_revoke_vpn_access, DeviceId}}.
+
+device_vpn_revoke_confirm_text() ->
+    "Revoke VPN access permanently? Enabling the peer later will not bypass the revoke barrier.".
+
+device_vpn_lifecycle_action(DeviceId, Operation) ->
+    Result = apply_device_vpn_lifecycle_operation(Operation, DeviceId),
+    case ias_demo_store:get(DeviceId) of
+        {ok, #{kind := device} = Device} ->
+            Status = device_vpn_status_after_action(
+                ias_vpn_access_lifecycle:status(DeviceId), Result),
+            Body = [device_vpn_action_notice(Operation, Result)
+                    | device_vpn_access_status_body(
+                        Device, Status, ias_vpn_runtime:summary())],
+            nitro:update(device_vpn_access,
+                         device_vpn_access_container(Body));
+        _ ->
+            nitro:update(device_vpn_access,
+                         device_vpn_access_container([
+                             #h3{body = ias_html:text("VPN Access")},
+                             device_vpn_error_panel(not_found)
+                         ]))
+    end.
+
+apply_device_vpn_lifecycle_operation(disable, DeviceId) ->
+    ias_vpn_access_lifecycle:disable(DeviceId);
+apply_device_vpn_lifecycle_operation(enable, DeviceId) ->
+    ias_vpn_access_lifecycle:enable(DeviceId);
+apply_device_vpn_lifecycle_operation(revoke, DeviceId) ->
+    ias_vpn_access_lifecycle:revoke(DeviceId).
+
+device_vpn_status_after_action(Status, {ok, Result}) when is_map(Status) ->
+    case maps:get(runtime, Result, undefined) of
+        undefined -> Status;
+        Runtime -> Status#{runtime => Runtime}
+    end;
+device_vpn_status_after_action(Status, _Result) ->
+    Status.
+
+device_vpn_action_notice(Operation, {ok, Result}) ->
+    #panel{style = <<"margin-bottom:12px;padding:10px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
+           body = [
+               #span{style = <<"font-weight:600;">>,
+                     body = ias_html:text("VPN access updated")},
+               #br{},
+               ias_html:join([<<"Operation: ">>,
+                              maps:get(operation, Result, Operation),
+                              <<" | Revision: ">>,
+                              maps:get(revision, Result, undefined),
+                              <<" | Delivery: ">>,
+                              maps:get(delivery_status, Result, undefined)])
+           ]};
+device_vpn_action_notice(_Operation, {error, Reason}) ->
+    device_vpn_error_panel(Reason).
+
+device_vpn_error_panel(Reason) ->
+    #panel{style = <<"margin-bottom:12px;padding:10px;border:1px solid #fecaca;background:#fef2f2;color:#991b1b;">>,
+           body = [
+               #span{style = <<"font-weight:600;">>,
+                     body = ias_html:text("VPN access was not updated")},
+               #br{},
+               ias_html:text(Reason)
+           ]}.
+
+device_vpn_runtime_state({ok, #{revoked := true}}) -> revoked;
+device_vpn_runtime_state({ok, #{enabled := false}}) -> disabled;
+device_vpn_runtime_state({ok, #{authorized := true}}) -> enabled;
+device_vpn_runtime_state({ok, _Peer}) -> available;
+device_vpn_runtime_state(Value) -> Value.
+
+device_vpn_runtime_value(authorized, {ok, #{revoked := true}}, _Default) -> false;
+device_vpn_runtime_value(Key, {ok, Peer}, Default) -> maps:get(Key, Peer, Default);
+device_vpn_runtime_value(_Key, _Runtime, Default) -> Default.
+
+device_vpn_session(_RuntimePeerId, {ok, #{revoked := true}}, _VpnSummary) -> revoked;
+device_vpn_session(_RuntimePeerId, {ok, #{enabled := false}}, _VpnSummary) -> disabled;
+device_vpn_session(RuntimePeerId, _Runtime, VpnSummary) ->
+    case ias_vpn_runtime:peer(RuntimePeerId, VpnSummary) of
+        undefined -> unavailable;
+        Peer ->
+            case ias_vpn_runtime:field(Peer, [handshake_status, <<"handshake_status">>]) of
+                undefined -> ias_vpn_runtime:state(Peer);
+                HandshakeStatus -> HandshakeStatus
+            end
+    end.
+
+device_vpn_artifact_panel(DeviceId, Runtime) ->
+    #panel{style = <<"margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap;">>,
+           body = device_vpn_artifact_actions(DeviceId, Runtime) ++
+                  [#panel{id = device_bound_ovpn_result}]}.
+
+device_vpn_artifact_actions(DeviceId, Runtime) ->
+    case latest_device_bound_provisioning(DeviceId) of
+        not_found -> [];
+        {ok, Transaction} ->
+            ProvisioningId = maps:get(id, Transaction, undefined),
+            Open = #link{url = object_url(ovpn_provisioning, ProvisioningId),
+                         class = [button, more],
+                         body = ias_html:text("Open Provisioning Transaction")},
+            case {Runtime, maps:get(artifact_status, Transaction, unavailable)} of
+                {{ok, #{revoked := true}}, _} ->
+                    [Open];
+                {_, public_bundle_ready} ->
+                    [#link{class = [button, sgreen],
+                           body = ias_html:text("Download Device-bound OVPN"),
+                           postback = {download_device_bound_ovpn, ProvisioningId}},
+                     Open];
+                _ ->
+                    [Open]
+            end
+    end.
+
+latest_device_bound_provisioning(DeviceId) ->
+    Candidates = [ias_ovpn_provisioning:refresh(Transaction)
+                  || Transaction <- ias_demo_store:all(),
+                     maps:get(kind, Transaction, undefined) =:= ovpn_provisioning,
+                     maps:get(mode, Transaction, undefined) =:= device_bound,
+                     same_reference(maps:get(device_id, Transaction, undefined), DeviceId)],
+    Ordered = lists:reverse(lists:keysort(
+        1, [{ias_html:text(maps:get(created_at, Transaction, <<>>)), Transaction}
+            || Transaction <- Candidates])),
+    case Ordered of
+        [{_CreatedAt, Latest} | _] -> {ok, Latest};
+        [] -> not_found
+    end.
+
+same_reference(Left, Right) ->
+    ias_html:text(Left) =:= ias_html:text(Right).
 
 device_key_reference_status({ok, Safe}) ->
     key_value_table([
