@@ -100,9 +100,11 @@ desired_state(Device, CertificateResult, Decision, Operation) ->
                  enabled => Enabled,
                  authorized => Authorized,
                  authorization_mode => policy,
-                 authorization_reason => authorization_reason(Decision, Operation),
-                 certificate_fingerprint => runtime_certificate_fingerprint(Device, CertificateResult)},
-    maybe_put(profile_id, linked_profile_id(Device, CertificateResult), Desired0).
+                 authorization_reason => authorization_reason(Decision, Operation)},
+    Desired1 = maybe_put(certificate_fingerprint,
+                         runtime_certificate_fingerprint(Device, CertificateResult),
+                         Desired0),
+    maybe_put(profile_id, linked_profile_id(Device, CertificateResult), Desired1).
 
 
 linked_profile_id(Device, CertificateResult) ->

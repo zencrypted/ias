@@ -27,6 +27,31 @@ canonical_command_test_() ->
      end}.
 
 
+dynamic_runtime_identity_omits_certificate_fingerprint_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(#{device := Device}) ->
+         Previous = application:get_env(ias, vpn_dynamic_pair_delivery),
+         try
+             application:set_env(ias, vpn_dynamic_pair_delivery, true),
+             DeviceId = maps:get(id, Device),
+             ClientPeerId = <<"dynamic-client-peer">>,
+             GatewayPeerId = <<"dynamic-gateway-peer">>,
+             _ = ias_demo_store:put_runtime_object(
+                   Device#{vpn_allocation_id => <<"dynamic-allocation">>,
+                           vpn_client_peer_id => ClientPeerId,
+                           vpn_gateway_peer_id => GatewayPeerId}),
+             {ok, Command} = ias_vpn_provisioning_command:build(DeviceId, upsert),
+             Desired = maps:get(desired_state, Command),
+             [?_assertEqual(ClientPeerId, maps:get(peer_id, Command)),
+              ?_assertEqual(false,
+                            maps:is_key(certificate_fingerprint, Desired))]
+         after
+             restore_env(vpn_dynamic_pair_delivery, Previous)
+         end
+     end}.
+
 runtime_peer_id_overrides_device_peer_id_test_() ->
     {setup,
      fun setup/0,
@@ -121,6 +146,11 @@ normalizes_binary_authorization_reason_test_() ->
          Reason = maps:get(authorization_reason, Desired),
          [?_assertEqual(<<"no_vpn_service">>, Reason)]
      end}.
+
+restore_env(Key, {ok, Value}) ->
+    application:set_env(ias, Key, Value);
+restore_env(Key, undefined) ->
+    application:unset_env(ias, Key).
 
 setup() ->
     ias_demo_store:clear(),
