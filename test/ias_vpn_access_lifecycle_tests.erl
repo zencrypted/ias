@@ -109,7 +109,17 @@ disable_advances_runtime_revision(Context) ->
     maps:get(runtime_peer_id, Result) =:= client_b andalso
     maps:get(operation, Result) =:= disable andalso
     maps:get(revision, Result) =:= maps:get(initial_runtime_revision, Context) + 1 andalso
-    maps:get(delivery_status, Result) =:= applied.
+    maps:get(delivery_status, Result) =:= applied andalso
+    maps:get(runtime, Result) =:=
+        {ok, #{id => client_b,
+               device_id => <<"bob-device">>,
+               profile_id => default_user,
+               enabled => false,
+               authorized => true,
+               authorization_reason => profile_allows_vpn,
+               revision => maps:get(initial_runtime_revision, Context) + 1,
+               revoked => false,
+               last_provisioning_operation => disable}}.
 
 enable_advances_revision(Context) ->
     {ok, Result} = ias_vpn_access_lifecycle:enable(maps:get(device_id, Context)),

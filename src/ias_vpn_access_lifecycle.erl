@@ -57,8 +57,14 @@ lifecycle_result(Device, RuntimePeerId, Result) ->
       operation => maps:get(operation, Command, undefined),
       revision => maps:get(revision, Command, undefined),
       delivery_status => maps:get(delivery_status, Delivery, undefined),
+      runtime => delivered_runtime(Delivery),
       command => Command,
       delivery => Delivery}.
+
+delivered_runtime(#{vpn_result := {ok, #{peer := Peer}}}) when is_map(Peer) ->
+    {ok, sanitize_runtime_peer(Peer)};
+delivered_runtime(_Delivery) ->
+    undefined.
 
 runtime_status(undefined) ->
     not_bound;

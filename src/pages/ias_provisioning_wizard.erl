@@ -525,6 +525,7 @@ wizard_vpn_lifecycle_status(WizardId) ->
     end.
 
 wizard_vpn_lifecycle_action_body(WizardId, Operation, {ok, Result}) ->
+    Status = wizard_vpn_lifecycle_status_after_action(WizardId, Result),
     [wizard_notice("VPN Access Updated",
                    "The VPN access lifecycle command was delivered to the configured VPN runtime."),
      key_value_table([
@@ -533,10 +534,19 @@ wizard_vpn_lifecycle_action_body(WizardId, Operation, {ok, Result}) ->
          {"Revision", maps:get(revision, Result, undefined)},
          {"Delivery", maps:get(delivery_status, Result, undefined)}
      ])
-     | wizard_vpn_lifecycle_status_body(WizardId, wizard_vpn_lifecycle_status(WizardId))];
+     | wizard_vpn_lifecycle_status_body(WizardId, Status)];
 wizard_vpn_lifecycle_action_body(WizardId, _Operation, {error, Reason}) ->
     [wizard_error_panel(Reason)
      | wizard_vpn_lifecycle_status_body(WizardId, wizard_vpn_lifecycle_status(WizardId))].
+
+wizard_vpn_lifecycle_status_after_action(WizardId, Result) ->
+    Status = wizard_vpn_lifecycle_status(WizardId),
+    case {Status, maps:get(runtime, Result, undefined)} of
+        {StatusMap, Runtime} when is_map(StatusMap), Runtime =/= undefined ->
+            StatusMap#{runtime => Runtime};
+        _ ->
+            Status
+    end.
 
 wizard_vpn_lifecycle_status_body(_WizardId, {error, Reason}) ->
     [wizard_error_panel(Reason)];
