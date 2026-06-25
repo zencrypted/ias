@@ -827,3 +827,101 @@ freshness are separate states; reconnect is reported as successful only when the
 summary read also succeeds. If subscription succeeds but the summary read fails,
 the page preserves the last-known rows and asks the operator to retry with
 `Refresh now`.
+
+---
+
+## TD-021: Orphan VPN Projection Disposition Policy
+
+**Status:** Open
+
+**Area:** IAS/VPN Reconciliation / Recovery Policy
+
+### Problem
+
+Reconciliation can identify a VPN projection marked as IAS-owned while IAS has
+no matching durable VPN authority record. The projection is reported as
+`orphan`, but the product does not yet define a complete operator workflow for
+its disposition.
+
+Copying the VPN record into `ias_demo_store` is not a valid recovery mechanism:
+ETS is volatile, VPN does not contain the complete IAS object graph, and
+automatic adoption would reverse the intended `IAS -> VPN` authority direction.
+Likewise, automatically deleting the VPN projection could remove legitimate
+access created before the durable authority ledger was introduced or during a
+partially completed provisioning transaction.
+
+### Constraints
+
+- automatic orphan adoption is prohibited;
+- automatic destructive cleanup is prohibited;
+- an orphan must remain fail-closed and visible as an incident;
+- any disposition must validate the current reconciliation snapshot token;
+- actor, note, timestamp, source metadata and result must be audited;
+- recovery into IAS requires durable domain-state persistence, not an ETS-only
+  object.
+
+### Desired Direction
+
+Define two explicit administrative procedures:
+
+```text
+Decommission from VPN
+Recover into IAS
+```
+
+`Decommission from VPN` should validate that the projection is still orphaned,
+apply the appropriate restrictive/decommission command, and close the incident
+only after reconciliation confirms removal.
+
+`Recover into IAS` should guide an operator through validation and creation of a
+complete durable IAS graph: Device ownership, Certificate metadata, VPN Service,
+Security Profile and required relationships. VPN metadata is evidence for the
+recovery plan, not an authority source by itself.
+
+The detailed durable-state prerequisite is documented in
+`docs/IAS-DURABLE-STATE.md`.
+
+### Priority
+
+Medium during development; High before production deployment
+
+---
+
+## TD-022: Durable IAS Domain State And Rehydration
+
+**Status:** Open
+
+**Area:** IAS Object Graph / Runtime Persistence
+
+### Problem
+
+Most live IAS domain objects and relationships are stored only in
+`ias_demo_store` ETS, while Provisioning Wizard drafts are stored in a separate
+ETS table. They disappear when the IAS VM restarts. The narrow
+`ias_vpn_authority` Mnesia ledger survives restart, so the UI can lose the
+Device, Certificate, VPN Service and relationship graph even when IAS and VPN
+remain synchronized at the control-plane level.
+
+Manual Demo State export/import is sanitized development tooling. It is not an
+automatic source of truth, a transactional store or startup rehydration.
+
+### Desired Direction
+
+Introduce an IAS-owned Mnesia domain store with `disc_copies` as the source of
+truth for supported public domain metadata and relationship edges. Keep ETS as a
+runtime read projection rebuilt from validated durable records before HTTP
+startup.
+
+Writes must be Mnesia-first and update ETS only after commit. Multi-object wizard
+completion must use one durable transaction or a compatible recovery boundary,
+coordinated with `TD-014`. Unsupported schemas and secret-bearing payloads must
+fail closed. Private keys, TLS secrets, OVPN bodies, certificate bodies and
+browser/session state are outside the first domain-store scope.
+
+Implementation stages, persistence classification, schema proposal, failure
+semantics, restart tests and acceptance criteria are defined in
+`docs/IAS-DURABLE-STATE.md`.
+
+### Priority
+
+High

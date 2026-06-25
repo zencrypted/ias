@@ -32,6 +32,12 @@ IAS відповідає за:
 - аудит;
 - рішення авторизації.
 
+Поточний план переходу від volatile ETS object graph до IAS-owned durable
+Mnesia state та startup rehydration описаний у
+`docs/IAS-DURABLE-STATE.md`. VPN не є джерелом відновлення IAS-об’єктів;
+сценарії disposition для orphan projections залишаються окремим явним та
+аудованим workflow.
+
 Центр сертифікації (CA) відповідає за підписування сертифікатів.
 VPN використовує сертифікати та результати авторизації, підготовлені через IAS.
 
