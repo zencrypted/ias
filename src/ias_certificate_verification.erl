@@ -162,7 +162,7 @@ verification_id(CertificateId) ->
     ias_html:join([<<"verification_">>,
                    ias_html:text(CertificateId), <<"_">>,
                    erlang:system_time(millisecond), <<"_">>,
-                   erlang:unique_integer([positive])]).
+                   erlang:unique_integer([monotonic, positive])]).
 
 verifications() ->
     [Object || Object <- ias_demo_store:runtime_objects(),
