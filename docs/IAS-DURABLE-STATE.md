@@ -204,7 +204,11 @@ At minimum, persistence must reject nested occurrences of:
 - session keys, process identifiers and browser state.
 
 References, fingerprints, public filenames and non-secret lifecycle metadata may
-be stored after validation.
+be stored after validation. A field name such as `private_key` may also appear as
+a fixed label inside explicitly modeled metadata maps such as
+`material_requirements`, `material_sources` or `material_components`; only an
+allow-listed non-secret status/source value is accepted there. The same key in
+arbitrary metadata, or any private-key body/value, remains forbidden.
 
 ## API Boundary
 

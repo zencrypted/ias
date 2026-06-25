@@ -16,6 +16,8 @@ store_contract_test_() ->
            ?_test(changed_projection_increments_revision()),
            ?_test(unsupported_kind_is_rejected()),
            ?_test(secret_bearing_payload_is_rejected()),
+           ?_test(non_secret_private_key_metadata_is_allowed()),
+           ?_test(certificate_matching_metadata_is_preserved()),
            ?_test(relationship_integrity_is_enforced()),
            ?_test(transaction_rolls_back())]}
      end}.
@@ -92,6 +94,39 @@ secret_bearing_payload_is_rejected() ->
                  ias_domain_store:put(PemDevice)),
     ?assertEqual(not_found,
                  ias_domain_store:get(device, DeviceId)).
+
+non_secret_private_key_metadata_is_allowed() ->
+    Id = <<"domain-ovpn-private-key-metadata">>,
+    Provisioning = #{id => Id,
+                     kind => ovpn_provisioning,
+                     source => domain_store_test,
+                     material_requirements => #{private_key => device_owned},
+                     material_sources => #{private_key => device},
+                     material_components => #{private_key => available_on_device},
+                     artifact_filename => <<"device.ovpn">>,
+                     private_key_stored => false,
+                     certificate_body_stored => false,
+                     ca_body_stored => false},
+    {ok, Stored, changed} = ias_domain_store:put(Provisioning),
+    Payload = maps:get(payload, Stored),
+    ?assertEqual(device,
+                 maps:get(private_key, maps:get(material_sources, Payload))),
+    ?assertEqual(<<"device.ovpn">>, maps:get(artifact_filename, Payload)),
+    ?assertEqual(
+       {error, {forbidden_domain_material, [material_sources, private_key]}},
+       ias_domain_store:put(
+         Provisioning#{material_sources => #{private_key => <<"secret">>}})).
+
+certificate_matching_metadata_is_preserved() ->
+    Id = <<"domain-certificate-matching-metadata">>,
+    Certificate = (certificate(Id))#{requested_cn => <<"router-1">>,
+                                         enrollment_cn => <<"router-1-20260625">>,
+                                         cmp_server => <<"127.0.0.1:8829">>},
+    {ok, Stored, changed} = ias_domain_store:put(Certificate),
+    Payload = maps:get(payload, Stored),
+    ?assertEqual(<<"router-1">>, maps:get(requested_cn, Payload)),
+    ?assertEqual(<<"router-1-20260625">>, maps:get(enrollment_cn, Payload)),
+    ?assertEqual(<<"127.0.0.1:8829">>, maps:get(cmp_server, Payload)).
 
 relationship_integrity_is_enforced() ->
     Device = device(<<"domain-device-relationship">>),

@@ -396,9 +396,10 @@ validate_kvs_metadata() ->
     end.
 
 ensure_kvs_table() ->
-    case kvs_table_present() of
-        true -> validate_kvs_access();
-        false ->
+    case validate_kvs_access() of
+        ok ->
+            ok;
+        {error, _} ->
             case catch kvs:join() of
                 {'EXIT', Reason} ->
                     {error, {domain_store_kvs_join_failed, Reason}};
@@ -411,9 +412,10 @@ wait_for_kvs_table(Timeout) ->
     wait_for_kvs_table(Timeout, erlang:monotonic_time(millisecond)).
 
 wait_for_kvs_table(Timeout, StartedAt) ->
-    case kvs_table_present() of
-        true -> validate_kvs_access();
-        false ->
+    case validate_kvs_access() of
+        ok ->
+            ok;
+        {error, _} ->
             Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
             case Elapsed >= Timeout of
                 true -> {error, {domain_store_kvs_table_unavailable, ?TABLE}};
@@ -421,14 +423,6 @@ wait_for_kvs_table(Timeout, StartedAt) ->
                     timer:sleep(10),
                     wait_for_kvs_table(Timeout, StartedAt)
             end
-    end.
-
-kvs_table_present() ->
-    case catch kvs:dir() of
-        Tables when is_list(Tables) ->
-            lists:member({table, ?TABLE}, Tables);
-        _ ->
-            false
     end.
 
 validate_kvs_access() ->
@@ -631,14 +625,34 @@ forbidden_material_path(_Term, _Path) ->
 forbidden_map_entries([], _Path) ->
     none;
 forbidden_map_entries([{Key, Value} | Rest], Path) ->
-    case forbidden_key(Key) of
-        true -> lists:reverse([Key | Path]);
+    case forbidden_key(Key) andalso
+         not safe_material_metadata_entry(Key, Value, Path) of
+        true ->
+            lists:reverse([Key | Path]);
         false ->
             case forbidden_material_path(Value, [Key | Path]) of
                 none -> forbidden_map_entries(Rest, Path);
                 Found -> Found
             end
     end.
+
+safe_material_metadata_entry(Key, Value, [Container]) ->
+    normalized_key_name(Key) =:= <<"private_key">> andalso
+        safe_private_key_metadata_value(normalized_key_name(Container), Value);
+safe_material_metadata_entry(_Key, _Value, _Path) ->
+    false.
+
+safe_private_key_metadata_value(<<"material_requirements">>, Value) ->
+    lists:member(Value, [pending_one_time_generation, device_owned, undefined]);
+safe_private_key_metadata_value(<<"material_sources">>, Value) ->
+    lists:member(Value, [provisioning_transaction, device, undefined]);
+safe_private_key_metadata_value(<<"material_components">>, Value) ->
+    lists:member(Value,
+                 [pending_one_time_generation, available_on_device,
+                  missing_private_key_ref, unsupported_private_key_provider,
+                  invalid_private_key_ref, unavailable, blocked, device_owned]);
+safe_private_key_metadata_value(_Container, _Value) ->
+    false.
 
 forbidden_list_entries([], _Path, _Index) ->
     none;
@@ -675,14 +689,17 @@ safe_term(Term) when is_pid(Term); is_port(Term); is_reference(Term); is_functio
 safe_term(_Term) ->
     true.
 
-forbidden_key(Key) when is_atom(Key) ->
-    forbidden_key_name(atom_to_binary(Key, utf8));
-forbidden_key(Key) when is_binary(Key) ->
-    forbidden_key_name(Key);
-forbidden_key(Key) when is_list(Key) ->
-    forbidden_key_name(unicode:characters_to_binary(Key));
-forbidden_key(_Key) ->
-    false.
+forbidden_key(Key) ->
+    forbidden_key_name(normalized_key_name(Key)).
+
+normalized_key_name(Key) when is_atom(Key) ->
+    atom_to_binary(Key, utf8);
+normalized_key_name(Key) when is_binary(Key) ->
+    Key;
+normalized_key_name(Key) when is_list(Key) ->
+    unicode:characters_to_binary(Key);
+normalized_key_name(_Key) ->
+    <<>>.
 
 forbidden_key_name(Name) ->
     lists:member(Name,
@@ -756,6 +773,7 @@ kind_fields(device) ->
 kind_fields(certificate) ->
     [user, user_id, user_name, profile, profile_id, subject, subject_cn,
      issuer, issuer_cn, serial, not_before, not_after, fingerprint_sha256,
+     requested_cn, enrollment_cn, cmp_server,
      public_key_fingerprint, csr_fingerprint, csr_public_key_fingerprint,
      certificate_public_key_fingerprint, role, services, attributes,
      trust_level, device_lock, two_factor, source_certificate_id, peer_id,
@@ -805,7 +823,8 @@ kind_fields(ovpn_provisioning) ->
      certificate_id, vpn_service_id, ca_certificate_id, authorization,
      authorization_reason, status, material_status, material_requirements,
      material_sources, material_components, assembly_status,
-     assembly_reason, next_step, artifact_status, delivery_status,
+     assembly_reason, next_step, artifact_status, artifact_filename,
+     delivery_status,
      private_key_policy, private_key_provider, private_key_ref,
      certificate_validation_mode, certificate_validation_bypass,
      downloaded, expires_at, private_key_stored, certificate_body_stored,
