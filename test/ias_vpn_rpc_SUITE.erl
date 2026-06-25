@@ -329,10 +329,12 @@ vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
     RestartLogPath = filename:join(filename:dirname(
                                       proplists:get_value(vpn_log, Config)),
                                    "vpn-restart.log"),
+    SummaryFun = fun() -> vpn_runtime_summary_over_rpc(VpnNode) end,
     {ok, BridgePid} = ias_vpn_event_bridge:start_link(
                         #{vpn_node => VpnNode,
                           rpc_timeout => ?RPC_TIMEOUT_MS,
-                          retry_ms => 200}),
+                          retry_ms => 200,
+                          summary_fun => SummaryFun}),
     try
         {ok, _SubscriptionStatus} =
             gen_server:call(BridgePid, {subscribe, self()}),
@@ -2322,6 +2324,20 @@ prepare_authorized_peer(DeviceId, PeerId, Fingerprint) ->
                              key_match => true}),
     Decision = ias_authorization_decision:device_decision(DeviceId, access_vpn),
     maps:get(decision, Decision).
+
+vpn_runtime_summary_over_rpc(VpnNode) ->
+    case rpc:call(VpnNode,
+                  vpn_admin,
+                  summary_view,
+                  [],
+                  ?RPC_TIMEOUT_MS) of
+        Summary when is_map(Summary) ->
+            {ok, Summary};
+        {badrpc, Reason} ->
+            {error, {badrpc, Reason}};
+        Other ->
+            {error, {invalid_vpn_runtime_summary, Other}}
+    end.
 
 wait_for_bridge_connected(BridgePid, TimeoutMs) ->
     wait_for_bridge_connected(BridgePid,
