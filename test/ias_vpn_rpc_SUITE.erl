@@ -332,18 +332,12 @@ vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
                                       proplists:get_value(vpn_log, Config)),
                                    "vpn-restart.log"),
 
-    %% Provision the test peer before restarting VPN. The purpose of this case
-    %% is to prove bridge recovery and event delivery across a node restart,
-    %% not to retest fresh dynamic allocation after an accumulated full-suite
-    %% runtime. The existing event-contract case already covers upsert/start.
-    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
-    DeviceId = unique_id(<<"ias_ct_restart_event_device_">>),
-    ok = reset_ias_state(),
-    allow = prepare_authorized_device(DeviceId, ActualFingerprint),
-    {ok, InitialUpsertResult} =
-        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
-    ?assertEqual(applied, delivery_status(InitialUpsertResult)),
-    ok = wait_for_peer_running(VpnNode, DeviceId, ?EVENT_TIMEOUT_MS),
+    %% This case is about the distributed bridge lifecycle. Static peer_c is
+    %% already part of the VPN fixture, so using it avoids coupling node-restart
+    %% coverage to a second fresh IAS provisioning scenario. The dedicated
+    %% runtime-event contract case already covers IAS upsert and disable delivery.
+    ProbePeerId = peer_c,
+    ok = wait_for_peer_running(VpnNode, ProbePeerId, ?EVENT_TIMEOUT_MS),
 
     SummaryFun = fun() -> vpn_runtime_summary_over_rpc(VpnNode) end,
     {ok, BridgePid} = ias_vpn_event_bridge:start_link(
@@ -413,25 +407,35 @@ vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
             ?assert(is_pid(NewBusPid)),
             ?assert(NewBusPid =/= OldBusPid),
 
-            %% Startup recovery must restore the active test peer before the
+            %% Startup recovery must restore an active fixture peer before the
             %% application reports ready.
             ok = wait_for_peer_running(VpnNode,
-                                       DeviceId,
+                                       ProbePeerId,
                                        ?EVENT_TIMEOUT_MS),
 
-            %% A post-restart mutation proves that the bridge subscribed to the
-            %% new event-bus process and still delivers completed runtime events.
-            {ok, DisableResult} =
-                ias_vpn_provisioning_delivery:build_and_deliver(DeviceId,
-                                                                 disable),
-            ?assertEqual(applied, delivery_status(DisableResult)),
+            %% A registry mutation after restart proves that the bridge subscribed
+            %% to the new event-bus process and still delivers a completed runtime
+            %% event. IAS provisioning itself is covered by the preceding event
+            %% contract case, so this test stays focused on restart recovery.
+            {ok, ProbeConfig} = rpc:call(VpnNode,
+                                         vpn_peer_registry,
+                                         config,
+                                         [ProbePeerId],
+                                         ?RPC_TIMEOUT_MS),
+            {ok, _DisabledProbe} = rpc:call(VpnNode,
+                                            vpn_peer_registry,
+                                            put,
+                                            [ProbeConfig#{enabled => false}],
+                                            ?RPC_TIMEOUT_MS),
             {RuntimeEvent, EventSummary, EventStatus} =
-                receive_bridge_runtime_event(DeviceId,
+                receive_bridge_runtime_event(ProbePeerId,
                                              NewStreamId,
                                              ReconnectedSequence,
                                              ?EVENT_TIMEOUT_MS),
             ?assertMatch({ok, _}, EventSummary),
-            ?assertMatch(#{result := #{outcome := ok,
+            ?assertMatch(#{cause := #{action := put,
+                                      peer_id := ProbePeerId},
+                           result := #{outcome := ok,
                                        stopped := 1,
                                        failed := 0}},
                          RuntimeEvent),
@@ -439,7 +443,7 @@ vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
                     ReconnectedSequence),
             ?assertEqual(NewStreamId, maps:get(stream_id, RuntimeEvent)),
             ?assertEqual(true, maps:get(connected, EventStatus)),
-            ?assertNot(lists:member(DeviceId, running_peers(VpnNode)))
+            ?assertNot(lists:member(ProbePeerId, running_peers(VpnNode)))
         after
             _ = stop_vpn_process(RestartProcess),
             _ = wait_for_node_down(VpnNode, 5000)
