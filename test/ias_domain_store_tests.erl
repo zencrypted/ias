@@ -19,7 +19,8 @@ store_contract_test_() ->
            ?_test(non_secret_private_key_metadata_is_allowed()),
            ?_test(certificate_matching_metadata_is_preserved()),
            ?_test(relationship_integrity_is_enforced()),
-           ?_test(transaction_rolls_back())]}
+           ?_test(transaction_rolls_back()),
+           ?_test(transaction_error_result_rolls_back())]}
      end}.
 
 table_is_durable() ->
@@ -155,6 +156,17 @@ transaction_rolls_back() ->
                    erlang:error(forced_domain_transaction_failure)
                end),
     ?assertMatch({error, {domain_store_transaction_failed, _}}, Result),
+    ?assertEqual(not_found,
+                 ias_domain_store:get(device, maps:get(id, Device))).
+
+transaction_error_result_rolls_back() ->
+    Device = device(<<"domain-device-error-result-rollback">>),
+    Result = ias_domain_store:transaction(
+               fun() ->
+                   {ok, _Record, changed} = ias_domain_store:put(Device),
+                   {error, forced_domain_transaction_abort}
+               end),
+    ?assertEqual({error, forced_domain_transaction_abort}, Result),
     ?assertEqual(not_found,
                  ias_domain_store:get(device, maps:get(id, Device))).
 

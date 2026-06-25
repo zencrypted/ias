@@ -18,17 +18,20 @@ apply(Draft) when is_map(Draft) ->
         false ->
             {error, {relationship_preflight_failed, Review}};
         true ->
-            ExistingIds = relationship_ids(),
-            case apply_items(maps:get(items, Review, []), ExistingIds, []) of
-                {ok, _Created} ->
-                    AppliedReview = review(Draft),
-                    case maps:get(ready, AppliedReview, false) of
-                        true -> {ok, AppliedReview};
-                        false -> {error, {relationship_apply_incomplete, AppliedReview}}
+            case prepare_items(maps:get(items, Review, []), []) of
+                {ok, Relationships} ->
+                    case ias_demo_store:commit_graph([], Relationships) of
+                        {ok, _Graph} ->
+                            AppliedReview = review(Draft),
+                            case maps:get(ready, AppliedReview, false) of
+                                true -> {ok, AppliedReview};
+                                false -> {error, {relationship_apply_incomplete, AppliedReview}}
+                            end;
+                        {error, Reason} ->
+                            {error, {relationship_apply_failed, graph, Reason}}
                     end;
-                {error, Reason, CreatedIds} ->
-                    rollback(CreatedIds),
-                    {error, Reason}
+                {error, _} = Error ->
+                    Error
             end
     end;
 apply(_Draft) ->
@@ -227,36 +230,22 @@ applicable_item(_) -> false.
 linked_item(#{status := already_linked}) -> true;
 linked_item(_) -> false.
 
-apply_items([], _ExistingIds, CreatedIds) ->
-    {ok, lists:reverse(CreatedIds)};
-apply_items([#{status := already_linked} | Rest], ExistingIds, CreatedIds) ->
-    apply_items(Rest, ExistingIds, CreatedIds);
-apply_items([#{status := will_create} = Item | Rest], ExistingIds, CreatedIds) ->
+prepare_items([], Acc) ->
+    {ok, lists:reverse(Acc)};
+prepare_items([#{status := already_linked} | Rest], Acc) ->
+    prepare_items(Rest, Acc);
+prepare_items([#{status := will_create} = Item | Rest], Acc) ->
     RelationType = maps:get(relation_type, Item),
     SourceId = maps:get(source_id, Item),
     TargetId = maps:get(target_id, Item),
-    case ias_relationship_link:create(RelationType, SourceId, TargetId) of
-        {ok, Relationship} ->
-            RelationshipId = maps:get(id, Relationship, undefined),
-            NewCreatedIds = case lists:member(RelationshipId, ExistingIds) of
-                                true -> CreatedIds;
-                                false -> [RelationshipId | CreatedIds]
-                            end,
-            apply_items(Rest, ExistingIds, NewCreatedIds);
+    case ias_relationship_link:prepare(RelationType, SourceId, TargetId) of
+        {ok, new, Relationship} ->
+            prepare_items(Rest, [Relationship | Acc]);
+        {ok, existing, _Relationship} ->
+            prepare_items(Rest, Acc);
         {error, Reason} ->
-            {error, {relationship_apply_failed, maps:get(key, Item), Reason},
-             CreatedIds}
+            {error, {relationship_apply_failed, maps:get(key, Item), Reason}}
     end.
-
-rollback(RelationshipIds) ->
-    [ias_demo_store:delete_relationship(RelationshipId)
-     || RelationshipId <- RelationshipIds,
-        RelationshipId =/= undefined],
-    ok.
-
-relationship_ids() ->
-    [maps:get(id, Relationship, undefined)
-     || Relationship <- ias_demo_store:relationships()].
 
 exact_relationship(RelationType, SourceId, TargetId) ->
     case [Relationship || Relationship <- ias_demo_store:relationships(),

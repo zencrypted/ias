@@ -12,6 +12,7 @@
     security_policies/0,
     relationships/0,
     runtime_objects/0,
+    commit_graph/2,
     put_runtime_object/1,
     delete_runtime_object/2,
     clear/0,
@@ -37,8 +38,12 @@ add_import(ImportMap) when is_map(ImportMap) ->
     ImportId = import_id(),
     CreatedAt = created_at(),
     Records = import_records(ImportMap, ImportId, CreatedAt),
-    [_ = put_runtime_object(Record) || Record <- Records],
-    ImportId.
+    case commit_graph(Records, []) of
+        {ok, _Graph} ->
+            ImportId;
+        {error, Reason} ->
+            erlang:error({demo_store_graph_write_failed, Reason})
+    end.
 
 get(undefined) ->
     not_found;
@@ -88,6 +93,24 @@ runtime_objects() ->
     ensure(),
     Stored = [durable_overlay(Object) || {_Key, Object} <- ets:tab2list(?TABLE)],
     lists:sort(fun compare_records/2, Stored).
+
+commit_graph(Objects0, Relationships0)
+  when is_list(Objects0), is_list(Relationships0) ->
+    ensure(),
+    case prepare_graph(Objects0, Relationships0) of
+        {ok, Objects, Relationships} ->
+            case ias_domain_store:transaction(
+                   fun() -> persist_graph(Objects, Relationships) end) of
+                {ok, {ObjectRecords, RelationshipRecords}} ->
+                    project_graph(ObjectRecords, RelationshipRecords);
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end;
+commit_graph(_Objects, _Relationships) ->
+    {error, invalid_domain_graph}.
 
 put_runtime_object(#{kind := _Kind, id := _Id} = Object) ->
     ensure(),
@@ -271,6 +294,134 @@ objects() ->
 
 user_objects() ->
     [User#{kind => user, source => demo_catalog} || User <- ias_demo_data:users()].
+
+prepare_graph(Objects, Relationships0) ->
+    case prepare_graph_objects(Objects, []) of
+        {ok, PreparedObjects} ->
+            case prepare_graph_relationships(Relationships0, []) of
+                {ok, PreparedRelationships} ->
+                    case unique_graph_identities(PreparedObjects ++ PreparedRelationships) of
+                        ok -> {ok, PreparedObjects, PreparedRelationships};
+                        {error, _} = Error -> Error
+                    end;
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+prepare_graph_objects([], Acc) ->
+    {ok, lists:reverse(Acc)};
+prepare_graph_objects([#{kind := relationship} | _Rest], _Acc) ->
+    {error, relationship_must_use_graph_relationships};
+prepare_graph_objects([#{kind := _Kind, id := _Id} = Object | Rest], Acc) ->
+    prepare_graph_objects(Rest, [Object | Acc]);
+prepare_graph_objects([_Invalid | _Rest], _Acc) ->
+    {error, invalid_domain_graph_object}.
+
+prepare_graph_relationships([], Acc) ->
+    {ok, lists:reverse(Acc)};
+prepare_graph_relationships([Relationship | Rest], Acc) when is_map(Relationship) ->
+    case relationship_record(Relationship) of
+        {ok, Stored} ->
+            prepare_graph_relationships(Rest, [Stored | Acc]);
+        {error, _} = Error ->
+            Error
+    end;
+prepare_graph_relationships([_Invalid | _Rest], _Acc) ->
+    {error, invalid_domain_graph_relationship}.
+
+relationship_record(Relationship) ->
+    CreatedAt = created_at(),
+    Id = maps:get(relationship_id, Relationship,
+                  maps:get(id, Relationship, relationship_id())),
+    case Id of
+        undefined ->
+            {error, invalid_domain_graph_relationship};
+        _ ->
+            {ok,
+             #{id => Id,
+               relationship_id => Id,
+               kind => relationship,
+               relation_type => maps:get(relation_type, Relationship, undefined),
+               source_kind => maps:get(source_kind, Relationship, undefined),
+               source_id => maps:get(source_id, Relationship, undefined),
+               target_kind => maps:get(target_kind, Relationship, undefined),
+               target_id => maps:get(target_id, Relationship, undefined),
+               score => maps:get(score, Relationship, 0),
+               warnings => maps:get(warnings, Relationship, []),
+               created_at => maps:get(created_at, Relationship, CreatedAt)}}
+    end.
+
+unique_graph_identities(Records) ->
+    unique_graph_identities(Records, #{}).
+
+unique_graph_identities([], _Seen) ->
+    ok;
+unique_graph_identities([#{kind := Kind, id := Id} | Rest], Seen) ->
+    Key = {Kind, normalize_id(Id)},
+    case maps:is_key(Key, Seen) of
+        true -> {error, {duplicate_domain_graph_identity, Kind, Id}};
+        false -> unique_graph_identities(Rest, Seen#{Key => true})
+    end;
+unique_graph_identities([_Invalid | _Rest], _Seen) ->
+    {error, invalid_domain_graph_record}.
+
+persist_graph(Objects, Relationships) ->
+    case persist_graph_records(Objects, []) of
+        {ok, ObjectRecords} ->
+            case persist_graph_records(Relationships, []) of
+                {ok, RelationshipRecords} ->
+                    {ObjectRecords, RelationshipRecords};
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+persist_graph_records([], Acc) ->
+    {ok, lists:reverse(Acc)};
+persist_graph_records([Object | Rest], Acc) ->
+    case ias_domain_store:put(Object) of
+        {ok, DomainRecord, _Change} ->
+            persist_graph_records(Rest, [DomainRecord | Acc]);
+        {error, _} = Error ->
+            Error
+    end.
+
+project_graph(ObjectRecords, RelationshipRecords) ->
+    ObjectProjections = [maps:get(payload, Record) || Record <- ObjectRecords],
+    RelationshipProjections = [maps:get(payload, Record)
+                               || Record <- RelationshipRecords],
+    case persist_device_authorities(ObjectProjections) of
+        ok ->
+            StoredObjects = [durable_overlay(Object) || Object <- ObjectProjections],
+            StoredRelationships = [durable_overlay(Relationship)
+                                   || Relationship <- RelationshipProjections],
+            Entries = [{runtime_key(Object), Object}
+                       || Object <- StoredObjects ++ StoredRelationships],
+            ok = insert_graph_entries(Entries),
+            {ok, #{objects => StoredObjects,
+                   relationships => StoredRelationships}};
+        {error, Reason} ->
+            {error, {device_authority_write_failed, Reason}}
+    end.
+
+insert_graph_entries([]) ->
+    ok;
+insert_graph_entries(Entries) ->
+    true = ets:insert(?TABLE, Entries),
+    ok.
+
+persist_device_authorities([]) ->
+    ok;
+persist_device_authorities([Object | Rest]) ->
+    case persist_device_authority(Object) of
+        ok -> persist_device_authorities(Rest);
+        {error, _} = Error -> Error
+    end.
 
 persist_device_authority(#{kind := device} = Device) ->
     ias_vpn_authority:sync_device(Device);

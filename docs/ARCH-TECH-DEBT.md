@@ -914,8 +914,13 @@ monotonic revisions, and enforces relationship references and guarded deletion.
 
 Stage 2A connected the single-object `ias_demo_store` write, delete,
 relationship, enrollment-result and reset paths to the durable KVS boundary.
-ETS is updated only after a successful durable commit. Startup rehydration and
-multi-object graph atomicity are not implemented yet.
+ETS is updated only after a successful durable commit.
+
+Stage 2B added `ias_demo_store:commit_graph/2`. Domain objects and their
+relationship edges are staged in one `ias_domain_store:transaction/1` unit of
+work and become visible through ETS only after the complete KVS graph commit.
+OVPN import and provisioning-wizard relationship application use this boundary.
+Startup rehydration is not implemented yet.
 
 ### Remaining Direction
 
@@ -924,8 +929,10 @@ for supported public domain metadata and relationship edges. Keep ETS as a
 runtime read projection rebuilt from validated durable records before HTTP
 startup.
 
-Writes must be KVS-durable-first and update ETS only after commit. Multi-object wizard
-completion must use one durable transaction or a compatible recovery boundary,
+Writes must be KVS-durable-first and update ETS only after commit. Supported
+multi-object domain graphs now use one durable unit of work. Enrollment
+completion still crosses the certificate-material store, Device key-reference
+updates and volatile wizard draft state, so its wider recovery boundary remains
 coordinated with `TD-014`. Unsupported schemas and secret-bearing payloads must
 fail closed. Private keys, TLS secrets, OVPN bodies, certificate bodies and
 browser/session state are outside the first domain-store scope.

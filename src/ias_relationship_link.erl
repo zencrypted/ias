@@ -1,9 +1,23 @@
 -module(ias_relationship_link).
--export([create/3, unlink/1, unlinkable/1, relationships_for/1, exists/3, status/3]).
+-export([create/3, prepare/3, unlink/1, unlinkable/1, relationships_for/1, exists/3, status/3]).
 
 create(RelationType, SourceId, TargetId) ->
-    with_objects(SourceId, TargetId,
-                 fun(Source, Target) -> create_for_objects(RelationType, Source, Target) end).
+    case prepare(RelationType, SourceId, TargetId) of
+        {ok, existing, Relationship} ->
+            {ok, Relationship};
+        {ok, new, Relationship} ->
+            {ok, ias_demo_store:add_relationship(Relationship)};
+        {error, _} = Error ->
+            Error
+    end.
+
+prepare(RelationType, SourceId, TargetId) ->
+    case canonical(RelationType, SourceId, TargetId) of
+        {ok, CanonicalRelationType, Source, Target} ->
+            prepare_relationship(CanonicalRelationType, Source, Target);
+        {error, _} = Error ->
+            Error
+    end.
 
 unlink(RelationshipId) ->
     case ias_demo_store:get(RelationshipId) of
@@ -52,138 +66,44 @@ with_objects(SourceId, TargetId, Fun) ->
         _ -> {error, not_found}
     end.
 
-create_for_objects(uses_certificate, #{kind := device} = Device,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(uses_certificate, Device, Certificate);
-create_for_objects(uses_certificate, #{kind := certificate} = Certificate,
-                   #{kind := device} = Device) ->
-    create_relationship(uses_certificate, Device, Certificate);
-create_for_objects(uses_service, #{kind := device} = Device,
-                   #{kind := vpn_service} = Service) ->
-    create_relationship(uses_service, Device, Service);
-create_for_objects(uses_service, #{kind := vpn_service} = Service,
-                   #{kind := device} = Device) ->
-    create_relationship(uses_service, Device, Service);
-create_for_objects(uses_ca_certificate, #{kind := vpn_service} = Service,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(uses_ca_certificate, Service, Certificate);
-create_for_objects(uses_ca_certificate, #{kind := certificate} = Certificate,
-                   #{kind := vpn_service} = Service) ->
-    create_relationship(uses_ca_certificate, Service, Certificate);
-create_for_objects(verified_by, #{kind := certificate} = Certificate,
-                   #{kind := verification} = Verification) ->
-    create_relationship(verified_by, Certificate, Verification);
-create_for_objects(verified_by, #{kind := verification} = Verification,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(verified_by, Certificate, Verification);
-create_for_objects(uses_security_policy, #{kind := Kind} = Object,
-                   #{kind := security_policy} = Policy)
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
-    create_relationship(uses_security_policy, Object, Policy);
-create_for_objects(uses_security_policy, #{kind := security_policy} = Policy,
-                   #{kind := Kind} = Object)
-  when Kind =:= device; Kind =:= certificate; Kind =:= vpn_service; Kind =:= verification ->
-    create_relationship(uses_security_policy, Object, Policy);
-create_for_objects(uses_security_profile, #{kind := Kind} = Object,
-                   #{kind := security_profile} = Profile)
-  when Kind =:= user; Kind =:= device; Kind =:= certificate ->
-    create_relationship(uses_security_profile, Object, Profile);
-create_for_objects(uses_security_profile, #{kind := security_profile} = Profile,
-                   #{kind := Kind} = Object)
-  when Kind =:= user; Kind =:= device; Kind =:= certificate ->
-    create_relationship(uses_security_profile, Object, Profile);
-create_for_objects(issued_certificate, #{kind := user} = User,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(issued_certificate, User, Certificate);
-create_for_objects(issued_certificate, #{kind := certificate} = Certificate,
-                   #{kind := user} = User) ->
-    create_relationship(issued_certificate, User, Certificate);
-create_for_objects(issued_certificate, #{kind := security_profile} = Profile,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(issued_certificate, Profile, Certificate);
-create_for_objects(issued_certificate, #{kind := certificate} = Certificate,
-                   #{kind := security_profile} = Profile) ->
-    create_relationship(issued_certificate, Profile, Certificate);
-create_for_objects(issues, #{kind := cmp_enrollment_result} = Enrollment,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(issues, Enrollment, Certificate);
-create_for_objects(issues, #{kind := certificate} = Certificate,
-                   #{kind := cmp_enrollment_result} = Enrollment) ->
-    create_relationship(issues, Enrollment, Certificate);
-create_for_objects(issues, #{kind := certificate} = SourceCertificate,
-                   #{kind := certificate} = TargetCertificate) ->
-    create_relationship(issues, SourceCertificate, TargetCertificate);
-create_for_objects(replaced_certificate_by, #{kind := device} = Device,
-                   #{kind := certificate_replacement} = Replacement) ->
-    create_relationship(replaced_certificate_by, Device, Replacement);
-create_for_objects(replaced_certificate_by, #{kind := certificate_replacement} = Replacement,
-                   #{kind := device} = Device) ->
-    create_relationship(replaced_certificate_by, Device, Replacement);
-create_for_objects(old_certificate, #{kind := certificate_replacement} = Replacement,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(old_certificate, Replacement, Certificate);
-create_for_objects(old_certificate, #{kind := certificate} = Certificate,
-                   #{kind := certificate_replacement} = Replacement) ->
-    create_relationship(old_certificate, Replacement, Certificate);
-create_for_objects(new_certificate, #{kind := certificate_replacement} = Replacement,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(new_certificate, Replacement, Certificate);
-create_for_objects(new_certificate, #{kind := certificate} = Certificate,
-                   #{kind := certificate_replacement} = Replacement) ->
-    create_relationship(new_certificate, Replacement, Certificate);
-create_for_objects(revoked_by, #{kind := certificate} = Certificate,
-                   #{kind := certificate_revocation} = Revocation) ->
-    create_relationship(revoked_by, Certificate, Revocation);
-create_for_objects(revoked_by, #{kind := certificate_revocation} = Revocation,
-                   #{kind := certificate} = Certificate) ->
-    create_relationship(revoked_by, Certificate, Revocation);
-create_for_objects(_RelationType, _Source, _Target) ->
-    {error, unsupported}.
-
-create_relationship(uses_security_policy, Source,
-                    #{kind := security_policy} = Policy) ->
+prepare_relationship(uses_security_policy, Source,
+                     #{kind := security_policy} = Policy) ->
     case relationship_status(uses_security_policy, Source, Policy) of
         link ->
-            add_relationship(uses_security_policy, Source, Policy);
+            {ok, new, relationship_spec(uses_security_policy, Source, Policy, [])};
         {linked, Relationship} ->
-            {ok, Relationship};
+            {ok, existing, Relationship};
         {already_has_policy, PolicyId, _Relationship} ->
             {error, {already_has_policy, PolicyId}}
     end;
-create_relationship(RelationType, Source, Target)
+prepare_relationship(RelationType, Source, Target)
   when RelationType =:= uses_certificate;
        RelationType =:= uses_service;
        RelationType =:= uses_ca_certificate ->
     case ias_relationship_constraints:check_create(RelationType, Source, Target) of
         {ok, Warnings} ->
-            add_relationship(RelationType, Source, Target, Warnings);
+            {ok, new, relationship_spec(RelationType, Source, Target, Warnings)};
         {linked, Relationship} ->
-            {ok, Relationship};
+            {ok, existing, Relationship};
         {blocked, Reason} ->
             {error, Reason}
     end;
-create_relationship(RelationType, Source, Target) ->
+prepare_relationship(RelationType, Source, Target) ->
     case existing_relationship(RelationType, Source, Target) of
         not_found ->
-            add_relationship(RelationType, Source, Target);
+            {ok, new, relationship_spec(RelationType, Source, Target, [])};
         Relationship ->
-            {ok, Relationship}
+            {ok, existing, Relationship}
     end.
 
-add_relationship(RelationType, Source, Target) ->
-    add_relationship(RelationType, Source, Target, []).
-
-add_relationship(RelationType, Source, Target, Warnings) ->
-    Score = candidate_score(Source, Target),
-    {ok, ias_demo_store:add_relationship(#{
-        relation_type => RelationType,
-        source_kind => maps:get(kind, Source, undefined),
-        source_id => maps:get(id, Source, undefined),
-        target_kind => maps:get(kind, Target, undefined),
-        target_id => maps:get(id, Target, undefined),
-        score => Score,
-        warnings => Warnings
-    })}.
+relationship_spec(RelationType, Source, Target, Warnings) ->
+    #{relation_type => RelationType,
+      source_kind => maps:get(kind, Source, undefined),
+      source_id => maps:get(id, Source, undefined),
+      target_kind => maps:get(kind, Target, undefined),
+      target_id => maps:get(id, Target, undefined),
+      score => candidate_score(Source, Target),
+      warnings => Warnings}.
 
 canonical(RelationType, SourceId, TargetId) ->
     with_objects(SourceId, TargetId,

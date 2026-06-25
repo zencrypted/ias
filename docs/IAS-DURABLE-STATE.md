@@ -227,6 +227,8 @@ ias_domain_store:reset/0.      %% test/development only
 
 `ias_demo_store` remains the compatibility façade used by current domain and UI
 code. It becomes a write-through projection layer rather than the authority.
+Single-object callers use `put_runtime_object/1`; graph-producing callers use
+`commit_graph/2` so objects and edges share one durable unit of work.
 
 `ias_domain_store` must use the public KVS abstraction for schema discovery and
 CRUD. Direct `mnesia:*` calls are not allowed in this domain store. The current
@@ -429,10 +431,27 @@ until the wider object model adopts one canonical public ID type.
 
 ### Stage 2B — Transactional graph writes
 
-Add a graph-level operation that validates and commits all objects and
-relationships in one `ias_domain_store:transaction/1` unit of work, then updates
-ETS only after successful durable commit. Convert wizard completion and other
-multi-object flows to that API.
+**Status:** Implemented.
+
+`ias_demo_store:commit_graph/2` now accepts domain objects and relationship
+specifications, stages all objects before their edges in one
+`ias_domain_store:transaction/1` unit of work, and bulk-updates ETS only after the
+complete durable graph commit succeeds.
+
+The transaction callback may return `{error, Reason}` to abort without writing
+its staged KVS changes. Graph commits reject duplicate identities, invalid
+objects, secret-bearing payloads and missing relationship references before any
+ETS projection is changed.
+
+The OVPN import path uses one graph commit for its Device, Certificate and VPN
+Service records. Provisioning-wizard relationship application prepares all new
+edges first and commits the complete relationship set in one graph operation;
+the previous create-and-compensate loop has been removed.
+
+The wizard draft itself remains volatile and is updated after the durable graph
+commit. Enrollment completion that also spans certificate material, Device key
+references and wizard draft state remains tracked by `TD-014`; those external
+stores cannot be made atomic merely by extending the KVS domain graph boundary.
 
 ### Stage 3 — Startup rehydration
 
@@ -482,6 +501,7 @@ Only after durable domain state is operating, implement audited
 - secret-bearing payloads are rejected;
 - unsupported kinds and schema versions are rejected;
 - failed transactions do not update ETS;
+- multi-object graph writes commit all objects and edges or none;
 - relationship integrity is enforced;
 - rehydration reproduces the durable object set and relationships.
 

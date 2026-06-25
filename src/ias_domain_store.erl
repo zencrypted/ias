@@ -118,11 +118,16 @@ outer_transaction(Fun) ->
                                #{original => Original, current => Original}),
                     try
                         Result = Fun(),
-                        Current = current_record_map(),
-                        ok = validate_record_set_or_abort(maps:values(Current)),
-                        case commit_kvs_changes(Original, Current) of
-                            ok -> {ok, Result};
-                            {error, _} = Error -> Error
+                        case Result of
+                            {error, AbortReason} ->
+                                {error, AbortReason};
+                            _ ->
+                                Current = current_record_map(),
+                                ok = validate_record_set_or_abort(maps:values(Current)),
+                                case commit_kvs_changes(Original, Current) of
+                                    ok -> {ok, Result};
+                                    {error, _} = Error -> Error
+                                end
                         end
                     catch
                         throw:{domain_store_abort, Reason} ->
