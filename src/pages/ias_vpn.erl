@@ -206,11 +206,11 @@ reconciliation_controls() ->
                          body = ias_html:text("Refresh reconciliation"),
                          postback = refresh_vpn_reconciliation},
                    #link{id = vpn_reconciliation_replay_all,
-                         class = [button],
+                         class = [button, more],
                          body = ias_html:text("Safe replay all"),
                          postback = safe_replay_all},
                    #link{id = vpn_reconciliation_scan_incidents,
-                         class = [button],
+                         class = [button, more],
                          body = ias_html:text("Scan incidents"),
                          postback = scan_vpn_incidents}
                ]},
@@ -354,7 +354,7 @@ incident_row(Incident) ->
 
 incident_actions(DeviceId, Token, open) ->
     #panel{style = <<"display:flex;gap:6px;flex-wrap:wrap;">>, body = [
-        #link{class = [button],
+        #link{class = [button, more],
               body = ias_html:text("Acknowledge"),
               source = [vpn_reconciliation_actor, vpn_reconciliation_note],
               postback = {acknowledge_vpn_incident, DeviceId, Token}},
