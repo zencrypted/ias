@@ -480,6 +480,12 @@ reconciliation_action_result({error, Reason}) ->
 reconciliation_action_result(Result) ->
     action_message(error, ias_html:join(["Unexpected action result: ", term_text(Result)])).
 
+first_action_value(Result) ->
+    maps:get(outcome, Result,
+             maps:get(result, Result,
+                      maps:get(status, Result,
+                               maps:get(requested_action, Result, <<"completed">>)))).
+
 reconciliation_error_message({vpn_incident_still_active, orphan, _Reason}) ->
     "This incident cannot be resolved because the orphan device is still present in VPN. Remove it from VPN or provision it through IAS, refresh reconciliation, and try again.";
 reconciliation_error_message({vpn_incident_still_active, divergence, _Reason}) ->
