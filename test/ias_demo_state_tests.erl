@@ -377,6 +377,28 @@ administrator_profile() ->
                             maps:get(id, Profile, undefined) =:= administrator],
     Profile.
 
+
+projection_summary_includes_durable_health_test() ->
+    ias_demo_state:clear(),
+    DeviceId = <<"state_projection_health_device">>,
+    _ = ias_demo_store:put_runtime_object(
+          #{id => DeviceId,
+            kind => device,
+            source => demo_state_test,
+            owner => alice,
+            name => <<"Projection health device">>,
+            type => <<"vpn-client">>,
+            private_key_stored => false,
+            certificate_body_stored => false,
+            ca_body_stored => false}),
+    Summary = ias_demo_state:summary(),
+    ?assertEqual(synchronized, maps:get(projection_status, Summary)),
+    ?assertEqual(1, maps:get(durable_objects, Summary)),
+    ?assertEqual(1, maps:get(ets_projection_objects, Summary)),
+    ?assertEqual(maps:get(durable_total, Summary),
+                 maps:get(ets_projection_total, Summary)),
+    ias_demo_state:clear().
+
 decode_snapshot(Term) ->
     {ok, Tokens, _} = erl_scan:string(binary_to_list(Term)),
     {ok, Snapshot} = erl_parse:parse_term(Tokens),

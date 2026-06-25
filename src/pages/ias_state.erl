@@ -1,5 +1,5 @@
 -module(ias_state).
--export([event/1]).
+-export([event/1, content/0]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
@@ -13,27 +13,33 @@ event(import_demo_state) ->
     Snapshot = nitro:q(state_import_snapshot),
     Result = ias_demo_state:import(Snapshot),
     nitro:update(state_result, import_result(Result)),
-    nitro:update(state_summary, runtime_summary());
+    nitro:update(state_summary, state_summary_content());
 event(clear_demo_state) ->
     ok = ias_demo_state:clear(),
     nitro:update(state_result, clear_result()),
-    nitro:update(state_summary, runtime_summary());
+    nitro:update(state_summary, state_summary_content());
 event(_) ->
     ok.
 
 content() ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Demo State")},
-        #p{body = ias_html:text("Demo/runtime only. No production persistence. No private key export. No certificate body export.")},
-        #panel{id = state_summary, body = runtime_summary()},
+        #p{body = ias_html:text("Supported public domain metadata is durable through KVS and projected into ETS. Provisioning wizard drafts and certificate material remain separate runtime stores. Manual export/import remains development tooling.")},
+        #panel{id = state_summary, body = state_summary_content()},
         export_panel(),
         import_panel(),
         clear_panel(),
         #panel{id = state_result}
     ]}.
 
-runtime_summary() ->
+state_summary_content() ->
     Summary = ias_demo_state:summary(),
+    #panel{id = state_summary_content, body = [
+        runtime_summary(Summary),
+        projection_health_summary(Summary)
+    ]}.
+
+runtime_summary(Summary) ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Runtime State Summary")},
         key_value_table([
@@ -44,10 +50,75 @@ runtime_summary() ->
         ])
     ]}.
 
+projection_health_summary(Summary) ->
+    Status = maps:get(projection_status, Summary, unavailable),
+    #panel{class = <<"ias-status-card">>,
+           style = projection_health_style(Status),
+           body = [
+        #h3{body = ias_html:text("Durable Projection Health")},
+        #p{body = ias_html:text(projection_health_notice(Status))},
+        key_value_table([
+            {"Projection Status", projection_status_text(Status)},
+            {"Durable Objects", health_value(maps:get(durable_objects,
+                                                       Summary,
+                                                       undefined))},
+            {"Durable Relationships", health_value(maps:get(durable_relationships,
+                                                             Summary,
+                                                             undefined))},
+            {"Durable Total", health_value(maps:get(durable_total,
+                                                     Summary,
+                                                     undefined))},
+            {"ETS Projection Objects", maps:get(ets_projection_objects,
+                                                Summary,
+                                                0)},
+            {"ETS Projection Relationships", maps:get(ets_projection_relationships,
+                                                      Summary,
+                                                      0)},
+            {"ETS Projection Total", maps:get(ets_projection_total,
+                                              Summary,
+                                              0)},
+            {"Last Successful Rehydration", health_value(maps:get(last_rehydrated_at,
+                                                                   Summary,
+                                                                   undefined))},
+            {"Last Rehydration Attempt", health_value(maps:get(last_rehydration_attempt_at,
+                                                                Summary,
+                                                                undefined))},
+            {"Last Rehydration Error", health_value(maps:get(last_rehydration_error,
+                                                              Summary,
+                                                              undefined))}
+        ])
+    ]}.
+
+projection_status_text(synchronized) -> <<"SYNCHRONIZED">>;
+projection_status_text(mismatch) -> <<"MISMATCH">>;
+projection_status_text(unavailable) -> <<"UNAVAILABLE">>;
+projection_status_text(Status) -> ias_html:text(Status).
+
+projection_health_notice(synchronized) ->
+    "The ETS read projection matches the validated KVS domain graph and current durable VPN authority overlay.";
+projection_health_notice(mismatch) ->
+    "The ETS read projection differs from the validated durable state. Rehydration is required before the projection can be trusted.";
+projection_health_notice(unavailable) ->
+    "The durable domain graph could not be validated. IAS startup fails closed when this condition is detected.";
+projection_health_notice(_) ->
+    "Projection health is unknown.".
+
+projection_health_style(synchronized) ->
+    <<"border-color:rgba(22,163,74,0.35);background:#f0fdf4;">>;
+projection_health_style(mismatch) ->
+    <<"border-color:rgba(217,119,6,0.35);background:#fffbeb;">>;
+projection_health_style(unavailable) ->
+    <<"border-color:rgba(220,38,38,0.35);background:#fef2f2;">>;
+projection_health_style(_) ->
+    <<>>.
+
+health_value(undefined) -> <<"not available">>;
+health_value(Value) -> Value.
+
 export_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Export Demo State")},
-        #p{body = ias_html:text("Exports current ETS demo runtime state and sanitized provisioning wizard drafts as Erlang term metadata.")},
+        #p{body = ias_html:text("Exports the current sanitized ETS projection and provisioning wizard drafts as Erlang term metadata. This snapshot is not the durable source of truth.")},
         #link{class = [button, sgreen],
               body = ias_html:text("Export Demo State"),
               postback = export_demo_state},
@@ -89,7 +160,7 @@ import_panel() ->
 clear_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Clear Demo State")},
-        #p{body = ias_html:text("Clears ETS runtime demo objects, relationships, certificate material and provisioning wizard drafts. Built-in fixtures are not deleted.")},
+        #p{body = ias_html:text("Clears durable KVS domain objects, the ETS projection, VPN authority and incident state, certificate material, and provisioning wizard drafts. Built-in fixtures are not deleted.")},
         #link{class = [button, sgreen],
               body = ias_html:text("Clear Demo State"),
               postback = clear_demo_state}
@@ -143,7 +214,7 @@ clear_result() ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
                #h3{body = ias_html:text("Demo state cleared")},
-               #p{body = ias_html:text("ETS runtime demo objects and relationships were cleared.")}
+               #p{body = ias_html:text("Durable demo domain state and its ETS projection were cleared.")}
            ]}.
 
 key_value_table(Rows) ->

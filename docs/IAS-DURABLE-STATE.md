@@ -479,10 +479,27 @@ changing when Cowboy begins accepting requests.
 
 ### Stage 3B — Startup integration and diagnostics UI
 
-- ensure the domain store before HTTP startup;
-- invoke fail-closed rehydration before Cowboy accepts requests;
-- render projection health on Demo State;
-- keep manual Demo State export/import as an explicit development tool.
+**Status:** Implemented.
+
+Application startup now runs `ias_bootstrap:prepare/0` before Cowboy begins
+accepting requests. The bootstrap sequence joins KVS, validates the domain store,
+validates VPN authority and reconciliation incident tables, and performs a full
+ETS rehydration. Any unavailable table, unsupported durable schema, invalid
+relationship graph or failed authority overlay returns an application-start
+error. HTTP startup is therefore fail-closed rather than exposing an empty or
+partially restored Demo State.
+
+The Demo State page now renders a separate Durable Projection Health card with:
+
+- synchronized, mismatch or unavailable status;
+- durable object, relationship and total counts;
+- ETS projection object, relationship and total counts;
+- last successful rehydration, last attempt and last error.
+
+The page copy also distinguishes the KVS source of truth from the ETS read
+projection and explicitly identifies manual export/import as development
+snapshot tooling. Clear Demo State now describes that it removes the durable
+KVS demo graph as well as the ETS projection and related demo runtime stores.
 
 ### Stage 4 — Restart Common Test
 

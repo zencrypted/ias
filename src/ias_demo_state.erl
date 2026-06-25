@@ -13,10 +13,27 @@ summary() ->
     DomainObjects = [Object || Object <- Objects,
                               maps:get(kind, Object, undefined) =/= relationship],
     WizardDrafts = ias_provisioning_wizard_store:all(),
+    Projection = ias_demo_store:projection_health(),
     #{objects => length(DomainObjects),
       relationships => length(Relationships),
       wizard_drafts => length(WizardDrafts),
-      total_records => length(Objects)}.
+      total_records => length(Objects),
+      projection_status => maps:get(status, Projection, unavailable),
+      durable_objects => maps:get(durable_objects, Projection, undefined),
+      durable_relationships => maps:get(durable_relationships, Projection, undefined),
+      durable_total => maps:get(durable_total, Projection, undefined),
+      ets_projection_objects => maps:get(ets_projection_objects, Projection, 0),
+      ets_projection_relationships => maps:get(ets_projection_relationships,
+                                                Projection,
+                                                0),
+      ets_projection_total => maps:get(ets_projection_total, Projection, 0),
+      last_rehydrated_at => maps:get(last_rehydrated_at, Projection, undefined),
+      last_rehydration_attempt_at => maps:get(last_rehydration_attempt_at,
+                                              Projection,
+                                              undefined),
+      last_rehydration_error => maps:get(last_rehydration_error,
+                                         Projection,
+                                         undefined)}.
 
 clear() ->
     ok = ias_demo_store:clear(),

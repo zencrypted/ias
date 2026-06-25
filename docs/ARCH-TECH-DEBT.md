@@ -925,8 +925,13 @@ Stage 3A added `ias_demo_store:rehydrate/0` and
 `ias_demo_store:projection_health/0`. The engine rebuilds the complete ETS
 projection from validated KVS records, overlays durable VPN authority, preserves
 the previous projection when recovery fails, and reports synchronized, mismatch
-or unavailable state with object/relationship counts. Startup invocation and
-Demo State rendering remain pending in Stage 3B.
+or unavailable state with object/relationship counts.
+
+Stage 3B added fail-closed startup integration through
+`ias_bootstrap:prepare/0`. KVS, the durable domain store, VPN authority and the
+incident ledger are validated and ETS is rehydrated before Cowboy starts. Demo
+State now exposes durable/ETS counts, projection status and rehydration metadata.
+The remaining restart proof belongs to Stage 4 Common Test.
 
 ### Remaining Direction
 
