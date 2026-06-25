@@ -39,9 +39,14 @@ VPN provisioning delivery
 -------------------------
 
 IAS формує канонічні revisioned provisioning commands і доставляє їх до
-VPN runtime через configurable distributed Erlang RPC. Поточний напрямок
-інтеграції односторонній: `IAS -> VPN`; VPN не викликає IAS під час handshake,
-peer runtime або dataplane processing, а виконує вже доставлений стан локально.
+VPN runtime через configurable distributed Erlang RPC. Авторитетний напрямок
+керування залишається одностороннім: `IAS -> VPN`; VPN не викликає IAS під час
+handshake або dataplane processing і виконує вже доставлений стан локально.
+
+Для live UI VPN публікує sanitized completion notifications через
+`vpn_event_bus`. Supervised IAS bridge підписується на них, перечитує актуальний
+runtime snapshot через звичайний read API та передає його активним N2O-сторінкам.
+Ці події є лише сигналом для перечитування і не змінюють ownership model.
 
 Окремі IAS і VPN ноди є поточною development topology, а не постійною
 архітектурною вимогою. У майбутньому VPN може бути доданий як dependency і

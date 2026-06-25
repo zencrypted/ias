@@ -5,12 +5,27 @@
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
+    _ = subscribe_runtime_events(),
     render();
+event(terminate) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({exit, _Reason}) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
 event(refresh_vpn_runtime) ->
     Summary = ias_vpn_runtime:summary(),
     nitro:update(vpn_runtime_refresh_status, runtime_status_panel(Summary)),
-    nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary)),
-    nitro:wire(refresh_complete_js());
+    nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary));
+event({vpn_runtime_snapshot, Reason, Summary, BridgeStatus}) ->
+    update_runtime_ui(Summary, BridgeStatus),
+    maybe_mark_reconciliation_stale(Reason);
+event({vpn_runtime_event, Event, Summary, BridgeStatus}) ->
+    update_runtime_ui(Summary, BridgeStatus),
+    mark_reconciliation_stale(Event);
+event({vpn_runtime_event_status, BridgeStatus}) ->
+    nitro:update(vpn_runtime_event_status,
+                 runtime_event_status_panel(BridgeStatus));
 event(refresh_vpn_reconciliation) ->
     update_reconciliation_ui({ok, refreshed});
 event(safe_replay_all) ->
@@ -54,8 +69,7 @@ render() ->
     {Reconciliation, Incidents} = reconciliation_state(),
     logger:info("IAS VPN summary result: ~p", [summary_shape(Summary)]),
     nitro:clear(stand),
-    nitro:insert_bottom(stand, content(Summary, Reconciliation, Incidents)),
-    nitro:wire(auto_refresh_js()).
+    nitro:insert_bottom(stand, content(Summary, Reconciliation, Incidents)).
 
 content(Summary) ->
     content(Summary,
@@ -77,24 +91,10 @@ runtime_refresh_controls(Summary) ->
     #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 8px;">>,
            body = [
                runtime_status_panel(Summary),
-               #input{id = vpn_runtime_refresh_now,
-                      type = <<"button">>,
-                      class = [button, sgreen],
-                      value = ias_html:text("Refresh now"),
-                      onclick = <<"window.iasVpnRequestRefresh&&window.iasVpnRequestRefresh();">>},
-               #label{for = vpn_runtime_auto_refresh_enabled,
-                      style = <<"display:inline-flex;gap:6px;align-items:center;font-size:12px;color:#475569;cursor:pointer;">>,
-                      body = [
-                          #input{id = vpn_runtime_auto_refresh_enabled,
-                                 type = <<"checkbox">>,
-                                 checked = true,
-                                 onchange = <<"window.iasVpnSetAutoRefresh&&window.iasVpnSetAutoRefresh(this.checked);">>},
-                          #span{id = vpn_runtime_auto_refresh_state,
-                                body = ias_html:text("Auto-refresh every 5s")}
-                      ]},
-               #link{id = vpn_runtime_auto_refresh,
-                     style = <<"display:none;">>,
-                     body = ias_html:text("Auto refresh VPN runtime"),
+               runtime_event_status_panel(runtime_event_bridge_status()),
+               #link{id = vpn_runtime_refresh_now,
+                     class = [button, sgreen],
+                     body = ias_html:text("Refresh now"),
                      postback = refresh_vpn_runtime}
            ]}.
 
@@ -102,6 +102,11 @@ runtime_status_panel(Summary) ->
     #panel{id = vpn_runtime_refresh_status,
            style = <<"font-size:12px;color:#64748b;">>,
            body = refresh_status(Summary)}.
+
+runtime_event_status_panel(Status) ->
+    #panel{id = vpn_runtime_event_status,
+           style = <<"font-size:12px;color:#64748b;">>,
+           body = runtime_event_status(Status)}.
 
 runtime_summary_panel(Summary) ->
     #panel{id = vpn_runtime_summary, body = render_summary(Summary)}.
@@ -115,63 +120,86 @@ refresh_status(_) ->
                    utc_time_text(),
                    <<" UTC">>]).
 
+runtime_event_status(#{connected := true, sequence := Sequence}) ->
+    ias_html:join([<<"Updates: VPN event stream connected">>,
+                   sequence_text(Sequence)]);
+runtime_event_status(#{connected := false, last_error := Error}) ->
+    ias_html:join([<<"Updates: event stream unavailable; use Refresh now">>,
+                   event_error_text(Error)]);
+runtime_event_status({error, not_started}) ->
+    <<"Updates: IAS event bridge unavailable; use Refresh now">>;
+runtime_event_status(_) ->
+    <<"Updates: connecting to VPN event stream">>.
+
+sequence_text(Sequence) when is_integer(Sequence) ->
+    ias_html:join([<<" | Sequence: ">>, Sequence]);
+sequence_text(_Sequence) ->
+    <<>>.
+
+event_error_text(undefined) ->
+    <<>>;
+event_error_text(_Error) ->
+    <<" | retrying in background">>.
+
 utc_time_text() ->
     {{_Year, _Month, _Day}, {Hour, Minute, Second}} = calendar:universal_time(),
     iolist_to_binary(io_lib:format("~2..0B:~2..0B:~2..0B", [Hour, Minute, Second])).
 
-auto_refresh_js() ->
-    <<"if(window.iasVpnRefreshTimer){clearInterval(window.iasVpnRefreshTimer);}",
-      "if(window.iasVpnRefreshGuard){clearTimeout(window.iasVpnRefreshGuard);}",
-      "window.iasVpnRefreshBusy=false;",
-      "window.iasVpnRefreshScrollY=null;",
-      "if(typeof window.iasVpnAutoRefreshEnabled!=='boolean'){window.iasVpnAutoRefreshEnabled=true;}",
-      "window.iasVpnSyncAutoRefresh=function(){",
-      "var toggle=document.getElementById('vpn_runtime_auto_refresh_enabled');",
-      "var state=document.getElementById('vpn_runtime_auto_refresh_state');",
-      "if(toggle){toggle.checked=window.iasVpnAutoRefreshEnabled;}",
-      "if(state){state.textContent=window.iasVpnAutoRefreshEnabled?'Auto-refresh every 5s':'Auto-refresh off';}",
-      "};",
-      "window.iasVpnSetAutoRefresh=function(enabled){",
-      "window.iasVpnAutoRefreshEnabled=!!enabled;",
-      "window.iasVpnSyncAutoRefresh();",
-      "};",
-      "window.iasVpnRequestRefresh=function(){",
-      "if(window.iasVpnRefreshBusy){return false;}",
-      "var refresh=document.getElementById('vpn_runtime_auto_refresh');",
-      "if(!refresh){",
-      "if(window.iasVpnRefreshTimer){clearInterval(window.iasVpnRefreshTimer);window.iasVpnRefreshTimer=null;}",
-      "return false;",
-      "}",
-      "window.iasVpnRefreshBusy=true;",
-      "window.iasVpnRefreshScrollY=window.scrollY||window.pageYOffset||0;",
-      "if(window.iasVpnRefreshGuard){clearTimeout(window.iasVpnRefreshGuard);}",
-      "window.iasVpnRefreshGuard=setTimeout(function(){window.iasVpnRefreshBusy=false;},15000);",
-      "refresh.click();",
-      "return true;",
-      "};",
-      "var refresh=document.getElementById('vpn_runtime_auto_refresh');",
-      "if(refresh&&!refresh.dataset.iasNoNavigation){",
-      "refresh.addEventListener('click',function(event){event.preventDefault();});",
-      "refresh.dataset.iasNoNavigation='true';",
-      "}",
-      "window.iasVpnSyncAutoRefresh();",
-      "window.iasVpnRefreshTimer=setInterval(function(){",
-      "if(!document.getElementById('vpn_runtime_auto_refresh')){",
-      "clearInterval(window.iasVpnRefreshTimer);window.iasVpnRefreshTimer=null;return;",
-      "}",
-      "if(document.hidden||!window.iasVpnAutoRefreshEnabled){return;}",
-      "window.iasVpnRequestRefresh();",
-      "},5000);">>.
+subscribe_runtime_events() ->
+    try ias_vpn_event_bridge:subscribe(self())
+    catch
+        exit:_ -> {error, not_started}
+    end.
 
-refresh_complete_js() ->
-    <<"window.iasVpnRefreshBusy=false;",
-      "if(window.iasVpnRefreshGuard){clearTimeout(window.iasVpnRefreshGuard);window.iasVpnRefreshGuard=null;}",
-      "if(window.iasVpnRefreshScrollY!==null){",
-      "var scrollY=window.iasVpnRefreshScrollY;",
-      "window.iasVpnRefreshScrollY=null;",
-      "window.requestAnimationFrame(function(){window.scrollTo(0,scrollY);});",
-      "}",
-      "if(window.iasVpnSyncAutoRefresh){window.iasVpnSyncAutoRefresh();}">>.
+unsubscribe_runtime_events() ->
+    try ias_vpn_event_bridge:unsubscribe(self())
+    catch
+        exit:_ -> ok
+    end.
+
+runtime_event_bridge_status() ->
+    try ias_vpn_event_bridge:status()
+    catch
+        exit:_ -> {error, not_started}
+    end.
+
+update_runtime_ui(Summary, BridgeStatus) ->
+    nitro:update(vpn_runtime_refresh_status, runtime_status_panel(Summary)),
+    nitro:update(vpn_runtime_event_status,
+                 runtime_event_status_panel(BridgeStatus)),
+    nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary)).
+
+maybe_mark_reconciliation_stale(reconnected) ->
+    mark_reconciliation_stale(reconnected);
+maybe_mark_reconciliation_stale(_Reason) ->
+    ok.
+
+mark_reconciliation_stale(Event) ->
+    nitro:update(vpn_reconciliation_stale_notice,
+                 reconciliation_stale_notice(Event)).
+
+reconciliation_stale_notice(reconnected) ->
+    reconciliation_stale_message(
+      "VPN event delivery reconnected and a fresh runtime snapshot was loaded. Refresh reconciliation before acting on incidents because changes may have occurred while IAS was disconnected.");
+reconciliation_stale_notice(Event) when is_map(Event) ->
+    Sequence = maps:get(sequence, Event, undefined),
+    reconciliation_stale_message(
+      ias_html:join(["VPN runtime changed",
+                     sequence_notice(Sequence),
+                     ". Refresh reconciliation before acting on incidents."]));
+reconciliation_stale_notice(_Event) ->
+    reconciliation_stale_message(
+      "VPN runtime changed. Refresh reconciliation before acting on incidents.").
+
+reconciliation_stale_message(Message) ->
+    #panel{id = vpn_reconciliation_stale_notice,
+           style = <<"margin:12px 0;padding:10px 12px;border:1px solid #f59e0b;border-radius:6px;background:#fffbeb;color:#92400e;font-size:12px;">>,
+           body = ias_html:text(Message)}.
+
+sequence_notice(Sequence) when is_integer(Sequence) ->
+    ias_html:join([" (event sequence ", Sequence, ")"]);
+sequence_notice(_Sequence) ->
+    <<>>.
 
 reconciliation_state() ->
     {ias_vpn_reconciliation:report(),
@@ -186,6 +214,7 @@ reconciliation_fragment(Reconciliation, Incidents, Result) ->
     #panel{id = vpn_reconciliation_fragment,
            body = [
                reconciliation_controls(Reconciliation),
+               #panel{id = vpn_reconciliation_stale_notice},
                reconciliation_action_result_panel(Result),
                reconciliation_content_panel(Reconciliation, Incidents)
            ]}.

@@ -786,25 +786,28 @@ High before production deployment
 
 ## TD-020: VPN Runtime Auto-refresh Disrupted Browser Position
 
-**Status:** Resolved
+**Status:** Resolved and superseded
 
 **Area:** IAS VPN Runtime UI
 
 ### Problem
 
-The VPN runtime page refreshed its two runtime panels every two seconds by
-programmatically clicking a hidden Nitro link. Browser anchor handling could
-move the viewport to the beginning of the page after each refresh, which made
-long runtime tables difficult to inspect. The timer also remained active until
-its next tick after navigation away from the page.
+The VPN runtime page originally refreshed its runtime panels by programmatically
+clicking a hidden Nitro link on a browser timer. Besides moving the viewport,
+periodic replacement could race with reconciliation controls and discard operator
+input.
 
 ### Resolution
 
-The page now routes both manual and automatic refresh through one client-side
-trigger, prevents hidden-link navigation, records and restores the current
-scroll position after the Nitro response, and stops the timer when the VPN page
-is no longer present. Auto-refresh uses a five-second interval and has a visible
-on/off control; `Refresh now` remains available independently.
+Browser polling has been removed. A supervised `ias_vpn_event_bridge` subscribes
+to the VPN `vpn_event_bus`, reads a fresh runtime summary after each completed VPN
+reconciliation event, and pushes a Nitro direct message to active VPN page
+websocket processes. `Refresh now` remains as a manual fallback when the event
+stream is unavailable.
 
-The server-side refresh boundary is unchanged: only
-`vpn_runtime_refresh_status` and `vpn_runtime_summary` are replaced.
+Runtime events replace only the independent read-only targets
+`vpn_runtime_refresh_status`, `vpn_runtime_event_status`, and
+`vpn_runtime_summary`. Reconciliation forms are left intact; a separate stale
+notice asks the operator to refresh reconciliation before using incident actions.
+The bridge monitors the remote event-bus process and reconnects after VPN node or
+event-bus restart.

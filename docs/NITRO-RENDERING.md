@@ -153,19 +153,34 @@ response. A later ancestor `outerHTML` replacement discards the child DOM nodes
 and any listeners just attached to them. Prefer one coherent update of the
 outermost fragment, or update independent, non-overlapping targets.
 
-### Keep polling separate from editable interactive fragments
+### Keep backend push separate from editable interactive fragments
 
-A periodic runtime refresh must not replace a fragment that contains editable
-fields or controls for a separate administrative workflow. Even when the
-replacement is correctly wired, polling can discard an operator's unsaved input
+A runtime notification must not replace a fragment that contains editable fields
+or controls for a separate administrative workflow. Even when the replacement is
+correctly wired, an asynchronous update can discard an operator's unsaved input
 or replace a control between pointer-down and click delivery.
 
-Keep fast runtime polling in its own fragment. Refresh reconciliation controls,
-incident editors, and their postbacks only through explicit reconciliation
-actions. When one action must refresh several related interactive areas, prefer
-one outer fragment with one stable replacement root instead of several sibling
-`nitro:update/2` calls. This follows the same single-container pattern used by
-the device VPN lifecycle controls.
+The VPN page uses an OTP bridge for this pattern:
+
+1. the bridge subscribes to the VPN event bus through distributed Erlang RPC;
+2. a VPN event is treated only as a wake-up signal;
+3. IAS reads the current runtime snapshot through its normal client;
+4. the bridge sends a Nitro `#direct{}` message to each subscribed VPN page;
+5. the page updates only the read-only runtime status and summary fragments.
+
+The reconciliation editor is not replaced by runtime events. A separate stable
+notice (`vpn_reconciliation_stale_notice`) tells the operator to refresh the
+comparison before acting on incidents. Refresh reconciliation controls, incident
+editors, and their postbacks only through explicit reconciliation actions. When
+one action must refresh several related interactive areas, prefer one outer
+fragment with one stable replacement root instead of several sibling
+`nitro:update/2` calls.
+
+A page websocket process may register itself with a supervised bridge during
+`event(init)` and unregister during `event(terminate)`. The bridge must monitor
+page processes, and backend code must send `{direct, Payload}` to the websocket
+process instead of calling `nitro:update/2` outside the page's N2O context. The
+page module handles `Payload` in `event/1`, where Nitro actions are safe to emit.
 
 ### Destructive actions and confirmation
 

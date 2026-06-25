@@ -3,7 +3,14 @@
 -behaviour(supervisor).
 -export([start/2, stop/1, init/1]).
 stop(_)    -> ok.
-init([])   -> {ok, { {one_for_one, 5, 10}, []} }.
+init([])   ->
+    EventBridge = #{id => ias_vpn_event_bridge,
+                    start => {ias_vpn_event_bridge, start_link, []},
+                    restart => permanent,
+                    shutdown => 5000,
+                    type => worker,
+                    modules => [ias_vpn_event_bridge]},
+    {ok, {{one_for_one, 5, 10}, [EventBridge]}}.
 start(_,_) -> kvs:join(),
               ok = ias_vpn_authority:ensure(),
               ok = ias_vpn_reconciliation_incidents:ensure(),
