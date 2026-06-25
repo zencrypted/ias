@@ -8,6 +8,7 @@
          init_per_testcase/2,
          end_per_suite/1,
          provisioning_lifecycle/1,
+         vpn_runtime_events_notify_ias_after_reconciliation/1,
          provisioning_identity_and_revision_guards/1,
          read_only_reconciliation_reports_synchronized_state/1,
          safe_reconciliation_replays_vpn_behind_state/1,
@@ -23,9 +24,11 @@
 -define(COOKIE, ias_vpn_ct_cookie).
 -define(STARTUP_TIMEOUT_MS, 30000).
 -define(RPC_TIMEOUT_MS, 5000).
+-define(EVENT_TIMEOUT_MS, 10000).
 
 all() ->
     [provisioning_lifecycle,
+     vpn_runtime_events_notify_ias_after_reconciliation,
      provisioning_identity_and_revision_guards,
      read_only_reconciliation_reports_synchronized_state,
      safe_reconciliation_replays_vpn_behind_state,
@@ -232,6 +235,88 @@ provisioning_lifecycle(Config) ->
     ?assertEqual(6, maps:get(attempts, Status)),
     ?assertEqual(5, maps:get(current_revision, Status)),
     ?assertEqual(rejected, maps:get(last_delivery_status, Status)),
+    ok.
+
+
+vpn_runtime_events_notify_ias_after_reconciliation(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_event_device_">>),
+    ok = reset_ias_state(),
+    allow = prepare_authorized_device(DeviceId, ActualFingerprint),
+
+    {ok, Subscription} = rpc:call(VpnNode,
+                                  vpn_event_bus,
+                                  subscribe,
+                                  [self()],
+                                  ?RPC_TIMEOUT_MS),
+    ?assertEqual(1, maps:get(schema_version, Subscription)),
+    StreamId = maps:get(stream_id, Subscription),
+    InitialSequence = maps:get(sequence, Subscription),
+    try
+        {ok, UpsertResult} =
+            ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+        ?assertEqual(applied, delivery_status(UpsertResult)),
+        UpsertEvent = receive_runtime_reconciled_event(
+                        DeviceId,
+                        StreamId,
+                        InitialSequence,
+                        ?EVENT_TIMEOUT_MS),
+        UpsertSequence = maps:get(sequence, UpsertEvent),
+        ?assert(UpsertSequence > InitialSequence),
+        ?assertMatch(#{schema_version := 1,
+                       type := runtime_reconciled,
+                       stream_id := StreamId,
+                       cause := #{action := put,
+                                  peer_id := DeviceId},
+                       result := #{outcome := ok,
+                                   started := 1,
+                                   failed := 0}},
+                     UpsertEvent),
+        ?assert(lists:member(DeviceId,
+                             maps:get(peer_ids,
+                                      maps:get(result, UpsertEvent)))),
+        %% The notification is a completion signal, not merely an indication
+        %% that the durable registry mutation has been accepted.
+        ?assert(lists:member(DeviceId, running_peers(VpnNode))),
+
+        {ok, DisableResult} =
+            ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, disable),
+        ?assertEqual(applied, delivery_status(DisableResult)),
+        DisableEvent = receive_runtime_reconciled_event(
+                         DeviceId,
+                         StreamId,
+                         UpsertSequence,
+                         ?EVENT_TIMEOUT_MS),
+        DisableSequence = maps:get(sequence, DisableEvent),
+        ?assert(DisableSequence > UpsertSequence),
+        ?assertMatch(#{schema_version := 1,
+                       type := runtime_reconciled,
+                       stream_id := StreamId,
+                       cause := #{action := put,
+                                  peer_id := DeviceId},
+                       result := #{outcome := ok,
+                                   stopped := 1,
+                                   failed := 0}},
+                     DisableEvent),
+        ?assert(lists:member(DeviceId,
+                             maps:get(peer_ids,
+                                      maps:get(result, DisableEvent)))),
+        ?assertNot(lists:member(DeviceId, running_peers(VpnNode))),
+        ?assertEqual(false, history_contains([UpsertEvent, DisableEvent],
+                                             <<"private_key">>)),
+        ?assertEqual(false, history_contains([UpsertEvent, DisableEvent],
+                                             <<"certificate_path">>)),
+        ?assertEqual(false, history_contains([UpsertEvent, DisableEvent],
+                                             <<"psk">>))
+    after
+        _ = rpc:call(VpnNode,
+                     vpn_event_bus,
+                     unsubscribe,
+                     [self()],
+                     ?RPC_TIMEOUT_MS)
+    end,
     ok.
 
 provisioning_identity_and_revision_guards(Config) ->
@@ -2143,6 +2228,55 @@ actual_vpn_fingerprint(VpnNode) ->
                                   [client_a],
                                   ?RPC_TIMEOUT_MS),
     maps:get(certificate_fingerprint, ClientAEntry).
+
+
+receive_runtime_reconciled_event(DeviceId,
+                                 StreamId,
+                                 AfterSequence,
+                                 TimeoutMs) ->
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    receive_runtime_reconciled_event(DeviceId,
+                                     StreamId,
+                                     AfterSequence,
+                                     Deadline,
+                                     undefined).
+
+receive_runtime_reconciled_event(DeviceId,
+                                 StreamId,
+                                 AfterSequence,
+                                 Deadline,
+                                 LastEvent) ->
+    Remaining = erlang:max(0,
+                           Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {vpn_event,
+         Event = #{type := runtime_reconciled,
+                   stream_id := StreamId,
+                   sequence := Sequence,
+                   result := Result}}
+          when Sequence > AfterSequence ->
+            case lists:member(DeviceId, maps:get(peer_ids, Result, [])) of
+                true -> Event;
+                false ->
+                    receive_runtime_reconciled_event(DeviceId,
+                                                     StreamId,
+                                                     AfterSequence,
+                                                     Deadline,
+                                                     Event)
+            end;
+        {vpn_event, Event} ->
+            receive_runtime_reconciled_event(DeviceId,
+                                             StreamId,
+                                             AfterSequence,
+                                             Deadline,
+                                             Event)
+    after Remaining ->
+        ct:fail({vpn_runtime_event_timeout,
+                 DeviceId,
+                 StreamId,
+                 AfterSequence,
+                 LastEvent})
+    end.
 
 running_peers(VpnNode) ->
     rpc:call(VpnNode, vpn_manager, running_peers, [], ?RPC_TIMEOUT_MS).
