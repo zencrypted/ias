@@ -889,7 +889,7 @@ Medium during development; High before production deployment
 
 ## TD-022: Durable IAS Domain State And Rehydration
 
-**Status:** Open
+**Status:** Partially resolved
 
 **Area:** IAS Object Graph / Runtime Persistence
 
@@ -905,10 +905,18 @@ remain synchronized at the control-plane level.
 Manual Demo State export/import is sanitized development tooling. It is not an
 automatic source of truth, a transactional store or startup rehydration.
 
-### Desired Direction
+### Completed
 
-Introduce an IAS-owned Mnesia domain store with `disc_copies` as the source of
-truth for supported public domain metadata and relationship edges. Keep ETS as a
+Stage 1 introduced the standalone `ias_domain_store` skeleton and the
+`ias_domain_object` Mnesia table. The store validates a kind-specific public
+projection, rejects secret-bearing data, maintains monotonic revisions, and
+enforces relationship references and guarded deletion. Existing
+`ias_demo_store` writes are intentionally not connected yet.
+
+### Remaining Direction
+
+Use the IAS-owned Mnesia domain store with `disc_copies` as the source of truth
+for supported public domain metadata and relationship edges. Keep ETS as a
 runtime read projection rebuilt from validated durable records before HTTP
 startup.
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed architecture and staged implementation plan.
+Stage 1 implemented; Stages 2–7 remain planned.
 
 This document defines how IAS should make its domain object graph survive an IAS
 node restart without changing the authority boundary between IAS and VPN.
@@ -381,11 +381,14 @@ Until that workflow is designed, automatic orphan adoption remains prohibited.
 
 ### Stage 1 — Durable store skeleton
 
-- add `ias_domain_store` and table record definition;
-- create/validate the Mnesia table with `disc_copies`;
-- add kind-specific projection validation;
-- test idempotent put/get/delete, schema rejection and secret rejection;
-- do not change `ias_demo_store` write paths yet.
+**Status:** Implemented.
+
+- `ias_domain_store` and the `ias_domain_object` record are present;
+- the Mnesia table is created and validated as `disc_copies` / `set`;
+- kind-specific allow-listed projections reject secret-bearing material;
+- revisions, idempotent writes, relationship references and guarded deletion are
+  covered by EUnit tests;
+- `ias_demo_store` write paths remain unchanged until Stage 2.
 
 ### Stage 2 — Write-through domain façade
 
