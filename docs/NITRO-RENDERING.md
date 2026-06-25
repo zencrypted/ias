@@ -153,6 +153,20 @@ response. A later ancestor `outerHTML` replacement discards the child DOM nodes
 and any listeners just attached to them. Prefer one coherent update of the
 outermost fragment, or update independent, non-overlapping targets.
 
+### Keep polling separate from editable interactive fragments
+
+A periodic runtime refresh must not replace a fragment that contains editable
+fields or controls for a separate administrative workflow. Even when the
+replacement is correctly wired, polling can discard an operator's unsaved input
+or replace a control between pointer-down and click delivery.
+
+Keep fast runtime polling in its own fragment. Refresh reconciliation controls,
+incident editors, and their postbacks only through explicit reconciliation
+actions. When one action must refresh several related interactive areas, prefer
+one outer fragment with one stable replacement root instead of several sibling
+`nitro:update/2` calls. This follows the same single-container pattern used by
+the device VPN lifecycle controls.
+
 ### Destructive actions and confirmation
 
 Use a two-step Nitro postback for destructive operations:

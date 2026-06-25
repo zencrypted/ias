@@ -10,7 +10,6 @@ event(refresh_vpn_runtime) ->
     Summary = ias_vpn_runtime:summary(),
     nitro:update(vpn_runtime_refresh_status, runtime_status_panel(Summary)),
     nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary)),
-    update_reconciliation_content(),
     nitro:wire(refresh_complete_js());
 event(refresh_vpn_reconciliation) ->
     update_reconciliation_ui({ok, refreshed});
@@ -71,9 +70,7 @@ content(Summary, Reconciliation, Incidents) ->
         #panel{id = vpn_services_list, body = managed_services_panel()},
         runtime_refresh_controls(Summary),
         runtime_summary_panel(Summary),
-        reconciliation_controls(Reconciliation),
-        #panel{id = vpn_reconciliation_action_result},
-        reconciliation_content_panel(Reconciliation, Incidents)
+        reconciliation_fragment(Reconciliation, Incidents, none)
     ]}.
 
 runtime_refresh_controls(Summary) ->
@@ -180,17 +177,24 @@ reconciliation_state() ->
     {ias_vpn_reconciliation:report(),
      ias_vpn_reconciliation:incidents()}.
 
-update_reconciliation_content() ->
-    {Reconciliation, Incidents} = reconciliation_state(),
-    nitro:update(vpn_reconciliation_controls,
-                 reconciliation_controls(Reconciliation)),
-    nitro:update(vpn_reconciliation_content,
-                 reconciliation_content_panel(Reconciliation, Incidents)).
-
 update_reconciliation_ui(Result) ->
-    nitro:update(vpn_reconciliation_action_result,
-                 reconciliation_action_result(Result)),
-    update_reconciliation_content().
+    {Reconciliation, Incidents} = reconciliation_state(),
+    nitro:update(vpn_reconciliation_fragment,
+                 reconciliation_fragment(Reconciliation, Incidents, Result)).
+
+reconciliation_fragment(Reconciliation, Incidents, Result) ->
+    #panel{id = vpn_reconciliation_fragment,
+           body = [
+               reconciliation_controls(Reconciliation),
+               reconciliation_action_result_panel(Result),
+               reconciliation_content_panel(Reconciliation, Incidents)
+           ]}.
+
+reconciliation_action_result_panel(none) ->
+    #panel{id = vpn_reconciliation_action_result};
+reconciliation_action_result_panel(Result) ->
+    #panel{id = vpn_reconciliation_action_result,
+           body = reconciliation_action_result(Result)}.
 
 reconciliation_content_panel(Reconciliation, Incidents) ->
     #panel{id = vpn_reconciliation_content,

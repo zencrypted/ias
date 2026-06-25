@@ -127,6 +127,9 @@ vpn_page_renders_reconciliation_controls_test() ->
     Html = iolist_to_binary(nitro:render(ias_vpn:content({error, unavailable}))),
 
     ?assertMatch({_, _}, binary:match(Html, <<"VPN Reconciliation">>)),
+    ?assertEqual(1,
+                 length(binary:matches(Html,
+                                       <<"id=\"vpn_reconciliation_fragment\"">>))),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_refresh">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_replay_all">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_scan_incidents">>)),
