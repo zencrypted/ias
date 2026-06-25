@@ -331,6 +331,20 @@ vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
     RestartLogPath = filename:join(filename:dirname(
                                       proplists:get_value(vpn_log, Config)),
                                    "vpn-restart.log"),
+
+    %% Provision the test peer before restarting VPN. The purpose of this case
+    %% is to prove bridge recovery and event delivery across a node restart,
+    %% not to retest fresh dynamic allocation after an accumulated full-suite
+    %% runtime. The existing event-contract case already covers upsert/start.
+    ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+    DeviceId = unique_id(<<"ias_ct_restart_event_device_">>),
+    ok = reset_ias_state(),
+    allow = prepare_authorized_device(DeviceId, ActualFingerprint),
+    {ok, InitialUpsertResult} =
+        ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert),
+    ?assertEqual(applied, delivery_status(InitialUpsertResult)),
+    ok = wait_for_peer_running(VpnNode, DeviceId, ?EVENT_TIMEOUT_MS),
+
     SummaryFun = fun() -> vpn_runtime_summary_over_rpc(VpnNode) end,
     {ok, BridgePid} = ias_vpn_event_bridge:start_link(
                         #{vpn_node => VpnNode,
@@ -399,25 +413,33 @@ vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
             ?assert(is_pid(NewBusPid)),
             ?assert(NewBusPid =/= OldBusPid),
 
-            ActualFingerprint = actual_vpn_fingerprint(VpnNode),
-            DeviceId = unique_id(<<"ias_ct_restart_event_device_">>),
-            ok = reset_ias_state(),
-            allow = prepare_authorized_device(DeviceId, ActualFingerprint),
-            {ok, UpsertResult} =
+            %% Startup recovery must restore the active test peer before the
+            %% application reports ready.
+            ok = wait_for_peer_running(VpnNode,
+                                       DeviceId,
+                                       ?EVENT_TIMEOUT_MS),
+
+            %% A post-restart mutation proves that the bridge subscribed to the
+            %% new event-bus process and still delivers completed runtime events.
+            {ok, DisableResult} =
                 ias_vpn_provisioning_delivery:build_and_deliver(DeviceId,
-                                                                 upsert),
-            ?assertEqual(applied, delivery_status(UpsertResult)),
+                                                                 disable),
+            ?assertEqual(applied, delivery_status(DisableResult)),
             {RuntimeEvent, EventSummary, EventStatus} =
                 receive_bridge_runtime_event(DeviceId,
                                              NewStreamId,
                                              ReconnectedSequence,
                                              ?EVENT_TIMEOUT_MS),
             ?assertMatch({ok, _}, EventSummary),
+            ?assertMatch(#{result := #{outcome := ok,
+                                       stopped := 1,
+                                       failed := 0}},
+                         RuntimeEvent),
             ?assert(maps:get(sequence, RuntimeEvent) >
                     ReconnectedSequence),
             ?assertEqual(NewStreamId, maps:get(stream_id, RuntimeEvent)),
             ?assertEqual(true, maps:get(connected, EventStatus)),
-            ?assert(lists:member(DeviceId, running_peers(VpnNode)))
+            ?assertNot(lists:member(DeviceId, running_peers(VpnNode)))
         after
             _ = stop_vpn_process(RestartProcess),
             _ = wait_for_node_down(VpnNode, 5000)
@@ -2561,6 +2583,48 @@ receive_runtime_reconciled_event(DeviceId,
                  StreamId,
                  AfterSequence,
                  LastEvent})
+    end.
+
+wait_for_peer_running(VpnNode, PeerId, TimeoutMs) ->
+    wait_for_peer_running(VpnNode,
+                          PeerId,
+                          TimeoutMs,
+                          erlang:monotonic_time(millisecond),
+                          undefined).
+
+wait_for_peer_running(VpnNode, PeerId, TimeoutMs, StartedAt, LastPeers) ->
+    Peers = running_peers(VpnNode),
+    case is_list(Peers) andalso lists:member(PeerId, Peers) of
+        true ->
+            ok;
+        false ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= TimeoutMs of
+                true ->
+                    ReconcilerStatus = rpc:call(VpnNode,
+                                                vpn_peer_reconciler,
+                                                status,
+                                                [],
+                                                ?RPC_TIMEOUT_MS),
+                    RegistryEntry = rpc:call(VpnNode,
+                                             vpn_peer_registry,
+                                             get,
+                                             [PeerId],
+                                             ?RPC_TIMEOUT_MS),
+                    ct:fail({vpn_peer_not_running,
+                             PeerId,
+                             LastPeers,
+                             Peers,
+                             RegistryEntry,
+                             ReconcilerStatus});
+                false ->
+                    timer:sleep(50),
+                    wait_for_peer_running(VpnNode,
+                                          PeerId,
+                                          TimeoutMs,
+                                          StartedAt,
+                                          Peers)
+            end
     end.
 
 running_peers(VpnNode) ->
