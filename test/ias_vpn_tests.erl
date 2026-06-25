@@ -156,11 +156,58 @@ vpn_page_renders_reconciliation_controls_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_replay_all">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_scan_incidents">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_stale_notice">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_read_only">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_incidents">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Safe replay unavailable">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Scan incidents unavailable">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"vpn_incident_actor_">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"vpn_incident_note_">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Force overwrite">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Adopt orphan">>)).
+
+vpn_reconciliation_separates_read_only_state_from_incident_editors_test() ->
+    DeviceId = <<"reconnect-ui-device">>,
+    Token = <<11:256>>,
+    Report = #{state => drift_detected,
+               counts => #{synchronized => 0,
+                           vpn_behind => 0,
+                           missing_in_vpn => 0,
+                           divergence => 0,
+                           orphan => 1,
+                           authority_only => 0},
+               entries => [#{device_id => DeviceId,
+                              status => orphan,
+                              reason => vpn_device_without_ias_authority,
+                              digest_match => undefined,
+                              vpn => #{head => undefined, registry => []}}]},
+    Incidents = [#{device_id => DeviceId,
+                   kind => orphan,
+                   reason => vpn_device_without_ias_authority,
+                   token => Token,
+                   status => open,
+                   occurrences => 1,
+                   last_seen => 1782340000}],
+
+    Html = iolist_to_binary(
+             nitro:render(ias_vpn:content({error, unavailable},
+                                          {ok, Report},
+                                          {ok, Incidents}))),
+
+    ?assertEqual(1, length(binary:matches(Html, <<"id=\"vpn_reconciliation_read_only\"">>))),
+    ?assertEqual(1, length(binary:matches(Html, <<"id=\"vpn_reconciliation_incidents\"">>))),
+    ?assertMatch({_, _}, binary:match(Html, <<"Scan incidents">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Scan incidents unavailable">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_incident_actor_">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_incident_resolve_">>)).
+
+vpn_reconciliation_refresh_failure_notice_is_specific_test() ->
+    Notice = ias_vpn:reconciliation_stale_notice(
+               {reconciliation_refresh_failed, reconnected}),
+    Html = iolist_to_binary(nitro:render(Notice)),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"runtime snapshot is fresh">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"could not refresh the reconciliation comparison">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"VPN disconnected">>)).
 
 vpn_reconciliation_panel_renders_safe_actions_and_incidents_test() ->
     DeviceId = <<"ui-device">>,

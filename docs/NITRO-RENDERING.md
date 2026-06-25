@@ -168,13 +168,24 @@ The VPN page uses an OTP bridge for this pattern:
 4. the bridge sends a Nitro `#direct{}` message to each subscribed VPN page;
 5. the page updates only the read-only runtime status and summary fragments.
 
-The reconciliation editor is not replaced by runtime events. A separate stable
-notice (`vpn_reconciliation_stale_notice`) tells the operator to refresh the
-comparison before acting on incidents. Refresh reconciliation controls, incident
-editors, and their postbacks only through explicit reconciliation actions. When
-one action must refresh several related interactive areas, prefer one outer
-fragment with one stable replacement root instead of several sibling
-`nitro:update/2` calls.
+The reconciliation incident editor is not replaced by runtime events. Ordinary
+runtime changes update a separate stable notice
+(`vpn_reconciliation_stale_notice`) and ask the operator to refresh before acting
+on incidents. After a successful initial subscription or reconnect, IAS may
+refresh only the independent read-only comparison target
+(`vpn_reconciliation_read_only`) and the non-editable controls target
+(`vpn_reconciliation_controls`). The incident target
+(`vpn_reconciliation_incidents`) remains untouched so actor/note input and wired
+postbacks survive the asynchronous update.
+
+When the read-only refresh succeeds, clear the stale notice. If the comparison
+RPC still fails, render the failure in the read-only target, keep incident editors
+untouched, and retain a specific stale notice. Controls that require a fresh
+comparison, such as incident scanning or safe replay, must render disabled while
+the report is unavailable. Explicit reconciliation actions may still replace the
+single outer `vpn_reconciliation_fragment`, because they intentionally commit or
+refresh the whole administrative workflow. Do not mix those full replacements
+with sibling child updates in the same response.
 
 Disconnect and reconnect notifications must also preserve the last rendered
 read-only snapshot. On disconnect, update independent status/notice targets and

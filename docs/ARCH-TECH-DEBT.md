@@ -807,8 +807,14 @@ stream is unavailable.
 
 Runtime events replace only the independent read-only targets
 `vpn_runtime_refresh_status`, `vpn_runtime_event_status`, and
-`vpn_runtime_summary`. Reconciliation forms are left intact; a separate stale
-notice asks the operator to refresh reconciliation before using incident actions.
+`vpn_runtime_summary`. Ordinary runtime changes leave reconciliation forms intact
+and set a separate stale notice. A successful initial subscription or reconnect
+also refreshes the independent read-only reconciliation comparison and controls,
+while the incident editor target remains untouched. This removes stale
+`nodedown` comparison errors without discarding actor/note input or rewiring
+incident actions. Controls that depend on a fresh report are disabled when the
+comparison is unavailable.
+
 The bridge monitors the remote event-bus process and reconnects after VPN node or
 event-bus restart. A distributed Erlang `nodeup` notification triggers an
 immediate reconnect, while a quiet retry timer remains as a discovery and recovery

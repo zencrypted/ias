@@ -21,7 +21,7 @@ event(refresh_vpn_runtime) ->
     update_runtime_manual_refresh(Summary, BridgeStatus);
 event({vpn_runtime_snapshot, Reason, Summary, BridgeStatus}) ->
     update_runtime_ui(Summary, BridgeStatus),
-    maybe_mark_reconciliation_stale(Reason);
+    maybe_refresh_reconciliation_after_snapshot(Reason);
 event({vpn_runtime_event, Event, Summary, BridgeStatus}) ->
     update_runtime_ui(Summary, BridgeStatus),
     mark_reconciliation_stale(Event);
@@ -246,21 +246,37 @@ update_runtime_snapshot_failure_ui(SummaryError, BridgeStatus) ->
 update_runtime_event_status_ui(#{connected := false} = BridgeStatus) ->
     SummaryError = {error, runtime_snapshot_stale},
     update_runtime_snapshot_failure_ui(SummaryError, BridgeStatus),
+    nitro:update(vpn_reconciliation_controls,
+                 reconciliation_controls({error, vpn_node_down})),
     mark_reconciliation_stale(disconnected);
 update_runtime_event_status_ui(BridgeStatus) ->
     nitro:update(vpn_runtime_event_status,
                  runtime_event_status_panel(BridgeStatus)).
 
-maybe_mark_reconciliation_stale(subscribed) ->
+maybe_refresh_reconciliation_after_snapshot(subscribed) ->
     %% A page may have observed VPN as disconnected before the bridge ever
-    %% completed its first subscription. The first successful connection is
-    %% therefore `subscribed`, not `reconnected`, but it must still replace the
-    %% stale disconnect notice with the current connected state.
-    mark_reconciliation_stale(connected);
-maybe_mark_reconciliation_stale(reconnected) ->
-    mark_reconciliation_stale(reconnected);
-maybe_mark_reconciliation_stale(_Reason) ->
+    %% completed its first subscription. Refresh only the read-only comparison
+    %% and controls; incident editors remain untouched.
+    refresh_reconciliation_read_only(connected);
+maybe_refresh_reconciliation_after_snapshot(reconnected) ->
+    refresh_reconciliation_read_only(reconnected);
+maybe_refresh_reconciliation_after_snapshot(_Reason) ->
     ok.
+
+refresh_reconciliation_read_only(ConnectionReason) ->
+    Reconciliation = ias_vpn_reconciliation:report(),
+    nitro:update(vpn_reconciliation_controls,
+                 reconciliation_controls(Reconciliation)),
+    nitro:update(vpn_reconciliation_read_only,
+                 reconciliation_read_only_panel(Reconciliation)),
+    case Reconciliation of
+        {ok, _Report} ->
+            nitro:update(vpn_reconciliation_stale_notice,
+                         #panel{id = vpn_reconciliation_stale_notice});
+        {error, _Reason} ->
+            mark_reconciliation_stale(
+              {reconciliation_refresh_failed, ConnectionReason})
+    end.
 
 mark_reconciliation_stale(Event) ->
     nitro:update(vpn_reconciliation_stale_notice,
@@ -278,6 +294,12 @@ reconciliation_stale_notice(disconnected) ->
 reconciliation_stale_notice({snapshot_failed, reconnected}) ->
     reconciliation_stale_message(
       "VPN event delivery reconnected, but IAS could not load a fresh runtime snapshot. Use Refresh now, then refresh reconciliation before acting on incidents.");
+reconciliation_stale_notice({reconciliation_refresh_failed, reconnected}) ->
+    reconciliation_stale_message(
+      "VPN event delivery reconnected and the runtime snapshot is fresh, but IAS could not refresh the reconciliation comparison. Use Refresh reconciliation before acting on incidents.");
+reconciliation_stale_notice({reconciliation_refresh_failed, _Reason}) ->
+    reconciliation_stale_message(
+      "VPN event delivery is connected and the runtime snapshot is fresh, but IAS could not refresh the reconciliation comparison. Use Refresh reconciliation before acting on incidents.");
 reconciliation_stale_notice({snapshot_failed, _Reason}) ->
     reconciliation_stale_message(
       "IAS received a VPN runtime notification but could not load the current runtime snapshot. Use Refresh now, then refresh reconciliation before acting on incidents.");
@@ -329,6 +351,14 @@ reconciliation_content_panel(Reconciliation, Incidents) ->
     #panel{id = vpn_reconciliation_content,
            body = reconciliation_panel(Reconciliation, Incidents)}.
 
+reconciliation_read_only_panel(Reconciliation) ->
+    #panel{id = vpn_reconciliation_read_only,
+           body = reconciliation_read_only(Reconciliation)}.
+
+reconciliation_incidents_panel(Incidents) ->
+    #panel{id = vpn_reconciliation_incidents,
+           body = reconciliation_incident_content(Incidents)}.
+
 reconciliation_controls(Reconciliation) ->
     #panel{id = vpn_reconciliation_controls,
            class = <<"ias-status-card">>, body = [
@@ -342,10 +372,7 @@ reconciliation_controls(Reconciliation) ->
                          body = ias_html:text("Refresh reconciliation"),
                          postback = refresh_vpn_reconciliation},
                    replay_all_control(Reconciliation),
-                   #link{id = vpn_reconciliation_scan_incidents,
-                         class = [button, sgreen],
-                         body = ias_html:text("Scan incidents"),
-                         postback = scan_vpn_incidents}
+                   scan_incidents_control(Reconciliation)
                ]},
         #p{style = <<"font-size:11px;margin:8px 0 0;color:#64748b;">>,
            body = ias_html:text("Incident actor and note are entered per incident and saved only by Acknowledge or Resolve after verification. Unsafe overwrite and automatic orphan adoption are not available.")}
@@ -371,22 +398,35 @@ replay_all_control(_Reconciliation) ->
           style = <<"display:inline-block;padding:8px 12px;border-radius:4px;background:#cbd5e1;color:#64748b;font-size:12px;font-weight:600;cursor:not-allowed;">>,
           body = ias_html:text("Safe replay unavailable")}.
 
-reconciliation_panel({ok, Report}, {ok, Incidents})
-  when is_map(Report), is_list(Incidents) ->
+scan_incidents_control({ok, Report}) when is_map(Report) ->
+    #link{id = vpn_reconciliation_scan_incidents,
+          class = [button, sgreen],
+          body = ias_html:text("Scan incidents"),
+          postback = scan_vpn_incidents};
+scan_incidents_control(_Reconciliation) ->
+    #span{id = vpn_reconciliation_scan_incidents,
+          title = ias_html:text("Refresh reconciliation before scanning incidents."),
+          style = <<"display:inline-block;padding:8px 12px;border-radius:4px;background:#cbd5e1;color:#64748b;font-size:12px;font-weight:600;cursor:not-allowed;">>,
+          body = ias_html:text("Scan incidents unavailable")}.
+
+reconciliation_panel(Reconciliation, Incidents) ->
+    [reconciliation_read_only_panel(Reconciliation),
+     reconciliation_incidents_panel(Incidents)].
+
+reconciliation_read_only({ok, Report}) when is_map(Report) ->
     [reconciliation_summary(Report),
-     reconciliation_entries(maps:get(entries, Report, [])),
-     reconciliation_incidents(Incidents)];
-reconciliation_panel({error, Reason}, {ok, Incidents}) ->
-    [reconciliation_unavailable(Reason), reconciliation_incidents(Incidents)];
-reconciliation_panel({ok, Report}, {error, Reason}) when is_map(Report) ->
-    [reconciliation_summary(Report),
-     reconciliation_entries(maps:get(entries, Report, [])),
-     incident_unavailable(Reason)];
-reconciliation_panel({error, ReportReason}, {error, IncidentReason}) ->
-    [reconciliation_unavailable(ReportReason),
-     incident_unavailable(IncidentReason)];
-reconciliation_panel(_Report, _Incidents) ->
+     reconciliation_entries(maps:get(entries, Report, []))];
+reconciliation_read_only({error, Reason}) ->
+    reconciliation_unavailable(Reason);
+reconciliation_read_only(_Report) ->
     reconciliation_unavailable(invalid_reconciliation_state).
+
+reconciliation_incident_content({ok, Incidents}) when is_list(Incidents) ->
+    reconciliation_incidents(Incidents);
+reconciliation_incident_content({error, Reason}) ->
+    incident_unavailable(Reason);
+reconciliation_incident_content(_Incidents) ->
+    incident_unavailable(invalid_incident_state).
 
 reconciliation_summary(Report) ->
     Counts = maps:get(counts, Report, #{}),
