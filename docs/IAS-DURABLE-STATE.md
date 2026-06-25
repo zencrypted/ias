@@ -371,7 +371,7 @@ records without an explicit conflict policy.
 | Unsupported table/record schema | IAS startup fails closed with diagnostic |
 | Invalid or secret-bearing payload | write rejected; ETS unchanged |
 | Durable commit aborted | ETS unchanged |
-| ETS update fails after commit | report projection degraded; rehydrate from Mnesia |
+| ETS update fails after commit | report projection degraded; rehydrate from KVS |
 | Relationship references missing object | transaction rejected unless explicitly allowed by workflow |
 | VPN unavailable | domain state remains available; VPN reconciliation reports unavailable/stale |
 
@@ -453,11 +453,35 @@ commit. Enrollment completion that also spans certificate material, Device key
 references and wizard draft state remains tracked by `TD-014`; those external
 stores cannot be made atomic merely by extending the KVS domain graph boundary.
 
-### Stage 3 — Startup rehydration
+### Stage 3A — Rehydration engine
+
+**Status:** Implemented.
+
+`ias_demo_store:rehydrate/0` now validates the complete KVS domain record set,
+overlays durable VPN authority onto Device projections, prepares the entire ETS
+entry set before mutation and replaces the named runtime projection only after
+all validation succeeds. A failed durable read, unsupported schema, invalid
+relationship graph or VPN authority overlay leaves the existing ETS projection
+unchanged. If the final ETS replacement itself fails, the previous entries are
+restored.
+
+`ias_demo_store:projection_health/0` compares the current ETS entry map with a
+fresh expected projection built from KVS and reports:
+
+- durable object and relationship counts;
+- ETS object and relationship counts;
+- `synchronized`, `mismatch` or `unavailable`;
+- last rehydration attempt, successful rehydration time and error.
+
+The rehydration API is intentionally not invoked from application startup yet.
+That boot-order change belongs to Stage 3B so the engine can be tested without
+changing when Cowboy begins accepting requests.
+
+### Stage 3B — Startup integration and diagnostics UI
 
 - ensure the domain store before HTTP startup;
-- populate ETS from durable records;
-- expose projection health diagnostics;
+- invoke fail-closed rehydration before Cowboy accepts requests;
+- render projection health on Demo State;
 - keep manual Demo State export/import as an explicit development tool.
 
 ### Stage 4 — Restart Common Test

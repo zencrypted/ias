@@ -920,7 +920,13 @@ Stage 2B added `ias_demo_store:commit_graph/2`. Domain objects and their
 relationship edges are staged in one `ias_domain_store:transaction/1` unit of
 work and become visible through ETS only after the complete KVS graph commit.
 OVPN import and provisioning-wizard relationship application use this boundary.
-Startup rehydration is not implemented yet.
+
+Stage 3A added `ias_demo_store:rehydrate/0` and
+`ias_demo_store:projection_health/0`. The engine rebuilds the complete ETS
+projection from validated KVS records, overlays durable VPN authority, preserves
+the previous projection when recovery fails, and reports synchronized, mismatch
+or unavailable state with object/relationship counts. Startup invocation and
+Demo State rendering remain pending in Stage 3B.
 
 ### Remaining Direction
 

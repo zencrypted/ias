@@ -12,6 +12,8 @@
     security_policies/0,
     relationships/0,
     runtime_objects/0,
+    rehydrate/0,
+    projection_health/0,
     commit_graph/2,
     put_runtime_object/1,
     delete_runtime_object/2,
@@ -29,6 +31,7 @@
 
 -define(TABLE, ias_demo_store).
 -define(OWNER, ias_demo_store_owner).
+-define(PROJECTION_HEALTH_KEY, {?MODULE, projection_health}).
 
 ensure() ->
     ensure_table().
@@ -94,6 +97,46 @@ runtime_objects() ->
     Stored = [durable_overlay(Object) || {_Key, Object} <- ets:tab2list(?TABLE)],
     lists:sort(fun compare_records/2, Stored).
 
+rehydrate() ->
+    ensure(),
+    case prepare_expected_projection() of
+        {ok, Entries, DurableCounts} ->
+            case replace_runtime_projection(Entries) of
+                ok ->
+                    mark_rehydration_success(),
+                    RuntimeCounts = projection_counts(ets:tab2list(?TABLE)),
+                    {ok, projection_report(synchronized,
+                                           DurableCounts,
+                                           RuntimeCounts,
+                                           projection_metadata())};
+                {error, Reason} = Error ->
+                    mark_rehydration_failure(Reason),
+                    Error
+            end;
+        {error, Reason} = Error ->
+            mark_rehydration_failure(Reason),
+            Error
+    end.
+
+projection_health() ->
+    ensure(),
+    RuntimeEntries = ets:tab2list(?TABLE),
+    RuntimeCounts = projection_counts(RuntimeEntries),
+    Metadata = projection_metadata(),
+    case prepare_expected_projection() of
+        {ok, ExpectedEntries, DurableCounts} ->
+            Status = case projection_matches(ExpectedEntries, RuntimeEntries) of
+                         true -> synchronized;
+                         false -> mismatch
+                     end,
+            projection_report(Status, DurableCounts, RuntimeCounts, Metadata);
+        {error, Reason} ->
+            projection_report(unavailable,
+                              undefined,
+                              RuntimeCounts,
+                              Metadata#{last_rehydration_error => Reason})
+    end.
+
 commit_graph(Objects0, Relationships0)
   when is_list(Objects0), is_list(Relationships0) ->
     ensure(),
@@ -152,6 +195,7 @@ clear() ->
     ok = ias_vpn_authority:reset(),
     ok = ias_vpn_reconciliation_incidents:reset(),
     ets:delete_all_objects(?TABLE),
+    persistent_term:erase(?PROJECTION_HEALTH_KEY),
     ok.
 
 add_device(Device) when is_map(Device) ->
@@ -390,6 +434,142 @@ persist_graph_records([Object | Rest], Acc) ->
         {error, _} = Error ->
             Error
     end.
+
+prepare_expected_projection() ->
+    case ias_domain_store:all() of
+        {ok, Records} ->
+            case ias_vpn_authority:ensure() of
+                ok -> build_expected_projection(Records);
+                {error, Reason} ->
+                    {error, {vpn_authority_unavailable, Reason}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+build_expected_projection(Records) ->
+    try build_expected_projection(Records, #{}) of
+        {ok, EntryMap} ->
+            Entries = lists:sort(maps:to_list(EntryMap)),
+            {ok, Entries, projection_counts(Entries)};
+        {error, _} = Error ->
+            Error
+    catch
+        exit:{vpn_authority_overlay_failed, Reason} ->
+            {error, {vpn_authority_overlay_failed, Reason}};
+        Class:Reason:Stacktrace ->
+            {error,
+             {demo_store_projection_build_failed,
+              {Class, Reason, Stacktrace}}}
+    end.
+
+build_expected_projection([], EntryMap) ->
+    {ok, EntryMap};
+build_expected_projection([Record | Rest], EntryMap) ->
+    Kind = maps:get(kind, Record, undefined),
+    ObjectId = maps:get(object_id, Record, undefined),
+    Payload = maps:get(payload, Record, undefined),
+    Projected = durable_overlay(Payload),
+    Key = runtime_key(Projected),
+    case Key =:= {Kind, ObjectId} of
+        false ->
+            {error, {invalid_rehydration_identity, {Kind, ObjectId}, Key}};
+        true ->
+            case maps:is_key(Key, EntryMap) of
+                true ->
+                    {error, {duplicate_rehydration_identity, Key}};
+                false ->
+                    build_expected_projection(Rest,
+                                              EntryMap#{Key => Projected})
+            end
+    end.
+
+replace_runtime_projection(Entries) ->
+    Previous = ets:tab2list(?TABLE),
+    try
+        true = ets:delete_all_objects(?TABLE),
+        ok = insert_graph_entries(Entries),
+        case projection_matches(Entries, ets:tab2list(?TABLE)) of
+            true -> ok;
+            false -> erlang:error(projection_verification_failed)
+        end
+    catch
+        Class:Reason:Stacktrace ->
+            restore_runtime_projection(
+              Previous,
+              {Class, Reason, Stacktrace})
+    end.
+
+restore_runtime_projection(Previous, Failure) ->
+    try
+        true = ets:delete_all_objects(?TABLE),
+        ok = insert_graph_entries(Previous),
+        {error, {demo_store_projection_replace_failed, Failure}}
+    catch
+        RestoreClass:RestoreReason:RestoreStacktrace ->
+            {error,
+             {demo_store_projection_replace_and_restore_failed,
+              Failure,
+              {RestoreClass, RestoreReason, RestoreStacktrace}}}
+    end.
+
+projection_matches(ExpectedEntries, RuntimeEntries) ->
+    maps:from_list(ExpectedEntries) =:= maps:from_list(RuntimeEntries).
+
+projection_counts(Entries) ->
+    lists:foldl(
+      fun({_Key, #{kind := relationship}}, Counts) ->
+              Counts#{relationships => maps:get(relationships, Counts) + 1,
+                      total => maps:get(total, Counts) + 1};
+         ({_Key, _Object}, Counts) ->
+              Counts#{objects => maps:get(objects, Counts) + 1,
+                      total => maps:get(total, Counts) + 1}
+      end,
+      #{objects => 0, relationships => 0, total => 0},
+      Entries).
+
+projection_report(Status, DurableCounts, RuntimeCounts, Metadata) ->
+    DurableObjects = count_value(objects, DurableCounts),
+    DurableRelationships = count_value(relationships, DurableCounts),
+    DurableTotal = count_value(total, DurableCounts),
+    maps:merge(
+      #{status => Status,
+        durable_objects => DurableObjects,
+        durable_relationships => DurableRelationships,
+        durable_total => DurableTotal,
+        ets_projection_objects => maps:get(objects, RuntimeCounts),
+        ets_projection_relationships => maps:get(relationships, RuntimeCounts),
+        ets_projection_total => maps:get(total, RuntimeCounts)},
+      Metadata).
+
+count_value(_Key, undefined) ->
+    undefined;
+count_value(Key, Counts) ->
+    maps:get(Key, Counts).
+
+projection_metadata() ->
+    persistent_term:get(
+      ?PROJECTION_HEALTH_KEY,
+      #{last_rehydrated_at => undefined,
+        last_rehydration_attempt_at => undefined,
+        last_rehydration_error => undefined}).
+
+mark_rehydration_success() ->
+    Now = created_at(),
+    persistent_term:put(
+      ?PROJECTION_HEALTH_KEY,
+      #{last_rehydrated_at => Now,
+        last_rehydration_attempt_at => Now,
+        last_rehydration_error => undefined}),
+    ok.
+
+mark_rehydration_failure(Reason) ->
+    Metadata = projection_metadata(),
+    persistent_term:put(
+      ?PROJECTION_HEALTH_KEY,
+      Metadata#{last_rehydration_attempt_at => created_at(),
+                last_rehydration_error => Reason}),
+    ok.
 
 project_graph(ObjectRecords, RelationshipRecords) ->
     ObjectProjections = [maps:get(payload, Record) || Record <- ObjectRecords],
