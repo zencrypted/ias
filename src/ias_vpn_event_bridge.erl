@@ -110,6 +110,10 @@ handle_call(_Request, _From, State) ->
 handle_cast(_Message, State) ->
     {noreply, State}.
 
+handle_info(connect, #{connected := true} = State0) ->
+    %% A cancelled retry can already be in the mailbox when nodeup reconnects.
+    %% Ignore that stale timer instead of resubscribing and repainting again.
+    {noreply, State0#{retry_ref => undefined}};
 handle_info(connect, State0) ->
     State1 = State0#{retry_ref => undefined},
     {noreply, connect_remote(State1)};
@@ -118,15 +122,19 @@ handle_info({vpn_event, Event}, State0) when is_map(Event) ->
 handle_info({'DOWN', MonitorRef, process, _Pid, Reason}, State0) ->
     case MonitorRef =:= maps:get(remote_monitor_ref, State0, undefined) of
         true ->
-            State1 = mark_disconnected({vpn_event_bus_down, Reason}, State0),
-            broadcast({vpn_runtime_event_status, public_status(State1)}, State1),
-            {noreply, schedule_retry(State1)};
+            DisconnectReason = {vpn_event_bus_down, Reason},
+            State1 = mark_disconnected(DisconnectReason, State0),
+            maybe_broadcast_status_change(State0, State1),
+            {noreply, reconnect_after_failure(DisconnectReason, State1)};
         false ->
             {noreply, remove_local_monitor(MonitorRef, State0)}
     end;
 handle_info({nodedown, VpnNode}, #{vpn_node := VpnNode} = State0) ->
     State1 = mark_disconnected(vpn_node_down, State0),
-    broadcast({vpn_runtime_event_status, public_status(State1)}, State1),
+    maybe_broadcast_status_change(State0, State1),
+    %% nodeup triggers an immediate reconnect. Keep the timer only as a quiet
+    %% safety net because distributed Erlang does not discover a restarted node
+    %% until some connection attempt is made.
     {noreply, schedule_retry(State1)};
 handle_info({nodeup, VpnNode}, #{vpn_node := VpnNode,
                                 connected := false} = State0) ->
@@ -144,7 +152,7 @@ option(Key, Options, Default) ->
 
 connect_remote(#{vpn_node := undefined} = State0) ->
     State1 = mark_disconnected(vpn_node_not_configured, State0),
-    broadcast({vpn_runtime_event_status, public_status(State1)}, State1),
+    maybe_broadcast_status_change(State0, State1),
     schedule_retry(State1);
 connect_remote(State0) ->
     State1 = clear_remote_monitor(State0),
@@ -174,8 +182,8 @@ connect_remote(State0) ->
             publish_snapshot_result(SyncReason, Summary, State2);
         {error, Reason} ->
             State2 = mark_disconnected(Reason, State1),
-            broadcast({vpn_runtime_event_status, public_status(State2)}, State2),
-            schedule_retry(State2)
+            maybe_broadcast_status_change(State0, State2),
+            reconnect_after_failure(Reason, State2)
     end.
 
 remote_subscribe(State) ->
@@ -346,6 +354,26 @@ broadcast(Payload, State) ->
                  maps:get(subscribers, State)),
     ok.
 
+maybe_broadcast_status_change(State0, State1) ->
+    case status_transition_key(State0) =:= status_transition_key(State1) of
+        true -> ok;
+        false -> broadcast({vpn_runtime_event_status, public_status(State1)}, State1)
+    end.
+
+%% Retry details such as the most recent RPC error are useful through status/0,
+%% but they are not UI state transitions. Keeping them out of this key prevents
+%% an unavailable VPN node from repainting every subscribed page on each retry.
+status_transition_key(State) ->
+    {maps:get(connected, State, false),
+     maps:get(snapshot_status, State, not_loaded),
+     maps:get(sync_reason, State, starting)}.
+
+reconnect_after_failure(_Reason, State) ->
+    %% Retry is a backend recovery mechanism, not a UI notification. nodeup
+    %% cancels this timer and reconnects immediately when distribution notices
+    %% the node first; otherwise the timer itself re-establishes the connection.
+    schedule_retry(State).
+
 mark_disconnected(Reason, State0) ->
     State1 = clear_remote_monitor(State0),
     SnapshotStatus = case maps:get(snapshot_status, State1, not_loaded) of
@@ -355,9 +383,26 @@ mark_disconnected(Reason, State0) ->
     State1#{connected => false,
             remote_bus_pid => undefined,
             remote_monitor_ref => undefined,
-            last_error => Reason,
+            last_error => normalize_disconnect_reason(Reason),
             snapshot_status => SnapshotStatus,
             sync_reason => disconnected}.
+
+normalize_disconnect_reason(Reason) ->
+    case contains_node_disconnect(Reason) of
+        true -> vpn_node_down;
+        false -> Reason
+    end.
+
+contains_node_disconnect(nodedown) ->
+    true;
+contains_node_disconnect(noconnection) ->
+    true;
+contains_node_disconnect(Reason) when is_tuple(Reason) ->
+    lists:any(fun contains_node_disconnect/1, tuple_to_list(Reason));
+contains_node_disconnect(Reason) when is_list(Reason) ->
+    lists:any(fun contains_node_disconnect/1, Reason);
+contains_node_disconnect(_Reason) ->
+    false.
 
 clear_remote_monitor(State0) ->
     case maps:get(remote_monitor_ref, State0, undefined) of

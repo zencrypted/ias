@@ -9,6 +9,7 @@
          end_per_suite/1,
          provisioning_lifecycle/1,
          vpn_runtime_events_notify_ias_after_reconciliation/1,
+         vpn_event_bridge_recovers_after_vpn_node_restart/1,
          provisioning_identity_and_revision_guards/1,
          read_only_reconciliation_reports_synchronized_state/1,
          safe_reconciliation_replays_vpn_behind_state/1,
@@ -38,7 +39,8 @@ all() ->
      replayed_dataplane_frame_is_rejected,
      previous_epoch_expires_after_grace_window,
      out_of_order_frames_within_replay_window_are_accepted,
-     wizard_provisions_device_into_vpn_runtime].
+     wizard_provisions_device_into_vpn_runtime,
+     vpn_event_bridge_recovers_after_vpn_node_restart].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -316,6 +318,106 @@ vpn_runtime_events_notify_ias_after_reconciliation(Config) ->
                      unsubscribe,
                      [self()],
                      ?RPC_TIMEOUT_MS)
+    end,
+    ok.
+
+vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    VpnRepo = proplists:get_value(vpn_repo, Config),
+    OldVpnProcess = proplists:get_value(vpn_process, Config),
+    MnesiaDir = proplists:get_value(vpn_mnesia_dir, Config),
+    RestartLogPath = filename:join(filename:dirname(
+                                      proplists:get_value(vpn_log, Config)),
+                                   "vpn-restart.log"),
+    {ok, BridgePid} = ias_vpn_event_bridge:start_link(
+                        #{vpn_node => VpnNode,
+                          rpc_timeout => ?RPC_TIMEOUT_MS,
+                          retry_ms => 200}),
+    try
+        {ok, _SubscriptionStatus} =
+            gen_server:call(BridgePid, {subscribe, self()}),
+        InitialStatus = wait_for_bridge_connected(BridgePid,
+                                                  ?EVENT_TIMEOUT_MS),
+        OldStreamId = maps:get(stream_id, InitialStatus),
+        OldBusPid = rpc:call(VpnNode,
+                             erlang,
+                             whereis,
+                             [vpn_event_bus],
+                             ?RPC_TIMEOUT_MS),
+        ?assert(OldStreamId =/= undefined),
+        ?assert(is_pid(OldBusPid)),
+        flush_bridge_direct_messages(),
+
+        ok = stop_vpn_process(OldVpnProcess),
+        ok = wait_for_node_down(VpnNode, ?EVENT_TIMEOUT_MS),
+        DisconnectStatus = receive_bridge_disconnect(?EVENT_TIMEOUT_MS),
+        ?assertEqual(false, maps:get(connected, DisconnectStatus)),
+        ?assertEqual(stale, maps:get(snapshot_status, DisconnectStatus)),
+
+        %% The bridge may keep quiet recovery attempts while the VPN node is
+        %% down, and nodeup may reconnect sooner, but neither path may repeatedly
+        %% repaint UI subscribers with the same disconnected state.
+        assert_no_bridge_direct_update(700),
+
+        {ok, RestartProcess} = start_vpn(VpnRepo,
+                                         RestartLogPath,
+                                         MnesiaDir),
+        try
+            case wait_for_vpn_ready(VpnNode,
+                                    RestartProcess,
+                                    ?STARTUP_TIMEOUT_MS) of
+                ok -> ok;
+                {error, RestartReason} ->
+                    ct:fail({vpn_restart_failed,
+                             RestartReason,
+                             read_log(RestartLogPath)})
+            end,
+            {ok, _RestartTemplates} = configure_vpn_test_runtime(VpnNode),
+            {ReconnectedSummary, ReconnectedStatus} =
+                receive_bridge_snapshot(reconnected,
+                                        ?EVENT_TIMEOUT_MS),
+            ?assertMatch({ok, _}, ReconnectedSummary),
+            ?assertEqual(true, maps:get(connected, ReconnectedStatus)),
+            ?assertEqual(fresh,
+                         maps:get(snapshot_status, ReconnectedStatus)),
+            NewStreamId = maps:get(stream_id, ReconnectedStatus),
+            ReconnectedSequence = maps:get(sequence, ReconnectedStatus),
+            NewBusPid = rpc:call(VpnNode,
+                                 erlang,
+                                 whereis,
+                                 [vpn_event_bus],
+                                 ?RPC_TIMEOUT_MS),
+            ?assert(NewStreamId =/= undefined),
+            ?assert(is_integer(ReconnectedSequence)),
+            ?assert(is_pid(NewBusPid)),
+            ?assert(NewBusPid =/= OldBusPid),
+
+            ActualFingerprint = actual_vpn_fingerprint(VpnNode),
+            DeviceId = unique_id(<<"ias_ct_restart_event_device_">>),
+            ok = reset_ias_state(),
+            allow = prepare_authorized_device(DeviceId, ActualFingerprint),
+            {ok, UpsertResult} =
+                ias_vpn_provisioning_delivery:build_and_deliver(DeviceId,
+                                                                 upsert),
+            ?assertEqual(applied, delivery_status(UpsertResult)),
+            {RuntimeEvent, EventSummary, EventStatus} =
+                receive_bridge_runtime_event(DeviceId,
+                                             NewStreamId,
+                                             ReconnectedSequence,
+                                             ?EVENT_TIMEOUT_MS),
+            ?assertMatch({ok, _}, EventSummary),
+            ?assert(maps:get(sequence, RuntimeEvent) >
+                    ReconnectedSequence),
+            ?assertEqual(NewStreamId, maps:get(stream_id, RuntimeEvent)),
+            ?assertEqual(true, maps:get(connected, EventStatus)),
+            ?assert(lists:member(DeviceId, running_peers(VpnNode)))
+        after
+            _ = stop_vpn_process(RestartProcess),
+            _ = wait_for_node_down(VpnNode, 5000)
+        end
+    after
+        stop_test_event_bridge(BridgePid),
+        flush_bridge_direct_messages()
     end,
     ok.
 
@@ -2220,6 +2322,145 @@ prepare_authorized_peer(DeviceId, PeerId, Fingerprint) ->
                              key_match => true}),
     Decision = ias_authorization_decision:device_decision(DeviceId, access_vpn),
     maps:get(decision, Decision).
+
+wait_for_bridge_connected(BridgePid, TimeoutMs) ->
+    wait_for_bridge_connected(BridgePid,
+                              TimeoutMs,
+                              erlang:monotonic_time(millisecond),
+                              undefined).
+
+wait_for_bridge_connected(BridgePid, TimeoutMs, StartedAt, LastStatus) ->
+    Status = gen_server:call(BridgePid, status),
+    case Status of
+        #{connected := true, snapshot_status := fresh} ->
+            Status;
+        _ ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= TimeoutMs of
+                true ->
+                    ct:fail({vpn_event_bridge_connect_timeout,
+                             LastStatus,
+                             Status});
+                false ->
+                    timer:sleep(50),
+                    wait_for_bridge_connected(BridgePid,
+                                              TimeoutMs,
+                                              StartedAt,
+                                              Status)
+            end
+    end.
+
+receive_bridge_disconnect(TimeoutMs) ->
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    receive_bridge_disconnect(Deadline, undefined).
+
+receive_bridge_disconnect(Deadline, LastPayload) ->
+    Remaining = erlang:max(0,
+                           Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {direct,
+         {vpn_runtime_event_status,
+          Status = #{connected := false}}} ->
+            Status;
+        {direct, Payload} ->
+            receive_bridge_disconnect(Deadline, Payload)
+    after Remaining ->
+        ct:fail({vpn_event_bridge_disconnect_timeout, LastPayload})
+    end.
+
+assert_no_bridge_direct_update(TimeoutMs) ->
+    receive
+        {direct, Payload} ->
+            ct:fail({duplicate_vpn_event_bridge_update, Payload})
+    after TimeoutMs ->
+        ok
+    end.
+
+receive_bridge_snapshot(ExpectedReason, TimeoutMs) ->
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    receive_bridge_snapshot(ExpectedReason, Deadline, undefined).
+
+receive_bridge_snapshot(ExpectedReason, Deadline, LastPayload) ->
+    Remaining = erlang:max(0,
+                           Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {direct,
+         {vpn_runtime_snapshot,
+          ExpectedReason,
+          Summary,
+          Status}} ->
+            {Summary, Status};
+        {direct, Payload} ->
+            receive_bridge_snapshot(ExpectedReason, Deadline, Payload)
+    after Remaining ->
+        ct:fail({vpn_event_bridge_snapshot_timeout,
+                 ExpectedReason,
+                 LastPayload})
+    end.
+
+receive_bridge_runtime_event(DeviceId,
+                             StreamId,
+                             AfterSequence,
+                             TimeoutMs) ->
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    receive_bridge_runtime_event(DeviceId,
+                                 StreamId,
+                                 AfterSequence,
+                                 Deadline,
+                                 undefined).
+
+receive_bridge_runtime_event(DeviceId,
+                             StreamId,
+                             AfterSequence,
+                             Deadline,
+                             LastPayload) ->
+    Remaining = erlang:max(0,
+                           Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {direct,
+         {vpn_runtime_event,
+          Event = #{stream_id := StreamId,
+                    sequence := Sequence,
+                    result := Result},
+          Summary,
+          Status}}
+          when Sequence > AfterSequence ->
+            case lists:member(DeviceId, maps:get(peer_ids, Result, [])) of
+                true ->
+                    {Event, Summary, Status};
+                false ->
+                    receive_bridge_runtime_event(DeviceId,
+                                                 StreamId,
+                                                 AfterSequence,
+                                                 Deadline,
+                                                 Event)
+            end;
+        {direct, Payload} ->
+            receive_bridge_runtime_event(DeviceId,
+                                         StreamId,
+                                         AfterSequence,
+                                         Deadline,
+                                         Payload)
+    after Remaining ->
+        ct:fail({vpn_event_bridge_runtime_event_timeout,
+                 DeviceId,
+                 StreamId,
+                 AfterSequence,
+                 LastPayload})
+    end.
+
+stop_test_event_bridge(BridgePid) when is_pid(BridgePid) ->
+    _ = catch gen_server:call(BridgePid, {unsubscribe, self()}),
+    unlink(BridgePid),
+    _ = catch gen_server:stop(BridgePid, normal, 2000),
+    ok.
+
+flush_bridge_direct_messages() ->
+    receive
+        {direct, _Payload} -> flush_bridge_direct_messages()
+    after 0 ->
+        ok
+    end.
 
 actual_vpn_fingerprint(VpnNode) ->
     {ok, ClientAEntry} = rpc:call(VpnNode,

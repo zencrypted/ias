@@ -184,6 +184,15 @@ states. A successful subscription followed by a failed snapshot RPC must emit a
 snapshot-failed UI event, not the same event used for a fresh snapshot. This avoids
 claims such as "fresh snapshot loaded" when only the transport reconnected.
 
+Backend reconnect attempts are not UI events. Publish a disconnect notification
+only when the visible state actually changes, then keep retries silent. A monitored
+`nodeup` event should trigger an immediate reconnect, while a quiet retry timer
+remains as a safety net because distributed Erlang may need an outbound connection
+attempt before it can discover a restarted node. The same retry also covers a
+service such as the remote event bus restarting while its node remains online.
+Exclude changing diagnostic details such as the latest RPC error from the UI
+transition key, or every failed retry will unnecessarily replace Nitro fragments.
+
 A page websocket process may register itself with a supervised bridge during
 `event(init)` and unregister during `event(terminate)`. The bridge must monitor
 page processes, and backend code must send `{direct, Payload}` to the websocket

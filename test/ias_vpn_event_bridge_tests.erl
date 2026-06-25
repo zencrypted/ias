@@ -27,6 +27,17 @@ event_bridge_pushes_fresh_runtime_snapshots_test_() ->
                                        maps:get(connected,
                                                 SubscriptionStatus)),
 
+                          %% A retry message that was already queued before a
+                          %% successful nodeup reconnect must be harmless.
+                          BridgePid ! connect,
+                          receive
+                              {direct, StaleRetryUpdate} ->
+                                  error({stale_retry_repaint,
+                                         StaleRetryUpdate})
+                          after 50 ->
+                              ok
+                          end,
+
                           Event1 = #{schema_version => 1,
                                      type => runtime_reconciled,
                                      stream_id => StreamId,
@@ -85,6 +96,17 @@ event_bridge_pushes_fresh_runtime_snapshots_test_() ->
                                   ok
                           after 1000 ->
                               error(vpn_runtime_disconnect_timeout)
+                          end,
+
+                          %% The bridge may retry quietly when the event bus can
+                          %% recover without a node transition, but the same
+                          %% disconnected state must not repaint the page again.
+                          receive
+                              {direct, DuplicateDisconnectUpdate} ->
+                                  error({duplicate_vpn_disconnect_update,
+                                         DuplicateDisconnectUpdate})
+                          after 150 ->
+                              ok
                           end
                       end)]
      end}.
@@ -132,10 +154,15 @@ setup() ->
                  subscribe,
                  [SubscriberPid],
                  _Timeout) ->
-                     TestPid ! {remote_subscribed, SubscriberPid},
-                     {ok, #{schema_version => 1,
-                            stream_id => StreamId,
-                            sequence => 0}};
+                     case erlang:is_process_alive(BusPid) of
+                         true ->
+                             TestPid ! {remote_subscribed, SubscriberPid},
+                             {ok, #{schema_version => 1,
+                                    stream_id => StreamId,
+                                    sequence => 0}};
+                         false ->
+                             {badrpc, nodedown}
+                     end;
                 (_Node,
                  erlang,
                  whereis,
@@ -154,7 +181,7 @@ setup() ->
     {ok, BridgePid} = ias_vpn_event_bridge:start_link(
                         #{vpn_node => node(),
                           rpc_timeout => 100,
-                          retry_ms => 1000,
+                          retry_ms => 20,
                           rpc_fun => RpcFun,
                           summary_fun => SummaryFun}),
     #{bridge => BridgePid,

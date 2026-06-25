@@ -810,7 +810,11 @@ Runtime events replace only the independent read-only targets
 `vpn_runtime_summary`. Reconciliation forms are left intact; a separate stale
 notice asks the operator to refresh reconciliation before using incident actions.
 The bridge monitors the remote event-bus process and reconnects after VPN node or
-event-bus restart. Disconnect is represented explicitly in the UI: the previous
+event-bus restart. A distributed Erlang `nodeup` notification triggers an
+immediate reconnect, while a quiet retry timer remains as a discovery and recovery
+safety net for both full node outages and event-bus restarts. Retry attempts update
+bridge diagnostics but do not repeatedly notify page processes unless the visible
+connection or snapshot state changes. Disconnect is represented explicitly in the UI: the previous
 runtime table is retained as a last-known snapshot, marked stale, and accompanied
 by a visible reconnecting notice. Event-stream subscription and runtime snapshot
 freshness are separate states; reconnect is reported as successful only when the
