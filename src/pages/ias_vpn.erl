@@ -2,6 +2,7 @@
 -export([event/1, content/1, content/3, create_vpn_service/4, create_vpn_service/6,
          runtime_status_panel/1, runtime_summary_panel/1,
          runtime_connection_notice_panel/2,
+         reconciliation_stale_notice/1,
          reconciliation_panel/2]).
 -include_lib("nitro/include/nitro.hrl").
 
@@ -250,6 +251,12 @@ update_runtime_event_status_ui(BridgeStatus) ->
     nitro:update(vpn_runtime_event_status,
                  runtime_event_status_panel(BridgeStatus)).
 
+maybe_mark_reconciliation_stale(subscribed) ->
+    %% A page may have observed VPN as disconnected before the bridge ever
+    %% completed its first subscription. The first successful connection is
+    %% therefore `subscribed`, not `reconnected`, but it must still replace the
+    %% stale disconnect notice with the current connected state.
+    mark_reconciliation_stale(connected);
 maybe_mark_reconciliation_stale(reconnected) ->
     mark_reconciliation_stale(reconnected);
 maybe_mark_reconciliation_stale(_Reason) ->
@@ -259,6 +266,9 @@ mark_reconciliation_stale(Event) ->
     nitro:update(vpn_reconciliation_stale_notice,
                  reconciliation_stale_notice(Event)).
 
+reconciliation_stale_notice(connected) ->
+    reconciliation_stale_message(
+      "VPN event delivery is connected and a fresh runtime snapshot was loaded. Refresh reconciliation before acting on incidents.");
 reconciliation_stale_notice(reconnected) ->
     reconciliation_stale_message(
       "VPN event delivery reconnected and a fresh runtime snapshot was loaded. Refresh reconciliation before acting on incidents because changes may have occurred while IAS was disconnected.");

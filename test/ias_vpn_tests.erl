@@ -78,6 +78,14 @@ vpn_page_renders_explicit_disconnected_runtime_notice_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"last known snapshot">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"reconnecting in the background">>)).
 
+vpn_reconciliation_notice_replaces_disconnect_after_initial_connect_test() ->
+    Notice = ias_vpn:reconciliation_stale_notice(connected),
+    Html = iolist_to_binary(nitro:render(Notice)),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"VPN event delivery is connected">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"fresh runtime snapshot was loaded">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"VPN disconnected">>)).
+
 runtime_refresh_panels_preserve_update_targets_test() ->
     StatusHtml = iolist_to_binary(nitro:render(ias_vpn:runtime_status_panel({error, unavailable}))),
     SummaryHtml = iolist_to_binary(nitro:render(ias_vpn:runtime_summary_panel({error, unavailable}))),
