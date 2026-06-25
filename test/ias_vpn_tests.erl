@@ -130,8 +130,9 @@ vpn_page_renders_reconciliation_controls_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_refresh">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_replay_all">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_scan_incidents">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_actor">>)),
-    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_note">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Safe replay unavailable">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"vpn_incident_actor_">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"vpn_incident_note_">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Force overwrite">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Adopt orphan">>)).
 
@@ -173,5 +174,11 @@ vpn_reconciliation_panel_renders_safe_actions_and_incidents_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"Blocked">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Acknowledge">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Resolve after verification">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_reconciliation_replay_">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_incident_actor_">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_incident_note_">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_incident_acknowledge_">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_incident_resolve_">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"Saved by Acknowledge or Resolve">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_revision_behind">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"command_digest_mismatch">>)).
