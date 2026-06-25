@@ -2,7 +2,7 @@
 
 ## Status
 
-Stage 1 implemented; Stages 2–7 remain planned.
+Stages 1 and 2A implemented; Stages 2B–7 remain planned.
 
 This document defines how IAS should make its domain object graph survive an IAS
 node restart without changing the authority boundary between IAS and VPN.
@@ -400,20 +400,35 @@ Until that workflow is designed, automatic orphan adoption remains prohibited.
 - all domain CRUD paths use `kvs:get/2`, `kvs:put/1`, `kvs:delete/2` and `kvs:all/1`;
 - kind-specific allow-listed projections reject secret-bearing material;
 - revisions, idempotent writes, relationship references and guarded deletion are
-  covered by EUnit tests;
-- `ias_demo_store` write paths remain unchanged until Stage 2.
+  covered by EUnit tests.
 
-### Stage 2 — Write-through domain façade
+### Stage 2A — Single-object write-through façade
 
-Move these paths to durable-first writes while preserving their public APIs:
+**Status:** Implemented.
 
-- `put_runtime_object/1`;
-- `delete_runtime_object/2`;
-- `add_relationship/1`;
-- `delete_relationship/1`;
-- `add_enrollment_result/1`.
+The existing `ias_demo_store` API now commits through `ias_domain_store` before
+updating its ETS projection:
 
-Add transactional graph operations before converting wizard completion.
+- `put_runtime_object/1` stores the allow-listed KVS payload first and exposes
+  only that validated projection through ETS;
+- `delete_runtime_object/2` performs guarded durable deletion before removing
+  the ETS entry;
+- relationship and CMP enrollment helpers use the same write-through boundary;
+- `clear/0` resets the KVS domain table as well as the volatile projection;
+- rejected or secret-bearing objects never become visible in ETS;
+- deliberately broken or secret-bearing graph fixtures are inserted only by a
+  test helper and do not weaken the production persistence API.
+
+KVS keys use canonical text identities while payload IDs preserve the existing
+runtime atom/binary representation. This keeps the compatibility façade stable
+until the wider object model adopts one canonical public ID type.
+
+### Stage 2B — Transactional graph writes
+
+Add a graph-level operation that validates and commits all objects and
+relationships in one `ias_domain_store:transaction/1` unit of work, then updates
+ETS only after successful durable commit. Convert wizard completion and other
+multi-object flows to that API.
 
 ### Stage 3 — Startup rehydration
 

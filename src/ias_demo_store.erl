@@ -89,22 +89,43 @@ runtime_objects() ->
     Stored = [durable_overlay(Object) || {_Key, Object} <- ets:tab2list(?TABLE)],
     lists:sort(fun compare_records/2, Stored).
 
-put_runtime_object(#{kind := Kind, id := Id} = Object) ->
+put_runtime_object(#{kind := _Kind, id := _Id} = Object) ->
     ensure(),
-    ok = persist_device_authority(Object),
-    Stored = durable_overlay(Object),
-    true = ets:insert(?TABLE, {{Kind, Id}, Stored}),
-    Stored.
+    case ias_domain_store:put(Object) of
+        {ok, DomainRecord, _Change} ->
+            Projection = maps:get(payload, DomainRecord),
+            case persist_device_authority(Projection) of
+                ok ->
+                    Stored = durable_overlay(Projection),
+                    Key = runtime_key(Stored),
+                    true = ets:insert(?TABLE, {Key, Stored}),
+                    Stored;
+                {error, Reason} ->
+                    erlang:error({demo_store_device_authority_write_failed, Reason})
+            end;
+        {error, Reason} ->
+            erlang:error({demo_store_domain_write_failed, Reason})
+    end.
 
 delete_runtime_object(Kind, Id0) ->
     ensure(),
     Id = normalize_id(Id0),
-    ok = maybe_delete_device_authority(Kind, Id),
-    ets:delete(?TABLE, {Kind, Id}),
-    ok.
+    case ias_domain_store:delete(Kind, Id) of
+        ok ->
+            case maybe_delete_device_authority(Kind, Id) of
+                ok ->
+                    ets:delete(?TABLE, {Kind, Id}),
+                    ok;
+                {error, Reason} ->
+                    {error, {vpn_authority_delete_failed, Reason}}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
 
 clear() ->
     ensure(),
+    ok = ias_domain_store:reset(),
     ok = ias_vpn_authority:reset(),
     ok = ias_vpn_reconciliation_incidents:reset(),
     ets:delete_all_objects(?TABLE),
@@ -137,13 +158,10 @@ add_relationship(Relationship) when is_map(Relationship) ->
                score => maps:get(score, Relationship, 0),
                warnings => maps:get(warnings, Relationship, []),
                created_at => maps:get(created_at, Relationship, CreatedAt)},
-    ets:insert(?TABLE, {{relationship, Id}, Stored}),
-    Stored.
+    put_runtime_object(Stored).
 
 delete_relationship(Id) ->
-    ensure(),
-    ets:delete(?TABLE, {relationship, normalize_id(Id)}),
-    ok.
+    delete_runtime_object(relationship, Id).
 
 add_enrollment_result(Result) when is_map(Result) ->
     ensure(),
@@ -172,8 +190,8 @@ add_enrollment_result(Result) when is_map(Result) ->
                issued_via => maps:get(issued_via, Result, undefined),
                private_key_stored => false,
                certificate_body_stored => false},
-    ets:insert(?TABLE, {{cmp_enrollment_result, Id}, Stored}),
-    Id.
+    Persisted = put_runtime_object(Stored),
+    maps:get(id, Persisted).
 
 get_enrollment_result(undefined) ->
     not_found;
@@ -266,6 +284,9 @@ maybe_delete_device_authority(_Kind, _Id) ->
 
 durable_overlay(Object) ->
     ias_vpn_authority:overlay_device(Object).
+
+runtime_key(#{kind := Kind, id := Id}) ->
+    {Kind, normalize_id(Id)}.
 
 compare_records(A, B) ->
     {maps:get(import_id, A, undefined),

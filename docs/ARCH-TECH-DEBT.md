@@ -908,10 +908,14 @@ automatic source of truth, a transactional store or startup rehydration.
 ### Completed
 
 Stage 1 introduced the standalone `ias_domain_store` skeleton and the
-`ias_domain_object` table registered in `ias_kvs`. The store validates a kind-specific public
-projection, rejects secret-bearing data, maintains monotonic revisions, and
-enforces relationship references and guarded deletion. Existing
-`ias_demo_store` writes are intentionally not connected yet.
+`ias_domain_object` table registered in `ias_kvs`. The store validates a
+kind-specific public projection, rejects secret-bearing data, maintains
+monotonic revisions, and enforces relationship references and guarded deletion.
+
+Stage 2A connected the single-object `ias_demo_store` write, delete,
+relationship, enrollment-result and reset paths to the durable KVS boundary.
+ETS is updated only after a successful durable commit. Startup rehydration and
+multi-object graph atomicity are not implemented yet.
 
 ### Remaining Direction
 

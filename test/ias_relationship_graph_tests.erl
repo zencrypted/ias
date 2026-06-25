@@ -48,7 +48,7 @@ relationship_tree_render_test() ->
 broken_relationship_detection_test() ->
     ias_demo_store:clear(),
     Device = ias_demo_store:add_device(#{id => <<"graph_device">>}),
-    Broken = ias_demo_store:add_relationship(#{
+    Broken = ias_demo_store_fixture:add_relationship(#{
         relation_type => uses_certificate,
         source_kind => device,
         source_id => maps:get(id, Device),
@@ -79,14 +79,14 @@ graph_consistency_report_test() ->
     {ok, Known} = ias_relationship_link:create(uses_certificate,
                                                maps:get(id, Device),
                                                maps:get(id, Certificate)),
-    Unknown = ias_demo_store:add_relationship(#{
+    Unknown = ias_demo_store_fixture:add_relationship(#{
         relation_type => experimental_relation,
         source_kind => device,
         source_id => maps:get(id, Device),
         target_kind => certificate,
         target_id => maps:get(id, Certificate)
     }),
-    Broken = ias_demo_store:add_relationship(#{
+    Broken = ias_demo_store_fixture:add_relationship(#{
         relation_type => uses_certificate,
         source_kind => device,
         source_id => maps:get(id, Device),

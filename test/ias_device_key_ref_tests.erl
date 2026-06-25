@@ -48,7 +48,7 @@ demo_state_roundtrip_preserves_device_key_reference_test() ->
 
 private_key_body_is_not_exported_test() ->
     ias_demo_state:clear(),
-    _Device = ias_demo_store:put_runtime_object(#{
+    _Device = ias_demo_store_fixture:put_runtime_object(#{
         id => <<"key_ref_secret_device">>,
         kind => device,
         source => manual_device,

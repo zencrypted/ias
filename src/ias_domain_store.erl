@@ -143,7 +143,7 @@ outer_transaction(Fun) ->
 
 write_projection(Projection) ->
     Kind = maps:get(kind, Projection),
-    ObjectId = maps:get(id, Projection),
+    ObjectId = normalize_id(maps:get(id, Projection)),
     Key = {Kind, ObjectId},
     ok = validate_relationship_projection_or_abort(Projection),
     Now = now_seconds(),
@@ -179,7 +179,7 @@ persistent_projection(#{kind := Kind0, id := ObjectId0} = Object) ->
     case requested_schema_version(Object) of
         ok ->
             case normalize_identity(Kind0, ObjectId0) of
-                {ok, Kind, ObjectId} ->
+                {ok, Kind, _ObjectId} ->
                     case forbidden_material_path(Object) of
                         none ->
                             Fields = lists:usort(common_fields() ++ kind_fields(Kind)),
@@ -187,7 +187,7 @@ persistent_projection(#{kind := Kind0, id := ObjectId0} = Object) ->
                             Projection = normalize_projection(
                                            Kind,
                                            Projection0#{kind => Kind,
-                                                        id => ObjectId}),
+                                                        id => normalize_payload_id(ObjectId0)}),
                             case validate_projection(Projection) of
                                 ok -> {ok, Projection};
                                 {error, _} = Error -> Error
@@ -223,14 +223,16 @@ normalize_identity(Kind, ObjectId0) ->
     end.
 
 normalize_projection(relationship, Projection) ->
-    Projection#{source_id => normalize_id(maps:get(source_id, Projection, undefined)),
-                target_id => normalize_id(maps:get(target_id, Projection, undefined))};
+    Projection#{source_id => normalize_payload_id(
+                                maps:get(source_id, Projection, undefined)),
+                target_id => normalize_payload_id(
+                                maps:get(target_id, Projection, undefined))};
 normalize_projection(_Kind, Projection) ->
     Projection.
 
 validate_projection(#{kind := Kind, id := ObjectId} = Projection) ->
     Checks = [supported_kind(Kind),
-              nonempty_binary(ObjectId),
+              usable_payload_id(ObjectId),
               safe_term(Projection)],
     case lists:all(fun(Check) -> Check =:= true end, Checks) of
         false -> {error, invalid_domain_payload};
@@ -247,9 +249,9 @@ validate_kind_projection(relationship, Projection) ->
     TargetId = maps:get(target_id, Projection, undefined),
     Checks = [ias_relationship_graph:known_relationship_type(RelationType),
               supported_kind(SourceKind),
-              nonempty_binary(SourceId),
+              usable_payload_id(SourceId),
               supported_kind(TargetKind),
-              nonempty_binary(TargetId)],
+              usable_payload_id(TargetId)],
     case lists:all(fun(Check) -> Check =:= true end, Checks) of
         true -> ok;
         false -> {error, invalid_domain_relationship}
@@ -277,7 +279,7 @@ validate_reference_or_abort(Kind, ObjectId) ->
         true ->
             ok;
         false ->
-            case lookup_record({Kind, ObjectId}) of
+            case lookup_record({Kind, normalize_id(ObjectId)}) of
                 #ias_domain_object{} -> ok;
                 not_found ->
                     abort({missing_domain_reference, Kind, ObjectId})
@@ -301,10 +303,12 @@ ensure_not_referenced_or_abort(Kind, ObjectId) ->
 
 relationship_references(Projection, Kind, ObjectId) ->
     {maps:get(source_kind, Projection, undefined),
-     maps:get(source_id, Projection, undefined)} =:= {Kind, ObjectId}
+     normalize_id(maps:get(source_id, Projection, undefined))} =:=
+        {Kind, ObjectId}
         orelse
     {maps:get(target_kind, Projection, undefined),
-     maps:get(target_id, Projection, undefined)} =:= {Kind, ObjectId}.
+     normalize_id(maps:get(target_id, Projection, undefined))} =:=
+        {Kind, ObjectId}.
 
 validate_record_or_abort(Record) ->
     case validate_record(Record) of
@@ -325,7 +329,7 @@ validate_record(#ias_domain_object{
               nonempty_binary(ObjectId),
               is_map(Projection),
               maps:get(kind, Projection, undefined) =:= Kind,
-              maps:get(id, Projection, undefined) =:= ObjectId,
+              normalize_id(maps:get(id, Projection, undefined)) =:= ObjectId,
               is_integer(Revision) andalso Revision > 0,
               is_integer(CreatedAt) andalso CreatedAt >= 0,
               is_integer(UpdatedAt) andalso UpdatedAt >= CreatedAt,
@@ -732,12 +736,23 @@ common_fields() ->
     [id, kind, source, import_id, created_at, updated_at, name, description].
 
 kind_fields(device) ->
-    [owner, user_id, type, endpoint, transport, tunnel_device,
+    [owner, user_id, type, endpoint, remote_host, common_name,
+     device_name, hostname, imported_ovpn_device_name, service_name,
+     transport, tunnel_device,
      private_key_provider, private_key_ref, private_key_stored,
      certificate_body_stored, ca_body_stored, profile_id,
-     security_profile_id, certificate_id, vpn_service_id,
-     ca_certificate_id, certificate_status, device_status, serial,
-     manufacturer, model, public_key_fingerprint];
+     security_profile_id, security_policy_id, certificate,
+     certificate_id, certificate_ids,
+     vpn_service_id, vpn_service_ids, ca_certificate_id,
+     certificate_status, device_status, status, serial, manufacturer,
+     model, services, peer_id, public_key_fingerprint,
+     runtime_peer_id, vpn_peer, vpn_allocation_id,
+     vpn_allocator_instance_id, vpn_client_peer_id, vpn_gateway_peer_id,
+     vpn_allocation_slot, vpn_allocation_generation, vpn_allocation_state,
+     vpn_allocation_persistence, vpn_allocation_created_at,
+     vpn_dynamic_pair_state, vpn_dynamic_pair_reconciled_at,
+     vpn_runtime_certificate_fingerprint, vpn_last_decommission,
+     vpn_decommission_history, vpn_decommissioned_at];
 kind_fields(certificate) ->
     [user, user_id, user_name, profile, profile_id, subject, subject_cn,
      issuer, issuer_cn, serial, not_before, not_after, fingerprint_sha256,
@@ -745,7 +760,9 @@ kind_fields(certificate) ->
      certificate_public_key_fingerprint, role, services, attributes,
      trust_level, device_lock, two_factor, source_certificate_id, peer_id,
      trusted, key_match, material_type, certificate_role,
-     certificate_status, device_id, enrollment_id, private_key_reference,
+     certificate_status, status, security_policy_id, owner, device,
+     device_id, enrollment_id,
+     private_key_reference,
      key_rotation, issued_via, ca_present, client_certificate_present,
      private_key_present, tls_auth_present, private_key_stored,
      certificate_body_stored, ca_body_stored];
@@ -758,14 +775,16 @@ kind_fields(certificate_revocation) ->
 kind_fields(vpn_service) ->
     [service, remote, remote_host, remote_port, protocol, cipher,
      compression, routes, tls_auth, endpoint, port, transport,
-     certificate_id, ca_certificate_id, security_profile_id];
+     certificate_id, certificate_ids, ca_certificate_id,
+     security_profile_id, security_policy_id, service_name, owners];
 kind_fields(verification) ->
     [certificate_id, certificate_subject, verification_status,
      authorization_status, resolved_profile, resolved_policy, trusted,
      key_match];
 kind_fields(security_policy) ->
-    [policy_id, profile_id, decision, rules, requirements, services,
-     attributes, trust_level, device_lock, two_factor, status];
+    [policy_id, profile, profile_id, decision, rules, requirements,
+     services, attributes, trust_level, device_lock, two_factor,
+     enforcement_mode, status];
 kind_fields(relationship) ->
     [relationship_id, relation_type, source_kind, source_id, target_kind,
      target_id, score, warnings];
@@ -776,10 +795,11 @@ kind_fields(cmp_enrollment_result) ->
      private_key_reference, key_rotation, public_key_fingerprint,
      issued_via, private_key_stored, certificate_body_stored];
 kind_fields(user) ->
-    [username, display_name, email, role, profile_id, status, attributes];
+    [username, display_name, email, role, profile_id, devices, status,
+     attributes];
 kind_fields(security_profile) ->
-    [profile_id, role, services, attributes, trust_level, device_lock,
-     two_factor, policies, status];
+    [profile_id, role, certificate_role, services, attributes, trust_level,
+     device_lock, two_factor, policies, enforcement_mode, status];
 kind_fields(ovpn_provisioning) ->
     [provisioning_id, mode, subject_kind, subject_id, device_id,
      certificate_id, vpn_service_id, ca_certificate_id, authorization,
@@ -798,6 +818,13 @@ normalize_id(Id) when is_binary(Id) -> Id;
 normalize_id(Id) when is_list(Id) -> unicode:characters_to_binary(Id);
 normalize_id(Id) when is_atom(Id) -> atom_to_binary(Id, utf8);
 normalize_id(Id) -> ias_html:text(Id).
+
+normalize_payload_id(Id) when is_list(Id) -> unicode:characters_to_binary(Id);
+normalize_payload_id(Id) -> Id.
+
+usable_payload_id(Value) when is_binary(Value) -> byte_size(Value) > 0;
+usable_payload_id(Value) when is_atom(Value) -> Value =/= undefined;
+usable_payload_id(_Value) -> false.
 
 nonempty_binary(Value) when is_binary(Value) -> byte_size(Value) > 0;
 nonempty_binary(_) -> false.

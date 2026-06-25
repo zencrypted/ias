@@ -102,14 +102,16 @@ restore_snapshot(Snapshot) ->
     ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
     ias_certificate_material:clear(),
-    [ias_demo_store:put_runtime_object(sanitize_record(Object)) || Object <- ValidObjects],
+    ImportedObjects = restore_objects(ValidObjects),
     UniqueRelationships = unique_relationships(ValidRelationships),
-    [ias_demo_store:put_runtime_object(Relationship) || Relationship <- UniqueRelationships],
+    ImportedRelationships = restore_relationships(UniqueRelationships),
     ImportedWizardDrafts = restore_wizard_drafts(ValidWizardDrafts),
-    #{imported_objects => length(ValidObjects),
-      imported_relationships => length(UniqueRelationships),
+    #{imported_objects => ImportedObjects,
+      imported_relationships => ImportedRelationships,
       imported_wizard_drafts => ImportedWizardDrafts,
-      skipped_invalid_records => Skipped + length(ValidRelationships) - length(UniqueRelationships) +
+      skipped_invalid_records => Skipped +
+          length(ValidObjects) - ImportedObjects +
+          length(ValidRelationships) - ImportedRelationships +
           length(ValidWizardDrafts) - ImportedWizardDrafts}.
 
 valid_object(#{kind := Kind, id := Id}) when Kind =/= relationship ->
@@ -179,6 +181,35 @@ valid_wizard_draft(#{id := Id, scenario := device_bound, current_step := Step}) 
     usable_id(Id) andalso lists:member(Step, ias_provisioning_wizard_store:steps());
 valid_wizard_draft(_) ->
     false.
+
+restore_objects(Objects) ->
+    [ias_demo_store:put_runtime_object(sanitize_record(Object))
+     || Object <- Objects],
+    length(Objects).
+
+restore_relationships(Relationships) ->
+    lists:foldl(fun(Relationship, Count) ->
+        case relationship_references_available(Relationship) of
+            true ->
+                _ = ias_demo_store:put_runtime_object(Relationship),
+                Count + 1;
+            false ->
+                Count
+        end
+    end, 0, Relationships).
+
+relationship_references_available(Relationship) ->
+    object_reference_available(maps:get(source_kind, Relationship, undefined),
+                               maps:get(source_id, Relationship, undefined))
+        andalso
+    object_reference_available(maps:get(target_kind, Relationship, undefined),
+                               maps:get(target_id, Relationship, undefined)).
+
+object_reference_available(Kind, Id) ->
+    case ias_demo_store:get(Id) of
+        {ok, #{kind := Kind}} -> true;
+        _ -> false
+    end.
 
 restore_wizard_drafts(Drafts) ->
     lists:foldl(fun(Draft, Count) ->

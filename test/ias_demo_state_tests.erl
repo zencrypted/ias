@@ -60,8 +60,9 @@ import_demo_state_rejects_malformed_snapshot_test() ->
 
 export_demo_state_does_not_export_private_material_test() ->
     ias_demo_store:clear(),
-    _Certificate = ias_demo_store:add_certificate(#{
+    _Certificate = ias_demo_store_fixture:put_runtime_object(#{
         id => <<"secret_certificate">>,
+        kind => certificate,
         source => certificate_issue_demo,
         private_key_body => <<"PRIVATE-KEY-BODY">>,
         certificate_pem => <<"CERTIFICATE-PEM-BODY">>,
@@ -125,6 +126,31 @@ demo_state_import_restores_verification_objects_test() ->
     end, ias_demo_store:relationships())),
     ?assert(maps:get(imported_objects, Result) >= 4),
     ?assert(maps:get(imported_relationships, Result) >= 4).
+
+import_demo_state_skips_broken_durable_relationship_test() ->
+    ias_demo_store:clear(),
+    Snapshot = #{format => ias_demo_state_v1,
+                 objects => [#{id => <<"imported_durable_device">>,
+                               kind => device,
+                               source => demo_state_import}],
+                 relationships =>
+                     [#{id => <<"imported_broken_relationship">>,
+                        relationship_id => <<"imported_broken_relationship">>,
+                        kind => relationship,
+                        relation_type => uses_certificate,
+                        source_kind => device,
+                        source_id => <<"imported_durable_device">>,
+                        target_kind => certificate,
+                        target_id => <<"missing_imported_certificate">>}],
+                 wizard_drafts => []},
+    Term = iolist_to_binary(io_lib:format("~tp.~n", [Snapshot])),
+
+    Result = ias_demo_state:import(Term),
+
+    ?assertEqual(1, maps:get(imported_objects, Result)),
+    ?assertEqual(0, maps:get(imported_relationships, Result)),
+    ?assertEqual(1, maps:get(skipped_invalid_records, Result)),
+    ?assertEqual([], ias_demo_store:relationships()).
 
 import_demo_state_sanitizes_ovpn_provisioning_secret_material_test() ->
     ias_demo_store:clear(),
