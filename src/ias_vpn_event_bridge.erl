@@ -79,6 +79,9 @@ init(Options) ->
               last_event => undefined,
               last_event_at => undefined,
               last_error => undefined,
+              snapshot_status => not_loaded,
+              last_snapshot_at => undefined,
+              last_snapshot_error => undefined,
               sync_reason => starting,
               subscribers => #{},
               monitors => #{}},
@@ -168,9 +171,7 @@ connect_remote(State0) ->
                              last_error => undefined,
                              sync_reason => SyncReason},
             Summary = read_summary(State2),
-            Status = public_status(State2),
-            broadcast({vpn_runtime_snapshot, SyncReason, Summary, Status}, State2),
-            State2;
+            publish_snapshot_result(SyncReason, Summary, State2);
         {error, Reason} ->
             State2 = mark_disconnected(Reason, State1),
             broadcast({vpn_runtime_event_status, public_status(State2)}, State2),
@@ -237,16 +238,64 @@ accept_remote_event(Event, State0) ->
                              last_event_at => erlang:system_time(millisecond),
                              last_error => undefined,
                              sync_reason => SyncReason},
-            broadcast({vpn_runtime_event,
-                       Event,
-                       Summary,
-                       public_status(State1)},
-                      State1),
-            State1;
+            publish_event_result(Event, Summary, State1);
         {reject, Reason} ->
             State0#{last_error => Reason,
                     sync_reason => invalid_event}
     end.
+
+
+publish_snapshot_result(SyncReason, {ok, SummaryData} = Summary, State0)
+  when is_map(SummaryData) ->
+    State1 = mark_snapshot_fresh(State0),
+    broadcast({vpn_runtime_snapshot,
+               SyncReason,
+               Summary,
+               public_status(State1)},
+              State1),
+    State1;
+publish_snapshot_result(SyncReason, Summary, State0) ->
+    State1 = mark_snapshot_unavailable(Summary, State0),
+    broadcast({vpn_runtime_snapshot_failed,
+               SyncReason,
+               Summary,
+               public_status(State1)},
+              State1),
+    State1.
+
+publish_event_result(Event, {ok, SummaryData} = Summary, State0)
+  when is_map(SummaryData) ->
+    State1 = mark_snapshot_fresh(State0),
+    broadcast({vpn_runtime_event,
+               Event,
+               Summary,
+               public_status(State1)},
+              State1),
+    State1;
+publish_event_result(Event, Summary, State0) ->
+    State1 = mark_snapshot_unavailable(Summary, State0),
+    broadcast({vpn_runtime_snapshot_failed,
+               Event,
+               Summary,
+               public_status(State1)},
+              State1),
+    State1.
+
+mark_snapshot_fresh(State) ->
+    State#{snapshot_status => fresh,
+           last_snapshot_at => erlang:system_time(millisecond),
+           last_snapshot_error => undefined}.
+
+mark_snapshot_unavailable(Summary, State) ->
+    State#{snapshot_status => unavailable,
+           last_snapshot_error => snapshot_error(Summary)}.
+
+snapshot_error({error, Reason}) ->
+    Reason;
+snapshot_error({ok, Value}) ->
+    {invalid_summary, Value};
+snapshot_error(Value) ->
+    Value.
 
 event_order(#{schema_version := 1,
               type := runtime_reconciled,
@@ -299,10 +348,15 @@ broadcast(Payload, State) ->
 
 mark_disconnected(Reason, State0) ->
     State1 = clear_remote_monitor(State0),
+    SnapshotStatus = case maps:get(snapshot_status, State1, not_loaded) of
+                         fresh -> stale;
+                         Current -> Current
+                     end,
     State1#{connected => false,
             remote_bus_pid => undefined,
             remote_monitor_ref => undefined,
             last_error => Reason,
+            snapshot_status => SnapshotStatus,
             sync_reason => disconnected}.
 
 clear_remote_monitor(State0) ->
@@ -390,5 +444,8 @@ public_status(State) ->
       sequence => maps:get(sequence, State),
       last_event_at => maps:get(last_event_at, State),
       last_error => maps:get(last_error, State),
+      snapshot_status => maps:get(snapshot_status, State),
+      last_snapshot_at => maps:get(last_snapshot_at, State),
+      last_snapshot_error => maps:get(last_snapshot_error, State),
       sync_reason => maps:get(sync_reason, State),
       subscriber_count => map_size(maps:get(subscribers, State))}.

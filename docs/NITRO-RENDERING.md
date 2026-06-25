@@ -176,6 +176,14 @@ one action must refresh several related interactive areas, prefer one outer
 fragment with one stable replacement root instead of several sibling
 `nitro:update/2` calls.
 
+Disconnect and reconnect notifications must also preserve the last rendered
+read-only snapshot. On disconnect, update independent status/notice targets and
+mark the existing table as last-known/stale; do not replace it with an empty or
+error table. Treat event-stream connectivity and snapshot freshness as separate
+states. A successful subscription followed by a failed snapshot RPC must emit a
+snapshot-failed UI event, not the same event used for a fresh snapshot. This avoids
+claims such as "fresh snapshot loaded" when only the transport reconnected.
+
 A page websocket process may register itself with a supervised bridge during
 `event(init)` and unregister during `event(terminate)`. The bridge must monitor
 page processes, and backend code must send `{direct, Payload}` to the websocket

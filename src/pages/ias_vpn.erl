@@ -1,6 +1,7 @@
 -module(ias_vpn).
 -export([event/1, content/1, content/3, create_vpn_service/4, create_vpn_service/6,
          runtime_status_panel/1, runtime_summary_panel/1,
+         runtime_connection_notice_panel/2,
          reconciliation_panel/2]).
 -include_lib("nitro/include/nitro.hrl").
 
@@ -15,17 +16,19 @@ event({exit, _Reason}) ->
     ok;
 event(refresh_vpn_runtime) ->
     Summary = ias_vpn_runtime:summary(),
-    nitro:update(vpn_runtime_refresh_status, runtime_status_panel(Summary)),
-    nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary));
+    BridgeStatus = runtime_event_bridge_status(),
+    update_runtime_manual_refresh(Summary, BridgeStatus);
 event({vpn_runtime_snapshot, Reason, Summary, BridgeStatus}) ->
     update_runtime_ui(Summary, BridgeStatus),
     maybe_mark_reconciliation_stale(Reason);
 event({vpn_runtime_event, Event, Summary, BridgeStatus}) ->
     update_runtime_ui(Summary, BridgeStatus),
     mark_reconciliation_stale(Event);
+event({vpn_runtime_snapshot_failed, Reason, SummaryError, BridgeStatus}) ->
+    update_runtime_snapshot_failure_ui(SummaryError, BridgeStatus),
+    mark_reconciliation_stale({snapshot_failed, Reason});
 event({vpn_runtime_event_status, BridgeStatus}) ->
-    nitro:update(vpn_runtime_event_status,
-                 runtime_event_status_panel(BridgeStatus));
+    update_runtime_event_status_ui(BridgeStatus);
 event(refresh_vpn_reconciliation) ->
     update_reconciliation_ui({ok, refreshed});
 event(safe_replay_all) ->
@@ -77,21 +80,23 @@ content(Summary) ->
             {ok, []}).
 
 content(Summary, Reconciliation, Incidents) ->
+    BridgeStatus = runtime_event_bridge_status(),
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("VPN")},
         #p{body = ias_html:text("VPN runtime status, reconciliation, and manually managed VPN service definitions for IAS provisioning.")},
         create_service_panel(),
         #panel{id = vpn_services_list, body = managed_services_panel()},
-        runtime_refresh_controls(Summary),
+        runtime_refresh_controls(Summary, BridgeStatus),
+        runtime_connection_notice_panel(Summary, BridgeStatus),
         runtime_summary_panel(Summary),
         reconciliation_fragment(Reconciliation, Incidents, none)
     ]}.
 
-runtime_refresh_controls(Summary) ->
+runtime_refresh_controls(Summary, BridgeStatus) ->
     #panel{style = <<"display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0 8px;">>,
            body = [
-               runtime_status_panel(Summary),
-               runtime_event_status_panel(runtime_event_bridge_status()),
+               runtime_status_panel(Summary, BridgeStatus),
+               runtime_event_status_panel(BridgeStatus),
                #link{id = vpn_runtime_refresh_now,
                      class = [button, sgreen],
                      body = ias_html:text("Refresh now"),
@@ -99,9 +104,12 @@ runtime_refresh_controls(Summary) ->
            ]}.
 
 runtime_status_panel(Summary) ->
+    runtime_status_panel(Summary, #{}).
+
+runtime_status_panel(Summary, BridgeStatus) ->
     #panel{id = vpn_runtime_refresh_status,
            style = <<"font-size:12px;color:#64748b;">>,
-           body = refresh_status(Summary)}.
+           body = runtime_status_text(Summary, BridgeStatus)}.
 
 runtime_event_status_panel(Status) ->
     #panel{id = vpn_runtime_event_status,
@@ -110,6 +118,26 @@ runtime_event_status_panel(Status) ->
 
 runtime_summary_panel(Summary) ->
     #panel{id = vpn_runtime_summary, body = render_summary(Summary)}.
+
+runtime_connection_notice_panel(Summary, BridgeStatus) ->
+    #panel{id = vpn_runtime_connection_notice,
+           body = runtime_connection_notice(Summary, BridgeStatus)}.
+
+runtime_status_text({ok, SummaryData} = Summary, _BridgeStatus)
+  when is_map(SummaryData) ->
+    refresh_status(Summary);
+runtime_status_text(_Summary,
+                    #{connected := false,
+                      last_error := vpn_node_down}) ->
+    <<"Runtime: disconnected | Showing last known snapshot">>;
+runtime_status_text(_Summary, #{connected := false}) ->
+    <<"Runtime: live status unavailable | Showing last known snapshot">>;
+runtime_status_text({error, _Reason},
+                    #{connected := true,
+                      snapshot_status := unavailable}) ->
+    <<"Runtime: snapshot unavailable | Last known data retained">>;
+runtime_status_text(Summary, _BridgeStatus) ->
+    refresh_status(Summary).
 
 refresh_status({ok, Data}) when is_map(Data) ->
     ias_html:join([<<"Runtime: connected | Last update: ">>,
@@ -141,6 +169,34 @@ event_error_text(undefined) ->
 event_error_text(_Error) ->
     <<" | retrying in background">>.
 
+runtime_connection_notice({ok, SummaryData}, #{connected := false})
+  when is_map(SummaryData) ->
+    runtime_warning(
+      "A fresh runtime snapshot was loaded manually, but live VPN event delivery is unavailable. IAS is reconnecting in the background; use Refresh now again if the data may have changed.");
+runtime_connection_notice(_Summary,
+                          #{connected := false,
+                            last_error := vpn_node_down}) ->
+    runtime_warning(
+      "VPN runtime disconnected. The table below is the last known snapshot and may be stale. IAS is reconnecting in the background.");
+runtime_connection_notice(_Summary, #{connected := false}) ->
+    runtime_warning(
+      "Live VPN event delivery is unavailable. The table below is the last known snapshot and may be stale. Use Refresh now for a manual check while IAS retries in the background.");
+runtime_connection_notice(_Summary,
+                          #{connected := true,
+                            snapshot_status := unavailable,
+                            last_snapshot_error := _Error}) ->
+    runtime_warning(
+      "The VPN event stream is connected, but IAS could not load a fresh runtime snapshot. Existing rows are retained as last known data; use Refresh now to retry.");
+runtime_connection_notice({error, _Reason}, _BridgeStatus) ->
+    runtime_warning(
+      "No live VPN runtime snapshot is available. Start or reconnect VPN, then use Refresh now.");
+runtime_connection_notice(_Summary, _BridgeStatus) ->
+    [].
+
+runtime_warning(Message) ->
+    #panel{style = <<"margin:8px 0 10px;padding:10px 12px;border:1px solid #f59e0b;border-radius:6px;background:#fffbeb;color:#92400e;font-size:12px;">>,
+           body = ias_html:text(Message)}.
+
 utc_time_text() ->
     {{_Year, _Month, _Day}, {Hour, Minute, Second}} = calendar:universal_time(),
     iolist_to_binary(io_lib:format("~2..0B:~2..0B:~2..0B", [Hour, Minute, Second])).
@@ -164,10 +220,35 @@ runtime_event_bridge_status() ->
     end.
 
 update_runtime_ui(Summary, BridgeStatus) ->
-    nitro:update(vpn_runtime_refresh_status, runtime_status_panel(Summary)),
+    nitro:update(vpn_runtime_refresh_status,
+                 runtime_status_panel(Summary, BridgeStatus)),
     nitro:update(vpn_runtime_event_status,
                  runtime_event_status_panel(BridgeStatus)),
+    nitro:update(vpn_runtime_connection_notice,
+                 runtime_connection_notice_panel(Summary, BridgeStatus)),
     nitro:update(vpn_runtime_summary, runtime_summary_panel(Summary)).
+
+update_runtime_manual_refresh({ok, SummaryData} = Summary, BridgeStatus)
+  when is_map(SummaryData) ->
+    update_runtime_ui(Summary, BridgeStatus);
+update_runtime_manual_refresh(SummaryError, BridgeStatus) ->
+    update_runtime_snapshot_failure_ui(SummaryError, BridgeStatus).
+
+update_runtime_snapshot_failure_ui(SummaryError, BridgeStatus) ->
+    nitro:update(vpn_runtime_refresh_status,
+                 runtime_status_panel(SummaryError, BridgeStatus)),
+    nitro:update(vpn_runtime_event_status,
+                 runtime_event_status_panel(BridgeStatus)),
+    nitro:update(vpn_runtime_connection_notice,
+                 runtime_connection_notice_panel(SummaryError, BridgeStatus)).
+
+update_runtime_event_status_ui(#{connected := false} = BridgeStatus) ->
+    SummaryError = {error, runtime_snapshot_stale},
+    update_runtime_snapshot_failure_ui(SummaryError, BridgeStatus),
+    mark_reconciliation_stale(disconnected);
+update_runtime_event_status_ui(BridgeStatus) ->
+    nitro:update(vpn_runtime_event_status,
+                 runtime_event_status_panel(BridgeStatus)).
 
 maybe_mark_reconciliation_stale(reconnected) ->
     mark_reconciliation_stale(reconnected);
@@ -181,6 +262,15 @@ mark_reconciliation_stale(Event) ->
 reconciliation_stale_notice(reconnected) ->
     reconciliation_stale_message(
       "VPN event delivery reconnected and a fresh runtime snapshot was loaded. Refresh reconciliation before acting on incidents because changes may have occurred while IAS was disconnected.");
+reconciliation_stale_notice(disconnected) ->
+    reconciliation_stale_message(
+      "VPN disconnected. This reconciliation snapshot may be stale. Wait for VPN to reconnect, then refresh reconciliation before acting on incidents.");
+reconciliation_stale_notice({snapshot_failed, reconnected}) ->
+    reconciliation_stale_message(
+      "VPN event delivery reconnected, but IAS could not load a fresh runtime snapshot. Use Refresh now, then refresh reconciliation before acting on incidents.");
+reconciliation_stale_notice({snapshot_failed, _Reason}) ->
+    reconciliation_stale_message(
+      "IAS received a VPN runtime notification but could not load the current runtime snapshot. Use Refresh now, then refresh reconciliation before acting on incidents.");
 reconciliation_stale_notice(Event) when is_map(Event) ->
     Sequence = maps:get(sequence, Event, undefined),
     reconciliation_stale_message(

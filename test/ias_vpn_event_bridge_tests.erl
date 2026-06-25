@@ -80,11 +80,42 @@ event_bridge_pushes_fresh_runtime_snapshots_test_() ->
                               {direct,
                                {vpn_runtime_event_status,
                                 #{connected := false,
+                                  snapshot_status := stale,
                                   last_error := {vpn_event_bus_down, _}}}} ->
                                   ok
                           after 1000 ->
                               error(vpn_runtime_disconnect_timeout)
                           end
+                      end)]
+     end}.
+
+
+
+event_bridge_keeps_subscription_connected_when_snapshot_load_fails_test_() ->
+    {setup,
+     fun setup_snapshot_failure/0,
+     fun cleanup/1,
+     fun(#{bridge := BridgePid}) ->
+             [?_test(begin
+                          ?assert(wait_until(
+                                    fun() ->
+                                            case gen_server:call(BridgePid,
+                                                                 status) of
+                                                #{connected := true,
+                                                  snapshot_status := unavailable,
+                                                  last_snapshot_error := snapshot_rpc_failed} ->
+                                                    true;
+                                                _ ->
+                                                    false
+                                            end
+                                    end,
+                                    100)),
+                          Status = gen_server:call(BridgePid, status),
+                          ?assertEqual(true, maps:get(connected, Status)),
+                          ?assertEqual(unavailable,
+                                       maps:get(snapshot_status, Status)),
+                          ?assertEqual(snapshot_rpc_failed,
+                                       maps:get(last_snapshot_error, Status))
                       end)]
      end}.
 
@@ -130,6 +161,44 @@ setup() ->
       bus => BusPid,
       stream_id => StreamId,
       summary => Summary}.
+
+
+setup_snapshot_failure() ->
+    TestPid = self(),
+    BusPid = spawn(fun bus_loop/0),
+    StreamId = {vpn_test_stream, snapshot_failure},
+    RpcFun = fun(_Node,
+                 vpn_event_bus,
+                 subscribe,
+                 [SubscriberPid],
+                 _Timeout) ->
+                     TestPid ! {remote_subscribed, SubscriberPid},
+                     {ok, #{schema_version => 1,
+                            stream_id => StreamId,
+                            sequence => 0}};
+                (_Node,
+                 erlang,
+                 whereis,
+                 [vpn_event_bus],
+                 _Timeout) ->
+                     BusPid;
+                (_Node,
+                 vpn_event_bus,
+                 unsubscribe,
+                 [SubscriberPid],
+                 _Timeout) ->
+                     TestPid ! {remote_unsubscribed, SubscriberPid},
+                     ok
+             end,
+    SummaryFun = fun() -> {error, snapshot_rpc_failed} end,
+    {ok, BridgePid} = ias_vpn_event_bridge:start_link(
+                        #{vpn_node => node(),
+                          rpc_timeout => 100,
+                          retry_ms => 1000,
+                          rpc_fun => RpcFun,
+                          summary_fun => SummaryFun}),
+    #{bridge => BridgePid,
+      bus => BusPid}.
 
 cleanup(#{bridge := BridgePid,
           bus := BusPid}) ->

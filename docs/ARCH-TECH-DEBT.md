@@ -810,4 +810,10 @@ Runtime events replace only the independent read-only targets
 `vpn_runtime_summary`. Reconciliation forms are left intact; a separate stale
 notice asks the operator to refresh reconciliation before using incident actions.
 The bridge monitors the remote event-bus process and reconnects after VPN node or
-event-bus restart.
+event-bus restart. Disconnect is represented explicitly in the UI: the previous
+runtime table is retained as a last-known snapshot, marked stale, and accompanied
+by a visible reconnecting notice. Event-stream subscription and runtime snapshot
+freshness are separate states; reconnect is reported as successful only when the
+summary read also succeeds. If subscription succeeds but the summary read fails,
+the page preserves the last-known rows and asks the operator to retry with
+`Refresh now`.

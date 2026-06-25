@@ -57,6 +57,7 @@ vpn_page_renders_create_service_form_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_summary">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_refresh_now">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_event_status">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_connection_notice">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Refresh now">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Updates:">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"vpn_runtime_auto_refresh">>)),
@@ -64,6 +65,18 @@ vpn_page_renders_create_service_form_test() ->
     ?assertEqual(nomatch, binary:match(Html, <<"setInterval">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"Runtime: unavailable | Last attempt:">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"·">>)).
+
+vpn_page_renders_explicit_disconnected_runtime_notice_test() ->
+    Notice = ias_vpn:runtime_connection_notice_panel(
+               {error, nodedown},
+               #{connected => false,
+                 last_error => vpn_node_down}),
+    Html = iolist_to_binary(nitro:render(Notice)),
+
+    ?assertMatch({_, _}, binary:match(Html, <<"vpn_runtime_connection_notice">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"VPN runtime disconnected">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"last known snapshot">>)),
+    ?assertMatch({_, _}, binary:match(Html, <<"reconnecting in the background">>)).
 
 runtime_refresh_panels_preserve_update_targets_test() ->
     StatusHtml = iolist_to_binary(nitro:render(ias_vpn:runtime_status_panel({error, unavailable}))),
