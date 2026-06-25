@@ -87,33 +87,35 @@ configure_vpn_test_runtime(VpnNode) ->
                   [vpn, runtime_config_templates],
                   ?RPC_TIMEOUT_MS) of
         {ok, Templates} when is_map(Templates) ->
-            case maps:find(client_a, Templates) of
-                {ok, ClientATemplate} when is_map(ClientATemplate) ->
-                    DynamicTemplate =
-                        ClientATemplate#{id => ias_ct_dynamic_template,
-                                         ifname => <<"tun11">>,
-                                         ip => "10.20.30.11",
-                                         local_udp_port => 5561},
-                    ok = rpc:call(VpnNode,
-                                  application,
-                                  unset_env,
-                                  [vpn, runtime_config_templates],
-                                  ?RPC_TIMEOUT_MS),
-                    ok = rpc:call(VpnNode,
-                                  application,
-                                  set_env,
-                                  [vpn, runtime_config_template, DynamicTemplate],
-                                  ?RPC_TIMEOUT_MS),
-                    {ok, Templates};
-                _ ->
-                    ct:fail({vpn_client_a_template_missing, Templates})
-            end;
+            DynamicTemplate = vpn_dynamic_runtime_template(Templates),
+            ok = rpc:call(VpnNode,
+                          application,
+                          unset_env,
+                          [vpn, runtime_config_templates],
+                          ?RPC_TIMEOUT_MS),
+            ok = rpc:call(VpnNode,
+                          application,
+                          set_env,
+                          [vpn, runtime_config_template, DynamicTemplate],
+                          ?RPC_TIMEOUT_MS),
+            {ok, Templates};
         undefined ->
             {ok, undefined};
         {badrpc, Reason} ->
             ct:fail({vpn_test_runtime_config_failed, Reason});
         Other ->
             ct:fail({invalid_vpn_runtime_templates, Other})
+    end.
+
+vpn_dynamic_runtime_template(Templates) when is_map(Templates) ->
+    case maps:find(client_a, Templates) of
+        {ok, ClientATemplate} when is_map(ClientATemplate) ->
+            ClientATemplate#{id => ias_ct_dynamic_template,
+                             ifname => <<"tun11">>,
+                             ip => "10.20.30.11",
+                             local_udp_port => 5561};
+        _ ->
+            ct:fail({vpn_client_a_template_missing, Templates})
     end.
 
 init_per_testcase(wizard_provisions_device_into_vpn_runtime, Config) ->
@@ -361,9 +363,12 @@ vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
         %% repaint UI subscribers with the same disconnected state.
         assert_no_bridge_direct_update(700),
 
+        RuntimeTemplates = proplists:get_value(vpn_runtime_templates, Config),
+        RestartTemplate = vpn_dynamic_runtime_template(RuntimeTemplates),
         {ok, RestartProcess} = start_vpn(VpnRepo,
                                          RestartLogPath,
-                                         MnesiaDir),
+                                         MnesiaDir,
+                                         RestartTemplate),
         try
             case wait_for_vpn_ready(VpnNode,
                                     RestartProcess,
@@ -1511,12 +1516,16 @@ prepare_vpn(VpnRepo) ->
     end.
 
 start_vpn(VpnRepo, LogPath, MnesiaDir) ->
+    start_vpn(VpnRepo, LogPath, MnesiaDir, undefined).
+
+start_vpn(VpnRepo, LogPath, MnesiaDir, RuntimeTemplate) ->
     Parent = self(),
     Process = spawn(fun() ->
                             vpn_process_owner(Parent,
                                               VpnRepo,
                                               LogPath,
-                                              MnesiaDir)
+                                              MnesiaDir,
+                                              RuntimeTemplate)
                     end),
     receive
         {vpn_process_started, Process} ->
@@ -1528,7 +1537,7 @@ start_vpn(VpnRepo, LogPath, MnesiaDir) ->
         {error, {vpn_spawn_failed, timeout}}
     end.
 
-vpn_process_owner(Parent, VpnRepo, LogPath, MnesiaDir) ->
+vpn_process_owner(Parent, VpnRepo, LogPath, MnesiaDir, RuntimeTemplate) ->
     process_flag(trap_exit, true),
     case file:open(LogPath, [write, raw, binary]) of
         {ok, Log} ->
@@ -1542,7 +1551,8 @@ vpn_process_owner(Parent, VpnRepo, LogPath, MnesiaDir) ->
                         "-config", filename:join(VpnRepo, "config/sys.debug"),
                         "-mnesia", "dir", erl_term_argument(MnesiaDir)]
                        ++ code_path_args(EbinPaths)
-                       ++ ["-eval", vpn_start_expression(MnesiaDir)],
+                       ++ ["-eval", vpn_start_expression(MnesiaDir,
+                                                          RuntimeTemplate)],
                 Port = open_port({spawn_executable, Erl},
                                  [{args, Args},
                                   {cd, VpnRepo},
@@ -1631,8 +1641,9 @@ code_path_args(Paths) ->
     %% remains ahead of any stale default-profile beams.
     lists:append([["-pa", Path] || Path <- lists:reverse(Paths)]).
 
-vpn_start_expression(MnesiaDir) ->
+vpn_start_expression(MnesiaDir, RuntimeTemplate) ->
     MnesiaDirArgument = erl_term_argument(MnesiaDir),
+    RuntimeTemplateSetup = vpn_runtime_template_setup(RuntimeTemplate),
     "case application:load(mnesia) of " ++
     "ok -> ok; " ++
     "{error, {already_loaded, mnesia}} -> ok; " ++
@@ -1647,6 +1658,7 @@ vpn_start_expression(MnesiaDir) ->
     "ActualMnesiaDir -> io:format(standard_error, "
     "\"VPN CT startup: unexpected Mnesia directory ~p, expected ~ts~n\", "
     "[ActualMnesiaDir, " ++ MnesiaDirArgument ++ "]), halt(1) end, " ++
+    RuntimeTemplateSetup ++
     "io:format(standard_error, "
     "\"VPN CT startup: starting VPN application~n\", []), " ++
     "case application:ensure_all_started(vpn) of "
@@ -1655,6 +1667,22 @@ vpn_start_expression(MnesiaDir) ->
     "receive after infinity -> ok end; "
     "{error, Reason} -> io:format(standard_error, "
     "\"VPN startup failed: ~p~n\", [Reason]), halt(1) end.".
+
+vpn_runtime_template_setup(undefined) ->
+    "";
+vpn_runtime_template_setup(RuntimeTemplate) when is_map(RuntimeTemplate) ->
+    TemplateArgument = erl_term_argument(RuntimeTemplate),
+    "case application:load(vpn) of " ++
+    "ok -> ok; " ++
+    "{error, {already_loaded, vpn}} -> ok; " ++
+    "{error, VpnLoadReason} -> io:format(standard_error, " ++
+    "\"VPN CT startup: VPN application load failed: ~p~n\", " ++
+    "[VpnLoadReason]), halt(1) end, " ++
+    "ok = application:unset_env(vpn, runtime_config_templates), " ++
+    "ok = application:set_env(vpn, runtime_config_template, " ++
+    TemplateArgument ++ "), " ++
+    "io:format(standard_error, " ++
+    "\"VPN CT startup: installed dynamic runtime recovery template~n\", []), ".
 
 vpn_process_loop(Port, Log, OsPid) ->
     receive
