@@ -2,6 +2,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include("ias_domain_object.hrl").
+-include_lib("kvs/include/metainfo.hrl").
 
 store_contract_test_() ->
     {setup,
@@ -11,6 +12,7 @@ store_contract_test_() ->
          {inorder,
           [?_test(table_is_durable()),
            ?_test(idempotent_put_get_delete()),
+           ?_test(kvs_api_is_the_storage_boundary()),
            ?_test(changed_projection_increments_revision()),
            ?_test(unsupported_kind_is_rejected()),
            ?_test(secret_bearing_payload_is_rejected()),
@@ -20,12 +22,12 @@ store_contract_test_() ->
 
 table_is_durable() ->
     ?assertEqual(ok, ias_domain_store:ensure()),
-    ?assertEqual(record_info(fields, ias_domain_object),
-                 mnesia:table_info(ias_domain_object, attributes)),
-    ?assertEqual(disc_copies,
-                 mnesia:table_info(ias_domain_object, storage_type)),
-    ?assertEqual(set,
-                 mnesia:table_info(ias_domain_object, type)).
+    #table{fields = Fields, copy_type = CopyType, type = Type} =
+        kvs:table(ias_domain_object),
+    ?assertEqual(record_info(fields, ias_domain_object), Fields),
+    ?assertEqual(disc_copies, CopyType),
+    ?assertEqual(set, Type),
+    ?assert(lists:member({table, ias_domain_object}, kvs:dir())).
 
 idempotent_put_get_delete() ->
     Device = device(<<"domain-device-idempotent">>),
@@ -44,6 +46,18 @@ idempotent_put_get_delete() ->
                  ias_domain_store:get(device, maps:get(id, Device))),
     ?assertEqual(ok,
                  ias_domain_store:delete(device, maps:get(id, Device))).
+
+
+kvs_api_is_the_storage_boundary() ->
+    Device = device(<<"domain-device-kvs-boundary">>),
+    {ok, Stored, changed} = ias_domain_store:put(Device),
+    Key = maps:get(key, Stored),
+    {ok, #ias_domain_object{payload = Payload}} =
+        kvs:get(ias_domain_object, Key),
+    ?assertEqual(Device, Payload),
+    ok = ias_domain_store:delete(device, maps:get(id, Device)),
+    ?assertEqual({error, not_found},
+                 kvs:get(ias_domain_object, Key)).
 
 changed_projection_increments_revision() ->
     Device0 = device(<<"domain-device-revision">>),
@@ -118,7 +132,7 @@ unsupported_schema_fails_closed_test_() ->
          ?assertEqual({error, {unsupported_domain_schema_version, 99}},
                       ias_domain_store:put(
                         (device(Id))#{schema_version => 99})),
-         ok = mnesia:dirty_write(
+         ok = kvs:put(
                 #ias_domain_object{key = {device, Id},
                                    schema_version = 99,
                                    kind = device,

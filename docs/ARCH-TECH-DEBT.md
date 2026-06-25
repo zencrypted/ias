@@ -908,19 +908,19 @@ automatic source of truth, a transactional store or startup rehydration.
 ### Completed
 
 Stage 1 introduced the standalone `ias_domain_store` skeleton and the
-`ias_domain_object` Mnesia table. The store validates a kind-specific public
+`ias_domain_object` table registered in `ias_kvs`. The store validates a kind-specific public
 projection, rejects secret-bearing data, maintains monotonic revisions, and
 enforces relationship references and guarded deletion. Existing
 `ias_demo_store` writes are intentionally not connected yet.
 
 ### Remaining Direction
 
-Use the IAS-owned Mnesia domain store with `disc_copies` as the source of truth
+Use the IAS-owned KVS domain store, currently backed by Mnesia `disc_copies`, as the source of truth
 for supported public domain metadata and relationship edges. Keep ETS as a
 runtime read projection rebuilt from validated durable records before HTTP
 startup.
 
-Writes must be Mnesia-first and update ETS only after commit. Multi-object wizard
+Writes must be KVS-durable-first and update ETS only after commit. Multi-object wizard
 completion must use one durable transaction or a compatible recovery boundary,
 coordinated with `TD-014`. Unsupported schemas and secret-bearing payloads must
 fail closed. Private keys, TLS secrets, OVPN bodies, certificate bodies and

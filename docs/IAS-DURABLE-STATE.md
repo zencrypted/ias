@@ -31,10 +31,11 @@ transaction log or a replacement for startup recovery.
 The target ownership model is:
 
 ```text
-IAS durable domain store = source of truth for IAS domain objects
-ETS                      = runtime read projection/cache
-VPN                      = projection of IAS-authorized VPN intent
-UI                       = consumer of IAS APIs and ETS projection
+KVS domain store = source-of-truth API for IAS domain objects
+Mnesia backend   = current durable KVS implementation (`disc_copies`)
+ETS              = runtime read projection/cache
+VPN              = projection of IAS-authorized VPN intent
+UI               = consumer of IAS APIs and ETS projection
 ```
 
 The reverse direction is not allowed:
@@ -67,7 +68,7 @@ The first release does not:
 - make VPN a recovery source for IAS objects;
 - replace CA, LDAP or external audit storage;
 - make browser, Nitro or websocket session state durable;
-- define the final multi-node Mnesia topology;
+- define the final multi-node KVS/Mnesia topology;
 - automatically adopt or delete orphan VPN projections.
 
 ## Current State Inventory
@@ -100,7 +101,7 @@ become operator-editable later, they must move behind the same durable contract.
 
 ### Existing durable state
 
-IAS already persists two narrow stores in Mnesia:
+IAS already persists two narrow stores on the KVS/Mnesia stack:
 
 - `ias_vpn_device_state`, owned by `ias_vpn_authority`;
 - `ias_vpn_reconciliation_incident`, owned by
@@ -138,7 +139,7 @@ Introduce a dedicated module:
 ias_domain_store
 ```
 
-and one initial Mnesia table:
+and one initial KVS table backed by Mnesia `disc_copies`:
 
 ```text
 ias_domain_object
@@ -223,6 +224,17 @@ ias_domain_store:reset/0.      %% test/development only
 `ias_demo_store` remains the compatibility façade used by current domain and UI
 code. It becomes a write-through projection layer rather than the authority.
 
+`ias_domain_store` must use the public KVS abstraction for schema discovery and
+CRUD. Direct `mnesia:*` calls are not allowed in this domain store. The current
+installation uses `kvs_mnesia` with `disc_copies`, but backend selection remains
+an application configuration concern rather than a domain-store dependency.
+
+KVS does not expose a generic multi-operation transaction API. Stage 1 therefore
+uses an IAS-side unit of work: reads are loaded through KVS, mutations are staged
+in memory, validation runs against the staged graph, and the resulting write set
+is committed through KVS only after the callback succeeds. Stage 2 must preserve
+this abstraction when it adds the ETS write-through boundary.
+
 ## Write Semantics
 
 ### Single object
@@ -231,12 +243,12 @@ The required order is:
 
 ```text
 validate persistent projection
-  -> commit Mnesia transaction
+  -> commit through the KVS domain-store unit of work
   -> update ETS projection
   -> return stored object
 ```
 
-Mnesia must be committed before the object becomes visible through ETS. If IAS
+The KVS-backed durable write must be committed before the object becomes visible through ETS. If IAS
 fails after the durable commit but before ETS update, startup rehydration or an
 explicit projection repair restores ETS from Mnesia.
 
@@ -256,7 +268,7 @@ Relationship edges
 Wizard completion metadata
 ```
 
-The Mnesia transaction commits the complete graph first. ETS changes are applied
+The KVS domain-store unit of work commits the complete graph first. ETS changes are applied
 only after a successful commit. A failed transaction must leave neither a
 partial durable graph nor a partially updated ETS projection.
 
@@ -276,7 +288,7 @@ Deletion must be fail-closed.
 
 The first implementation should reject deletion of an object while relationship
 edges still reference it. A later explicit cascade operation may delete the
-object and all selected edges in one Mnesia transaction, but silent cascade from
+object and all selected edges in one durable KVS unit of work, but silent cascade from
 the generic `delete/2` API is not allowed.
 
 Deleting a Device domain object and deleting its VPN authority are separate
@@ -288,7 +300,7 @@ be disabled, revoked or decommissioned before domain deletion is committed.
 IAS startup should complete durable recovery before Cowboy accepts requests:
 
 ```text
-start/join Mnesia
+start/join KVS with its configured Mnesia backend
   -> ensure and validate domain table
   -> read and validate all durable records
   -> build a clean ETS projection
@@ -349,7 +361,7 @@ records without an explicit conflict policy.
 
 | Failure | Required behavior |
 |---|---|
-| Mnesia unavailable at startup | IAS startup fails closed |
+| KVS backend unavailable at startup | IAS startup fails closed |
 | Unsupported table/record schema | IAS startup fails closed with diagnostic |
 | Invalid or secret-bearing payload | write rejected; ETS unchanged |
 | Durable commit aborted | ETS unchanged |
@@ -384,7 +396,8 @@ Until that workflow is designed, automatic orphan adoption remains prohibited.
 **Status:** Implemented.
 
 - `ias_domain_store` and the `ias_domain_object` record are present;
-- the Mnesia table is created and validated as `disc_copies` / `set`;
+- `ias_domain_object` is registered in `ias_kvs` and created through the KVS schema as a `disc_copies` / `set` table;
+- all domain CRUD paths use `kvs:get/2`, `kvs:put/1`, `kvs:delete/2` and `kvs:all/1`;
 - kind-specific allow-listed projections reject secret-bearing material;
 - revisions, idempotent writes, relationship references and guarded deletion are
   covered by EUnit tests;

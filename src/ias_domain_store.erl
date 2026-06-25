@@ -10,11 +10,12 @@
          reset/0]).
 
 -include("ias_domain_object.hrl").
+-include_lib("kvs/include/metainfo.hrl").
 
 -define(TABLE, ias_domain_object).
 -define(SCHEMA_VERSION, 1).
 -define(WAIT_TIMEOUT, 5000).
--define(TRANSACTION_FLAG, ias_domain_store_transaction).
+-define(TRANSACTION_CONTEXT, ias_domain_store_kvs_transaction).
 
 ensure() ->
     case ensure_storage() of
@@ -40,15 +41,11 @@ put(_Object) ->
 get(Kind0, ObjectId0) ->
     case normalize_identity(Kind0, ObjectId0) of
         {ok, Kind, ObjectId} ->
-            Key = {Kind, ObjectId},
-            case transaction(fun() -> mnesia:read(?TABLE, Key, read) end) of
-                {ok, []} ->
+            case read_record({Kind, ObjectId}) of
+                not_found ->
                     not_found;
-                {ok, [Record]} ->
-                    case validate_record(Record) of
-                        ok -> {ok, record_to_map(Record)};
-                        {error, Reason} -> {error, Reason}
-                    end;
+                {ok, #ias_domain_object{} = Record} ->
+                    {ok, record_to_map(Record)};
                 {error, _} = Error ->
                     Error
             end;
@@ -63,7 +60,7 @@ delete(Kind0, ObjectId0) ->
             case transaction(
                    fun() ->
                        ok = ensure_not_referenced_or_abort(Kind, ObjectId),
-                       mnesia:delete({?TABLE, Key}),
+                       stage_delete(Key),
                        ok
                    end) of
                 {ok, ok} -> ok;
@@ -76,15 +73,8 @@ delete(Kind0, ObjectId0) ->
 all() ->
     case transaction(
            fun() ->
-               Records = mnesia:foldl(
-                           fun(Record, Acc) ->
-                               ok = validate_record_or_abort(Record),
-                               [Record | Acc]
-                           end,
-                           [],
-                           ?TABLE),
-               lists:foreach(fun validate_relationship_references_or_abort/1,
-                             Records),
+               Records = current_records(),
+               ok = validate_record_set_or_abort(Records),
                [record_to_map(Record) || Record <- Records]
            end) of
         {ok, Records} ->
@@ -94,26 +84,11 @@ all() ->
     end.
 
 transaction(Fun) when is_function(Fun, 0) ->
-    case erlang:get(?TRANSACTION_FLAG) of
-        true ->
+    case erlang:get(?TRANSACTION_CONTEXT) of
+        #{current := _} ->
             {ok, Fun()};
-        _ ->
-            case ensure_storage() of
-                ok ->
-                    case mnesia:sync_transaction(
-                           fun() ->
-                               erlang:put(?TRANSACTION_FLAG, true),
-                               try Fun()
-                               after
-                                   erlang:erase(?TRANSACTION_FLAG)
-                               end
-                           end) of
-                        {atomic, Result} -> {ok, Result};
-                        {aborted, Reason} -> {error, normalize_abort(Reason)}
-                    end;
-                {error, _} = Error ->
-                    Error
-            end
+        undefined ->
+            outer_transaction(Fun)
     end;
 transaction(_Fun) ->
     {error, invalid_domain_transaction}.
@@ -121,15 +96,7 @@ transaction(_Fun) ->
 validate_all() ->
     case transaction(
            fun() ->
-               Records = mnesia:foldl(
-                           fun(Record, Acc) ->
-                               ok = validate_record_or_abort(Record),
-                               [Record | Acc]
-                           end,
-                           [],
-                           ?TABLE),
-               lists:foreach(fun validate_relationship_references_or_abort/1,
-                             Records),
+               ok = validate_record_set_or_abort(current_records()),
                ok
            end) of
         {ok, ok} -> ok;
@@ -138,11 +105,37 @@ validate_all() ->
 
 reset() ->
     case ensure_storage() of
+        ok -> reset_kvs_records();
+        {error, _} = Error -> Error
+    end.
+
+outer_transaction(Fun) ->
+    case ensure_storage() of
         ok ->
-            case mnesia:clear_table(?TABLE) of
-                {atomic, ok} -> ok;
-                {aborted, Reason} ->
-                    {error, {domain_store_reset_failed, Reason}}
+            case load_kvs_record_map() of
+                {ok, Original} ->
+                    erlang:put(?TRANSACTION_CONTEXT,
+                               #{original => Original, current => Original}),
+                    try
+                        Result = Fun(),
+                        Current = current_record_map(),
+                        ok = validate_record_set_or_abort(maps:values(Current)),
+                        case commit_kvs_changes(Original, Current) of
+                            ok -> {ok, Result};
+                            {error, _} = Error -> Error
+                        end
+                    catch
+                        throw:{domain_store_abort, Reason} ->
+                            {error, Reason};
+                        Class:Reason:Stacktrace ->
+                            {error,
+                             {domain_store_transaction_failed,
+                              {Class, Reason, Stacktrace}}}
+                    after
+                        erlang:erase(?TRANSACTION_CONTEXT)
+                    end;
+                {error, _} = Error ->
+                    Error
             end;
         {error, _} = Error ->
             Error
@@ -154,8 +147,8 @@ write_projection(Projection) ->
     Key = {Kind, ObjectId},
     ok = validate_relationship_projection_or_abort(Projection),
     Now = now_seconds(),
-    case mnesia:read(?TABLE, Key, write) of
-        [] ->
+    case lookup_record(Key) of
+        not_found ->
             Record = #ias_domain_object{key = Key,
                                         kind = Kind,
                                         object_id = ObjectId,
@@ -164,9 +157,9 @@ write_projection(Projection) ->
                                         created_at = Now,
                                         updated_at = Now},
             ok = validate_record_or_abort(Record),
-            mnesia:write(Record),
+            stage_record(Record),
             {Record, changed};
-        [Record0] ->
+        #ias_domain_object{} = Record0 ->
             ok = validate_record_or_abort(Record0),
             case Record0#ias_domain_object.payload =:= Projection of
                 true ->
@@ -177,7 +170,7 @@ write_projection(Projection) ->
                                revision = Record0#ias_domain_object.revision + 1,
                                updated_at = Now},
                     ok = validate_record_or_abort(Record),
-                    mnesia:write(Record),
+                    stage_record(Record),
                     {Record, changed}
             end
     end.
@@ -284,36 +277,26 @@ validate_reference_or_abort(Kind, ObjectId) ->
         true ->
             ok;
         false ->
-            case mnesia:read(?TABLE, {Kind, ObjectId}, read) of
-                [_Record] -> ok;
-                [] -> mnesia:abort(
-                        {domain_store_invalid_record,
-                         {missing_domain_reference, Kind, ObjectId}})
+            case lookup_record({Kind, ObjectId}) of
+                #ias_domain_object{} -> ok;
+                not_found ->
+                    abort({missing_domain_reference, Kind, ObjectId})
             end
     end.
 
 ensure_not_referenced_or_abort(relationship, _ObjectId) ->
     ok;
 ensure_not_referenced_or_abort(Kind, ObjectId) ->
-    References = mnesia:foldl(
-                   fun(#ias_domain_object{kind = relationship,
-                                          object_id = RelationshipId,
-                                          payload = Projection}, Acc) ->
-                           case relationship_references(Projection, Kind, ObjectId) of
-                               true -> [RelationshipId | Acc];
-                               false -> Acc
-                           end;
-                      (_Record, Acc) ->
-                           Acc
-                   end,
-                   [],
-                   ?TABLE),
+    References =
+        [RelationshipId
+         || #ias_domain_object{kind = relationship,
+                               object_id = RelationshipId,
+                               payload = Projection} <- current_records(),
+            relationship_references(Projection, Kind, ObjectId)],
     case References of
         [] -> ok;
-        _ -> mnesia:abort(
-               {domain_store_invalid_record,
-                {domain_object_referenced, Kind, ObjectId,
-                 lists:sort(References)}})
+        _ -> abort({domain_object_referenced, Kind, ObjectId,
+                    lists:sort(References)})
     end.
 
 relationship_references(Projection, Kind, ObjectId) ->
@@ -326,8 +309,7 @@ relationship_references(Projection, Kind, ObjectId) ->
 validate_record_or_abort(Record) ->
     case validate_record(Record) of
         ok -> ok;
-        {error, Reason} ->
-            mnesia:abort({domain_store_invalid_record, Reason})
+        {error, Reason} -> abort(Reason)
     end.
 
 validate_record(#ias_domain_object{
@@ -371,135 +353,256 @@ compare_records(A, B) ->
     maps:get(key, A) =< maps:get(key, B).
 
 ensure_storage() ->
-    case ensure_mnesia_running() of
+    case ensure_kvs_started() of
         ok ->
-            case ensure_disc_schema() of
-                ok -> ensure_table();
+            ok = ensure_kvs_schema_modules(),
+            case validate_kvs_metadata() of
+                ok -> ensure_kvs_table();
                 {error, _} = Error -> Error
             end;
         {error, _} = Error ->
             Error
     end.
 
-ensure_mnesia_running() ->
-    case catch mnesia:system_info(is_running) of
-        yes -> ok;
-        starting -> wait_for_mnesia(?WAIT_TIMEOUT);
-        no -> start_mnesia();
-        stopping -> {error, {domain_store_mnesia_unavailable, stopping}};
-        {'EXIT', _} -> start_mnesia();
-        State -> {error, {domain_store_mnesia_unavailable, State}}
+ensure_kvs_started() ->
+    case application:ensure_all_started(kvs) of
+        {ok, _Started} -> ok;
+        {error, Reason} -> {error, {domain_store_kvs_start_failed, Reason}}
     end.
 
-start_mnesia() ->
-    case ensure_mnesia_schema() of
+ensure_kvs_schema_modules() ->
+    Existing = application:get_env(kvs, schema, []),
+    Required = [kvs, kvs_stream, ias_kvs],
+    Modules = lists:usort(Existing ++ Required),
+    application:set_env(kvs, schema, Modules).
+
+validate_kvs_metadata() ->
+    ExpectedFields = record_info(fields, ias_domain_object),
+    case kvs:table(?TABLE) of
+        #table{fields = ExpectedFields, type = set, copy_type = disc_copies} ->
+            ok;
+        false ->
+            {error, {domain_store_kvs_schema_missing, ?TABLE}};
+        #table{} = Table ->
+            {error,
+             {invalid_domain_store_kvs_metadata,
+              #{fields => Table#table.fields,
+                type => Table#table.type,
+                copy_type => Table#table.copy_type}}}
+    end.
+
+ensure_kvs_table() ->
+    case kvs_table_present() of
+        true -> validate_kvs_access();
+        false ->
+            case catch kvs:join() of
+                {'EXIT', Reason} ->
+                    {error, {domain_store_kvs_join_failed, Reason}};
+                _ ->
+                    wait_for_kvs_table(?WAIT_TIMEOUT)
+            end
+    end.
+
+wait_for_kvs_table(Timeout) ->
+    wait_for_kvs_table(Timeout, erlang:monotonic_time(millisecond)).
+
+wait_for_kvs_table(Timeout, StartedAt) ->
+    case kvs_table_present() of
+        true -> validate_kvs_access();
+        false ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= Timeout of
+                true -> {error, {domain_store_kvs_table_unavailable, ?TABLE}};
+                false ->
+                    timer:sleep(10),
+                    wait_for_kvs_table(Timeout, StartedAt)
+            end
+    end.
+
+kvs_table_present() ->
+    case catch kvs:dir() of
+        Tables when is_list(Tables) ->
+            lists:member({table, ?TABLE}, Tables);
+        _ ->
+            false
+    end.
+
+validate_kvs_access() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) -> ok;
+        {error, Reason} -> {error, {domain_store_kvs_unavailable, Reason}};
+        {'EXIT', Reason} -> {error, {domain_store_kvs_unavailable, Reason}};
+        Other -> {error, {domain_store_kvs_unexpected_result, Other}}
+    end.
+
+load_kvs_record_map() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) -> records_to_map(Records, #{});
+        {error, Reason} -> {error, {domain_store_kvs_read_failed, Reason}};
+        {'EXIT', Reason} -> {error, {domain_store_kvs_read_failed, Reason}};
+        Other -> {error, {domain_store_kvs_unexpected_result, Other}}
+    end.
+
+records_to_map([], Acc) ->
+    {ok, Acc};
+records_to_map([Record | Rest], Acc) ->
+    case validate_record(Record) of
         ok ->
-            case application:ensure_all_started(mnesia) of
-                {ok, _Started} -> wait_for_mnesia(?WAIT_TIMEOUT);
-                {error, Reason} ->
-                    {error, {domain_store_mnesia_start_failed, Reason}}
+            Key = Record#ias_domain_object.key,
+            case maps:is_key(Key, Acc) of
+                true -> {error, {duplicate_domain_record, Key}};
+                false -> records_to_map(Rest, Acc#{Key => Record})
+            end;
+        {error, Reason} ->
+            {error, Reason}
+    end.
+
+current_record_map() ->
+    #{current := Current} = erlang:get(?TRANSACTION_CONTEXT),
+    Current.
+
+current_records() ->
+    maps:values(current_record_map()).
+
+read_record(Key) ->
+    case erlang:get(?TRANSACTION_CONTEXT) of
+        #{current := _} ->
+            case lookup_record(Key) of
+                not_found -> not_found;
+                #ias_domain_object{} = Record -> {ok, Record}
+            end;
+        undefined ->
+            case ensure_storage() of
+                ok -> kvs_get_record(Key);
+                {error, _} = Error -> Error
+            end
+    end.
+
+kvs_get_record(Key) ->
+    case catch kvs:get(?TABLE, Key) of
+        {ok, #ias_domain_object{} = Record} ->
+            case validate_record(Record) of
+                ok -> {ok, Record};
+                {error, Reason} -> {error, Reason}
+            end;
+        {error, not_found} ->
+            not_found;
+        {error, Reason} ->
+            {error, {domain_store_kvs_read_failed, Reason}};
+        {'EXIT', Reason} ->
+            {error, {domain_store_kvs_read_failed, Reason}};
+        Other ->
+            {error, {domain_store_kvs_unexpected_result, Other}}
+    end.
+
+lookup_record(Key) ->
+    maps:get(Key, current_record_map(), not_found).
+
+stage_record(#ias_domain_object{key = Key} = Record) ->
+    update_current(fun(Current) -> Current#{Key => Record} end).
+
+stage_delete(Key) ->
+    update_current(fun(Current) -> maps:remove(Key, Current) end).
+
+update_current(Fun) ->
+    Context0 = erlang:get(?TRANSACTION_CONTEXT),
+    Current0 = maps:get(current, Context0),
+    Context = Context0#{current => Fun(Current0)},
+    erlang:put(?TRANSACTION_CONTEXT, Context),
+    ok.
+
+validate_record_set_or_abort(Records) ->
+    lists:foreach(fun validate_record_or_abort/1, Records),
+    lists:foreach(fun validate_relationship_references_or_abort/1, Records),
+    ok.
+
+commit_kvs_changes(Original, Current) ->
+    Puts = [Record
+            || {Key, Record} <- maps:to_list(Current),
+               maps:get(Key, Original, undefined) =/= Record],
+    Deletes = [Key
+               || Key <- maps:keys(Original),
+                  not maps:is_key(Key, Current)],
+    case kvs_put_records(Puts) of
+        ok ->
+            case kvs_delete_keys(Deletes) of
+                ok -> ok;
+                {error, _} = Error -> rollback_after_commit_error(Original, Current, Error)
             end;
         {error, _} = Error ->
             Error
     end.
 
-ensure_mnesia_schema() ->
-    case mnesia:create_schema([node()]) of
-        ok -> ok;
+kvs_put_records([]) ->
+    ok;
+kvs_put_records(Records) ->
+    normalize_kvs_write_result(kvs:put(Records), domain_store_kvs_write_failed).
+
+kvs_delete_keys([]) ->
+    ok;
+kvs_delete_keys([Key | Rest]) ->
+    case normalize_kvs_write_result(kvs:delete(?TABLE, Key),
+                                    domain_store_kvs_delete_failed) of
+        ok -> kvs_delete_keys(Rest);
+        {error, _} = Error -> Error
+    end.
+
+normalize_kvs_write_result(ok, _Tag) ->
+    ok;
+normalize_kvs_write_result(Results, _Tag) when is_list(Results) ->
+    case lists:all(fun(Result) -> Result =:= ok end, Results) of
+        true -> ok;
+        false -> {error, {domain_store_kvs_batch_failed, Results}}
+    end;
+normalize_kvs_write_result({error, Reason}, Tag) ->
+    {error, {Tag, Reason}};
+normalize_kvs_write_result(Other, Tag) ->
+    {error, {Tag, Other}}.
+
+rollback_after_commit_error(Original, Current, CommitError) ->
+    Affected = lists:usort(maps:keys(Original) ++ maps:keys(Current)),
+    RollbackResults = [restore_kvs_key(Key, Original) || Key <- Affected],
+    case lists:all(fun(Result) -> Result =:= ok end, RollbackResults) of
+        true -> CommitError;
+        false -> {error, {domain_store_kvs_commit_and_rollback_failed,
+                          CommitError, RollbackResults}}
+    end.
+
+restore_kvs_key(Key, Original) ->
+    case maps:find(Key, Original) of
+        {ok, Record} ->
+            normalize_kvs_write_result(kvs:put(Record),
+                                       domain_store_kvs_rollback_write_failed);
+        error ->
+            normalize_kvs_write_result(kvs:delete(?TABLE, Key),
+                                       domain_store_kvs_rollback_delete_failed)
+    end.
+
+reset_kvs_records() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) ->
+            reset_kvs_records(Records);
         {error, Reason} ->
-            case contains_already_exists(Reason) of
-                true -> ok;
-                false -> {error, {domain_store_schema_create_failed, Reason}}
-            end
-    end.
-
-wait_for_mnesia(Timeout) ->
-    wait_for_mnesia(Timeout, erlang:monotonic_time(millisecond)).
-
-wait_for_mnesia(Timeout, StartedAt) ->
-    case catch mnesia:system_info(is_running) of
-        yes -> ok;
-        State ->
-            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
-            case Elapsed >= Timeout of
-                true -> {error, {domain_store_mnesia_start_timeout, State}};
-                false ->
-                    timer:sleep(10),
-                    wait_for_mnesia(Timeout, StartedAt)
-            end
-    end.
-
-ensure_disc_schema() ->
-    case catch mnesia:table_info(schema, storage_type) of
-        disc_copies -> ok;
-        ram_copies ->
-            case mnesia:change_table_copy_type(schema, node(), disc_copies) of
-                {atomic, ok} -> ok;
-                {aborted, Reason} ->
-                    case contains_already_exists(Reason) of
-                        true -> ok;
-                        false ->
-                            {error, {domain_store_schema_persistence_failed, Reason}}
-                    end
-            end;
+            {error, {domain_store_reset_failed, Reason}};
         {'EXIT', Reason} ->
-            {error, {domain_store_schema_unavailable, Reason}};
-        StorageType ->
-            {error, {domain_store_invalid_schema_storage, StorageType}}
+            {error, {domain_store_reset_failed, Reason}};
+        Other ->
+            {error, {domain_store_reset_failed, Other}}
     end.
 
-ensure_table() ->
-    case lists:member(?TABLE, mnesia:system_info(tables)) of
-        true -> wait_and_validate_table();
-        false -> create_table()
-    end.
+reset_kvs_records([]) ->
+    ok;
+reset_kvs_records([#ias_domain_object{key = Key} | Rest]) ->
+    case kvs:delete(?TABLE, Key) of
+        ok -> reset_kvs_records(Rest);
+        {error, Reason} -> {error, {domain_store_reset_failed, Reason}};
+        Other -> {error, {domain_store_reset_failed, Other}}
+    end;
+reset_kvs_records([Invalid | _Rest]) ->
+    {error, {domain_store_reset_failed, {invalid_domain_record, Invalid}}}.
 
-create_table() ->
-    Options = [{attributes, record_info(fields, ias_domain_object)},
-               {type, set},
-               {disc_copies, [node()]}],
-    case mnesia:create_table(?TABLE, Options) of
-        {atomic, ok} -> wait_and_validate_table();
-        {aborted, Reason} ->
-            case contains_already_exists(Reason) of
-                true -> wait_and_validate_table();
-                false -> {error, {domain_store_table_create_failed, Reason}}
-            end
-    end.
-
-wait_and_validate_table() ->
-    case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
-        ok -> validate_table();
-        {timeout, Tables} ->
-            {error, {domain_store_table_unavailable, Tables}};
-        {error, Reason} ->
-            {error, {domain_store_table_unavailable, Reason}}
-    end.
-
-validate_table() ->
-    ExpectedAttributes = record_info(fields, ias_domain_object),
-    ActualAttributes = mnesia:table_info(?TABLE, attributes),
-    StorageType = mnesia:table_info(?TABLE, storage_type),
-    TableType = mnesia:table_info(?TABLE, type),
-    case {ActualAttributes, StorageType, TableType} of
-        {ExpectedAttributes, disc_copies, set} -> ok;
-        _ ->
-            {error,
-             {invalid_domain_store_table,
-              #{attributes => ActualAttributes,
-                storage_type => StorageType,
-                type => TableType}}}
-    end.
-
-normalize_abort({domain_store_invalid_record, Reason}) -> Reason;
-normalize_abort(Reason) -> {domain_store_transaction_failed, Reason}.
-
-contains_already_exists(already_exists) -> true;
-contains_already_exists(Term) when is_tuple(Term) ->
-    lists:any(fun contains_already_exists/1, tuple_to_list(Term));
-contains_already_exists(Term) when is_list(Term) ->
-    lists:any(fun contains_already_exists/1, Term);
-contains_already_exists(_) -> false.
+abort(Reason) ->
+    throw({domain_store_abort, Reason}).
 
 forbidden_material_path(Term) ->
     forbidden_material_path(Term, []).

@@ -33,7 +33,7 @@ IAS відповідає за:
 - рішення авторизації.
 
 Поточний план переходу від volatile ETS object graph до IAS-owned durable
-Mnesia state та startup rehydration описаний у
+durable KVS state та startup rehydration описаний у
 `docs/IAS-DURABLE-STATE.md`. VPN не є джерелом відновлення IAS-об’єктів;
 сценарії disposition для orphan projections залишаються окремим явним та
 аудованим workflow.
