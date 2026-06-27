@@ -7,6 +7,8 @@
          update/2,
          delete/1,
          clear/0,
+         rehydrate/0,
+         abandon/1,
          next/1,
          back/1,
          select_user/2,
@@ -83,8 +85,7 @@ new(device_bound) ->
         created_at => Now,
         updated_at => Now
     },
-    ets:insert(?TABLE, {Id, Draft}),
-    {ok, Draft};
+    persist_and_project(Draft);
 new(_Scenario) ->
     {error, unsupported_scenario}.
 
@@ -98,9 +99,9 @@ restore(Draft) when is_map(Draft) ->
     case validate_restored_draft(Draft) of
         {ok, SafeDraft} ->
             Id = maps:get(id, SafeDraft),
-            case ets:insert_new(?TABLE, {Id, SafeDraft}) of
-                true -> {ok, SafeDraft};
-                false -> {error, duplicate_id}
+            case get(Id) of
+                not_found -> persist_and_project(SafeDraft);
+                {ok, _} -> {error, duplicate_id}
             end;
         {error, Reason} ->
             {error, Reason}
@@ -130,8 +131,7 @@ update(Id, Updates) when is_map(Updates) ->
                     Updated = (maps:merge(Draft, SafeUpdates))#{
                         updated_at => created_at()
                     },
-                    ets:insert(?TABLE, {maps:get(id, Updated), Updated}),
-                    {ok, Updated};
+                    persist_and_project(Updated);
                 {error, Reason} ->
                     {error, Reason}
             end;
@@ -141,13 +141,40 @@ update(Id, Updates) when is_map(Updates) ->
 
 delete(Id) ->
     ensure(),
-    ets:delete(?TABLE, normalize_id(Id)),
-    ok.
+    TextId = normalize_id(Id),
+    case ias_provisioning_wizard_draft_store:delete(TextId) of
+        ok -> ets:delete(?TABLE, TextId), ok;
+        {error, _} = Error -> Error
+    end.
 
 clear() ->
     ensure(),
-    ets:delete_all_objects(?TABLE),
-    ok.
+    case ias_provisioning_wizard_draft_store:reset() of
+        ok -> ets:delete_all_objects(?TABLE), ok;
+        {error, _} = Error -> Error
+    end.
+
+rehydrate() ->
+    ensure(),
+    case ias_provisioning_wizard_draft_store:all() of
+        {ok, Drafts} ->
+            ets:delete_all_objects(?TABLE),
+            true = ets:insert(?TABLE, [{maps:get(id, Draft), Draft} || Draft <- Drafts]),
+            {ok, length(Drafts)};
+        {error, _} = Error -> Error
+    end.
+
+abandon(Id) ->
+    case get(Id) of
+        {ok, Draft} ->
+            Updated = Draft#{abandoned => true,
+                             abandoned_at => created_at(),
+                             completed => false,
+                             completed_at => undefined,
+                             updated_at => created_at()},
+            persist_and_project(Updated);
+        not_found -> {error, not_found}
+    end.
 
 clear_vpn_allocation_for_device(DeviceId0) ->
     ensure(),
@@ -160,7 +187,7 @@ clear_vpn_allocation_for_device(DeviceId0) ->
           Updated = (maps:merge(Draft, clear_vpn_allocation_updates()))#{
               updated_at => created_at()
           },
-          ets:insert(?TABLE, {Id, Updated})
+          {ok, _} = persist_and_project(Updated)
       end,
       Drafts),
     {ok, length(Drafts)}.
@@ -947,13 +974,15 @@ validate_restored_draft(Draft) ->
                vpn_allocation_state, vpn_allocation_persistence,
                vpn_allocation_created_at,
                relationships_applied, provisioning_id, completed,
-               completed_at, created_at, updated_at],
+               completed_at, abandoned, abandoned_at, created_at, updated_at],
     Selected = maps:with(Allowed, Draft),
     Safe = Selected#{relationships_applied =>
                          maps:get(relationships_applied, Selected, false),
                      provisioning_id => maps:get(provisioning_id, Selected, undefined),
                      completed => maps:get(completed, Selected, false),
-                     completed_at => maps:get(completed_at, Selected, undefined)},
+                     completed_at => maps:get(completed_at, Selected, undefined),
+                     abandoned => maps:get(abandoned, Selected, false),
+                     abandoned_at => maps:get(abandoned_at, Selected, undefined)},
     case {maps:get(id, Safe, undefined),
           maps:get(scenario, Safe, undefined),
           maps:get(current_step, Safe, undefined)} of
@@ -980,6 +1009,8 @@ validate_restored_draft(Draft) ->
                  andalso valid_allocation_metadata(Safe)
                  andalso valid_optional_reference(maps:get(provisioning_id, Safe, undefined))
                  andalso valid_optional_reference(maps:get(completed_at, Safe, undefined))
+                 andalso is_boolean(maps:get(abandoned, Safe, false))
+                 andalso valid_optional_reference(maps:get(abandoned_at, Safe, undefined))
                  andalso is_boolean(maps:get(relationships_applied, Safe, false))
                  andalso valid_completion_state(Safe) of
                 true -> {ok, Safe};
@@ -1055,12 +1086,20 @@ normalize_updates(Updates) ->
     CurrentStep = maps:get(current_step, Updates, undefined),
     case CurrentStep of
         undefined ->
-            {ok, maps:without([id, created_at], Updates)};
+            {ok, maps:without([id, created_at, abandoned, abandoned_at], Updates)};
         _ ->
             case lists:member(CurrentStep, steps()) of
-                true -> {ok, maps:without([id, created_at], Updates)};
+                true -> {ok, maps:without([id, created_at, abandoned, abandoned_at], Updates)};
                 false -> {error, invalid_step}
             end
+    end.
+
+persist_and_project(Draft) ->
+    case ias_provisioning_wizard_draft_store:put(Draft) of
+        {ok, Stored, _Change} ->
+            ets:insert(?TABLE, {maps:get(id, Stored), Stored}),
+            {ok, Stored};
+        {error, _} = Error -> Error
     end.
 
 normalize_id(Id) when is_binary(Id) ->

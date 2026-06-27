@@ -6,8 +6,10 @@ prepare() ->
     Steps = [
         {kvs_join, fun ensure_kvs_joined/0},
         {domain_store, fun ias_domain_store:ensure/0},
+        {wizard_draft_store, fun ias_provisioning_wizard_draft_store:ensure/0},
         {vpn_authority, fun ias_vpn_authority:ensure/0},
         {vpn_incidents, fun ias_vpn_reconciliation_incidents:ensure/0},
+        {wizard_draft_rehydration, fun ias_provisioning_wizard_store:rehydrate/0},
         {rehydration, fun ias_demo_store:rehydrate/0}
     ],
     run_steps(Steps, undefined).
