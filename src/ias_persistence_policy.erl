@@ -22,12 +22,12 @@ stores() ->
        backend => kvs,
        runtime_projection => ets,
        policy => <<"sanitized audit metadata">>},
-     #{store => ias_certificate_material,
-       label => <<"Certificate Materials">>,
-       mode => volatile,
-       backend => ets,
-       runtime_projection => none,
-       policy => <<"secure material boundary">>},
+     #{store => ias_certificate_material_store,
+       label => <<"Public Certificate Materials">>,
+       mode => durable,
+       backend => kvs,
+       runtime_projection => ets,
+       policy => <<"public X.509 material; private keys forbidden">>},
      #{store => ias_csr_enrollment_store,
        label => <<"CSR Enrollment States">>,
        mode => durable,
@@ -55,8 +55,11 @@ diagnostics() ->
       durable_csr_enrollment_states => durable_csr_enrollment_count(),
       ets_csr_enrollment_states =>
           safe_count(fun ias_csr_enrollment_state:projection_count/0),
-      volatile_certificate_materials =>
-          safe_count(fun ias_certificate_material:count/0),
+      durable_certificate_materials => durable_certificate_material_count(),
+      ets_certificate_materials =>
+          safe_count(fun ias_certificate_material:projection_count/0),
+      certificate_material_protection =>
+          safe_call(fun ias_certificate_material:protection_mode/0),
       persistence_stores => stores()}.
 
 durable_wizard_draft_count() ->
@@ -73,6 +76,12 @@ durable_delivery_audit_count() ->
 
 durable_csr_enrollment_count() ->
     case safe_call(fun ias_csr_enrollment_store:count/0) of
+        {ok, Count} when is_integer(Count) -> Count;
+        _ -> unavailable
+    end.
+
+durable_certificate_material_count() ->
+    case safe_call(fun ias_certificate_material_store:count/0) of
         {ok, Count} when is_integer(Count) -> Count;
         _ -> unavailable
     end.

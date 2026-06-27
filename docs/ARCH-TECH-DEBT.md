@@ -970,9 +970,11 @@ and incompatible schemas fail closed.
 CMP enrollment completion still crosses the certificate-material store and
 Device key-reference updates, so its wider recovery boundary remains coordinated
 with `TD-014`. Durable wizard drafts and final OVPN completion are now covered;
-public certificate material, audit retention and secret storage remain separate
-future stages. Private keys, TLS secrets, OVPN bodies, certificate bodies and
-browser/session state are outside this resolved domain-graph milestone.
+public certificate material is now durable through KVS with staged-CMP
+retention and provider-based at-rest protection. Private keys, TLS secrets, OVPN
+bodies, and browser/session state remain outside IAS durable state. CMP
+completion still spans domain metadata, Device key references, and certificate
+material, so the wider TD-014 transaction boundary remains open.
 
 Implementation stages, persistence classification, schema proposal, failure
 semantics, restart tests and acceptance criteria are defined in

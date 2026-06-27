@@ -10,8 +10,9 @@ persistence_policy_classifies_durable_and_volatile_stores_test() ->
                  store(ias_provisioning_wizard_draft_store, Stores)),
     ?assertMatch(#{mode := durable_append_only, backend := kvs},
                  store(ias_vpn_provisioning_delivery_store, Stores)),
-    ?assertMatch(#{mode := volatile, backend := ets},
-                 store(ias_certificate_material, Stores)),
+    ?assertMatch(#{mode := durable, backend := kvs,
+                   runtime_projection := ets},
+                 store(ias_certificate_material_store, Stores)),
     ?assertMatch(#{mode := durable, backend := kvs,
                    runtime_projection := ets},
                  store(ias_csr_enrollment_store, Stores)),
@@ -60,6 +61,43 @@ persistence_diagnostics_report_csr_enrollment_projection_test() ->
     ?assertEqual(0, maps:get(ets_csr_enrollment_states, Diagnostics2)),
     ?assertEqual({ok, 1}, ias_csr_enrollment_state:rehydrate()),
     ok = ias_csr_enrollment_state:clear().
+
+
+persistence_diagnostics_report_certificate_material_projection_test() ->
+    ok = ias_certificate_material_store:ensure(),
+    ok = ias_certificate_material:clear(),
+    Certificate = ias_demo_store:add_certificate(
+                    #{id => <<"policy-certificate-material">>,
+                      source => certificate_issue_demo}),
+    {ok, _} = ias_certificate_material:put(
+                maps:get(id, Certificate),
+                client_certificate,
+                client_pem(),
+                operator_load),
+    Diagnostics1 = ias_persistence_policy:diagnostics(),
+    ?assertEqual(1, maps:get(durable_certificate_materials, Diagnostics1)),
+    ?assertEqual(1, maps:get(ets_certificate_materials, Diagnostics1)),
+    ?assertEqual(public_integrity_sha256,
+                 maps:get(certificate_material_protection, Diagnostics1)),
+    true = ets:delete_all_objects(ias_certificate_material),
+    Diagnostics2 = ias_persistence_policy:diagnostics(),
+    ?assertEqual(1, maps:get(durable_certificate_materials, Diagnostics2)),
+    ?assertEqual(0, maps:get(ets_certificate_materials, Diagnostics2)),
+    ?assertEqual({ok, 1}, ias_certificate_material:rehydrate()),
+    ok = ias_certificate_material:clear(),
+    ok = ias_demo_store:clear().
+
+client_pem() ->
+    <<"-----BEGIN CERTIFICATE-----\n"
+      "MIIBZDCCAQqgAwIBAgIUa1wxwBw2MaSaN2Zaqvu/4gWUgDMwCgYIKoZIzj0EAwIw\n"
+      "FjEUMBIGA1UEAwwLSUFTIFRlc3QgQ0EwHhcNMjYwNjIxMTIxMzA0WhcNMzYwNjE4\n"
+      "MTIxMzA0WjAaMRgwFgYDVQQDDA9JQVMgVGVzdCBDbGllbnQwWTATBgcqhkjOPQIB\n"
+      "BggqhkjOPQMBBwNCAAT9brxfCaaU/6LLtCNKICvq1UwQDTH9hS9teBzUhEPuxGcA\n"
+      "0wdjEO6F1kR64uUgAoUYOOlIqj31MWH5CcqBwuuxozIwMDAMBgNVHRMBAf8EAjAA\n"
+      "MAsGA1UdDwQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDAjAKBggqhkjOPQQDAgNI\n"
+      "ADBFAiEA2ye4DSJJuQnZ43+peLW5YsQHGEdGx9r1zuCKHxNcY0kCICsBo8QieTgA\n"
+      "Iq0sBJ/RxQ+E19tAL+EarYX6zvA00gz9\n"
+      "-----END CERTIFICATE-----\n">>.
 
 store(Name, Stores) ->
     [Store] = [Candidate || Candidate <- Stores,

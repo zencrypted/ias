@@ -134,7 +134,7 @@ missing_object_reason(vpn_service) -> <<"VPN service object is missing">>;
 missing_object_reason(_) -> <<"required object is missing">>.
 
 with_material(CertificateId, ExpectedType, Fun) ->
-    case ias_certificate_material:get(CertificateId) of
+    case ias_certificate_material:get(CertificateId, ovpn_assembly) of
         {ok, #{material_type := ExpectedType, body := Pem}} ->
             Fun(Pem);
         {ok, _OtherMaterial} ->

@@ -585,14 +585,14 @@ tracked by TD-014.
 
 ### Stage 6 — Audit and material stores
 
-**Stage 6A, 6B and 6C status:** Implemented.
+**Stage 6A, 6B, 6C and 6D status:** Implemented.
 
 Stage 6A records the persistence policy explicitly in
 `ias_persistence_policy`. Demo State now distinguishes durable KVS authorities,
 ETS projections, intentionally volatile stores, and their current counts. Domain
-objects, wizard drafts, VPN delivery audit entries, and CSR enrollment metadata
-are durable. Certificate material, event bridge state, and Nitro/WebSocket state
-remain explicitly volatile.
+objects, wizard drafts, VPN delivery audit entries, CSR enrollment metadata, and
+public certificate material are durable. Event bridge state and Nitro/WebSocket
+state remain explicitly volatile; private keys remain outside IAS durable state.
 
 Stage 6B adds the append-only `ias_vpn_provisioning_delivery_audit` KVS table.
 Every delivery attempt receives a unique delivery ID and per-Device attempt
@@ -620,10 +620,23 @@ this projection before Cowboy starts, and unsupported schema versions fail
 closed. No automatic expiry policy is applied in Stage 6C; records remain until
 an explicit development/test reset or a future retention policy is introduced.
 
-**Still pending:**
+Stage 6D adds the `ias_certificate_material_record` KVS table and keeps
+`ias_certificate_material` as the compatibility façade and ETS projection. CA
+and client certificate PEM, including staged CMP certificate responses, survive
+a full IAS restart. Every body is re-decoded and fingerprint-checked during
+startup. Private-key PEM is rejected before persistence, status and Demo State
+never expose bodies, and full-body reads require an explicit internal purpose.
 
-- Stage 6D — secure certificate/CA public-material storage, retention,
-  encryption, and access-control policy.
+Attached material is retained until explicit deletion. Staged CMP material has a
+configurable TTL (24 hours by default), is pruned during startup, and is moved
+from the staged record to the certificate record in one KVS transaction.
+
+Protection at rest is provider-based. The default public-material provider uses
+a SHA-256 integrity envelope because X.509 certificates are public data. An
+AES-256-GCM provider is included for deployments that require ciphertext at
+rest and obtains its 32-byte key from application configuration rather than KVS.
+A missing key, damaged envelope, unsupported schema, or fingerprint mismatch
+fails startup closed.
 
 ### Stage 7 — Orphan disposition workflow
 

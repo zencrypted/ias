@@ -24,7 +24,7 @@ event(_) ->
 content() ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Demo State")},
-        #p{body = ias_html:text("Domain metadata, wizard drafts, sanitized VPN delivery audit entries, and CSR enrollment metadata are durable through KVS. ETS remains the runtime projection, while certificate material, event bridge state, and browser sessions remain explicitly volatile.")},
+        #p{body = ias_html:text("Domain metadata, wizard drafts, sanitized VPN delivery audit entries, CSR enrollment metadata, and public certificate material are durable through KVS. ETS remains the runtime projection, while private keys, event bridge state, and browser sessions remain outside durable IAS state.")},
         #panel{id = state_summary, body = state_summary_content()},
         export_panel(),
         import_panel(),
@@ -55,7 +55,7 @@ persistence_policy_summary(Summary) ->
     Stores = maps:get(persistence_stores, Summary, []),
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Persistence Store Policy")},
-        #p{body = ias_html:text("Durable stores use KVS as their source of truth. Volatile stores are intentionally excluded until their lifecycle and secure-material policies are defined.")},
+        #p{body = ias_html:text("Durable stores use KVS as their source of truth. Public certificate PEM is durable under an explicit protection provider; private keys and session state remain excluded.")},
         key_value_table([
             {"Durable Domain Objects", health_value(maps:get(durable_objects,
                                                                Summary,
@@ -82,8 +82,16 @@ persistence_policy_summary(Summary) ->
              health_value(maps:get(ets_csr_enrollment_states,
                                    Summary,
                                    unavailable))},
-            {"Volatile Certificate Materials",
-             health_value(maps:get(volatile_certificate_materials,
+            {"Durable Certificate Materials",
+             health_value(maps:get(durable_certificate_materials,
+                                   Summary,
+                                   unavailable))},
+            {"ETS Certificate Material Projection",
+             health_value(maps:get(ets_certificate_materials,
+                                   Summary,
+                                   unavailable))},
+            {"Certificate Material Protection",
+             health_value(maps:get(certificate_material_protection,
                                    Summary,
                                    unavailable))}
         ]),
@@ -221,7 +229,7 @@ import_panel() ->
 clear_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Clear Demo State")},
-        #p{body = ias_html:text("Clears durable KVS domain objects, wizard drafts, VPN delivery audit entries, CSR enrollment states, their ETS projections, VPN authority and incident state, and volatile certificate material. Built-in fixtures are not deleted.")},
+        #p{body = ias_html:text("Clears durable KVS domain objects, wizard drafts, VPN delivery audit entries, CSR enrollment states, public certificate material, their ETS projections, VPN authority and incident state. Built-in fixtures are not deleted.")},
         #link{class = [button, sgreen],
               body = ias_html:text("Clear Demo State"),
               postback = clear_demo_state}
@@ -275,7 +283,7 @@ clear_result() ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
                #h3{body = ias_html:text("Demo state cleared")},
-               #p{body = ias_html:text("Durable demo domain state, wizard drafts, VPN delivery audit history, and their ETS projections were cleared.")}
+               #p{body = ias_html:text("Durable demo domain state, wizard drafts, VPN delivery audit history, CSR enrollment metadata, public certificate material, and their ETS projections were cleared.")}
            ]}.
 
 key_value_table(Rows) ->

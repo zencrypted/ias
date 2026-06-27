@@ -1,31 +1,50 @@
 -module(ias_certificate_material).
 -compile({no_auto_import, [get/1]}).
--export([put/4, validate_public/2, get/1, status/1, delete/1, clear/0,
-         count/0, stage_cmp/2, attach_staged/2]).
+
+-export([ensure/0,
+         put/4,
+         validate_public/2,
+         get/1,
+         get/2,
+         status/1,
+         delete/1,
+         clear/0,
+         count/0,
+         projection_count/0,
+         rehydrate/0,
+         protection_mode/0,
+         stage_cmp/2,
+         attach_staged/2]).
 
 -define(TABLE, ias_certificate_material).
 -define(OWNER, ias_certificate_material_owner).
+
+ensure() ->
+    case ias_certificate_material_store:ensure() of
+        ok -> ensure_table();
+        {error, _} = Error -> Error
+    end.
 
 put(CertificateId, MaterialType, Pem, Source) ->
     ensure_table(),
     Id = ias_html:text(CertificateId),
     case ias_demo_store:get(Id) of
-        {ok, #{kind := certificate}} -> put_existing(Id, MaterialType, Pem, Source);
-        _ -> {error, certificate_not_found}
+        {ok, #{kind := certificate}} ->
+            put_existing(Id, MaterialType, Pem, Source);
+        _ ->
+            {error, certificate_not_found}
     end.
 
 put_existing(Id, MaterialType, Pem, Source) ->
     case validate(MaterialType, Pem) of
-        {ok, NormalizedPem, Der} ->
-            Record = #{certificate_id => Id,
-                       material_type => MaterialType,
-                       encoding => pem,
-                       source => Source,
-                       stored_at => created_at(),
-                       fingerprint_sha256 => fingerprint(Der),
-                       body => NormalizedPem},
-            true = ets:insert(?TABLE, {Id, Record}),
-            {ok, public_status(Record)};
+        {ok, NormalizedPem, _Der} ->
+            case ias_certificate_material_store:put_certificate(
+                   Id, MaterialType, NormalizedPem, Source) of
+                {ok, Record, _Change} ->
+                    project_certificate(Record),
+                    {ok, public_status(Record)};
+                {error, _} = Error -> Error
+            end;
         {error, Reason} ->
             {error, Reason}
     end.
@@ -36,65 +55,137 @@ validate_public(MaterialType, Pem) ->
         {error, Reason} -> {error, Reason}
     end.
 
-
 stage_cmp(EnrollmentId, Pem) ->
     ensure_table(),
     case validate(client_certificate, Pem) of
-        {ok, NormalizedPem, Der} ->
-            Id = ias_html:text(EnrollmentId),
-            Record = #{enrollment_id => Id,
-                       material_type => client_certificate,
-                       encoding => pem,
-                       source => cmp_response,
-                       stored_at => created_at(),
-                       fingerprint_sha256 => fingerprint(Der),
-                       body => NormalizedPem},
-            true = ets:insert(?TABLE, {{staged_cmp, Id}, Record}),
-            {ok, public_status(Record)};
+        {ok, NormalizedPem, _Der} ->
+            case ias_certificate_material_store:stage_cmp(
+                   EnrollmentId, NormalizedPem) of
+                {ok, Record, _Change} ->
+                    project_staged(Record),
+                    {ok, public_status(Record)};
+                {error, _} = Error -> Error
+            end;
         {error, Reason} -> {error, Reason}
     end.
 
 attach_staged(EnrollmentId, CertificateId) ->
     ensure_table(),
-    EnrollmentKey = ias_html:text(EnrollmentId),
-    case ets:lookup(?TABLE, {staged_cmp, EnrollmentKey}) of
-        [{_, Record}] ->
-            Result = put(CertificateId, client_certificate,
-                         maps:get(body, Record), cmp_response),
-            case Result of
-                {ok, _} -> ets:delete(?TABLE, {staged_cmp, EnrollmentKey});
-                _ -> ok
-            end,
-            Result;
-        [] -> not_found
+    CertificateKey = ias_html:text(CertificateId),
+    case ias_demo_store:get(CertificateKey) of
+        {ok, #{kind := certificate}} ->
+            case ias_certificate_material_store:attach_staged(
+                   EnrollmentId, CertificateKey) of
+                {ok, Record} ->
+                    ets:delete(?TABLE,
+                               {staged_cmp, ias_html:text(EnrollmentId)}),
+                    project_certificate(Record),
+                    {ok, public_status(Record)};
+                not_found -> not_found;
+                {error, staged_cmp_material_expired} = Error ->
+                    ets:delete(?TABLE,
+                               {staged_cmp, ias_html:text(EnrollmentId)}),
+                    Error;
+                {error, _} = Error -> Error
+            end;
+        _ ->
+            {error, certificate_not_found}
     end.
 
 get(CertificateId) ->
-    ensure_table(),
-    case ets:lookup(?TABLE, ias_html:text(CertificateId)) of
-        [{_, Record}] -> {ok, Record};
-        [] -> not_found
+    get(CertificateId, compatibility_read).
+
+get(CertificateId, Purpose) ->
+    case authorize(Purpose) of
+        ok ->
+            ensure_table(),
+            case ets:lookup(?TABLE, ias_html:text(CertificateId)) of
+                [{_, Record}] -> {ok, Record};
+                [] -> not_found
+            end;
+        {error, _} = Error -> Error
     end.
 
 status(CertificateId) ->
-    case get(CertificateId) of
+    case get(CertificateId, status_read) of
         {ok, Record} -> {ok, public_status(Record)};
-        not_found -> not_found
+        not_found -> not_found;
+        {error, _} = Error -> Error
     end.
 
 delete(CertificateId) ->
     ensure_table(),
-    ets:delete(?TABLE, ias_html:text(CertificateId)),
-    ok.
+    Id = ias_html:text(CertificateId),
+    case ias_certificate_material_store:delete_certificate(Id) of
+        ok -> ets:delete(?TABLE, Id), ok;
+        {error, _} = Error -> Error
+    end.
 
 clear() ->
     ensure_table(),
-    ets:delete_all_objects(?TABLE),
-    ok.
+    case ias_certificate_material_store:reset() of
+        ok -> ets:delete_all_objects(?TABLE), ok;
+        {error, _} = Error -> Error
+    end.
 
 count() ->
+    projection_count().
+
+projection_count() ->
     ensure_table(),
     ets:info(?TABLE, size).
+
+rehydrate() ->
+    ensure_table(),
+    case ias_certificate_material_store:ensure() of
+        ok ->
+            case ias_certificate_material_store:all() of
+                {ok, Records} -> replace_projection(Records);
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
+    end.
+
+protection_mode() ->
+    ias_certificate_material_protection:mode().
+
+replace_projection(Records) ->
+    Entries = [projection_entry(Record) || Record <- Records],
+    Previous = ets:tab2list(?TABLE),
+    try
+        true = ets:delete_all_objects(?TABLE),
+        true = ets:insert(?TABLE, Entries),
+        {ok, length(Entries)}
+    catch
+        Class:Reason:Stacktrace ->
+            _ = ets:delete_all_objects(?TABLE),
+            _ = ets:insert(?TABLE, Previous),
+            {error,
+             {certificate_material_projection_failed,
+              {Class, Reason, Stacktrace}}}
+    end.
+
+projection_entry(#{certificate_id := Id} = Record) ->
+    {ias_html:text(Id), Record};
+projection_entry(#{enrollment_id := Id} = Record) ->
+    {{staged_cmp, ias_html:text(Id)}, Record}.
+
+project_certificate(#{certificate_id := Id} = Record) ->
+    true = ets:insert(?TABLE, {ias_html:text(Id), Record}),
+    ok.
+
+project_staged(#{enrollment_id := Id} = Record) ->
+    true = ets:insert(?TABLE, {{staged_cmp, ias_html:text(Id)}, Record}),
+    ok.
+
+authorize(compatibility_read) -> ok;
+authorize(status_read) -> ok;
+authorize(ovpn_assembly) -> ok;
+authorize(certificate_chain_validation) -> ok;
+authorize(operator_inspection) -> ok;
+authorize(cmp_attachment) -> ok;
+authorize(configured_ca_load) -> ok;
+authorize(Purpose) -> {error, {certificate_material_access_denied, Purpose}}.
 
 validate(MaterialType, Pem0) when MaterialType =:= ca_certificate;
                                   MaterialType =:= client_certificate ->
@@ -125,10 +216,6 @@ contains_private_material(Pem) ->
 
 public_status(Record) ->
     maps:without([body], Record).
-
-fingerprint(Der) ->
-    Hash = crypto:hash(sha256, Der),
-    ias_html:text(string:uppercase(binary_to_list(binary:encode_hex(Hash)))).
 
 trim(Bin) ->
     ias_html:text(string:trim(binary_to_list(Bin))).
@@ -182,7 +269,3 @@ table_owner_loop() ->
         stop -> ok;
         _ -> table_owner_loop()
     end.
-
-created_at() ->
-    iolist_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second),
-                                                     [{unit, second}])).

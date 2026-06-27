@@ -12,6 +12,7 @@ confidentiality boundary, and recovery semantics are defined.
 | `ias_provisioning_wizard_draft_store` | durable | ETS wizard projection | resumable active/completed/abandoned lifecycle |
 | `ias_vpn_provisioning_delivery_store` | durable append-only | ETS delivery-history projection | sanitized delivery audit metadata |
 | `ias_csr_enrollment_store` | durable | ETS CSR enrollment projection | resumable enrollment metadata and duplicate/reuse protection |
+| `ias_certificate_material_store` | durable | ETS public-material projection | validated CA/client X.509 PEM; private keys forbidden |
 
 Durable application code accesses records through KVS. Cross-record atomicity is
 provided through `ias_kvs_transaction` and its configured backend provider.
@@ -20,7 +21,6 @@ provided through `ias_kvs_transaction` and its configured backend provider.
 
 | Store | Mode | Reason |
 |---|---|---|
-| `ias_certificate_material` | volatile ETS | secure public-material storage policy is a separate stage; private keys are forbidden |
 | `ias_vpn_event_bridge` | process memory | wake-up/subscription state is reconstructed at runtime |
 | Nitro/WebSocket state | process memory | browser-session state is never a durable domain authority |
 
@@ -37,6 +37,37 @@ At startup IAS validates every durable CSR enrollment record and rehydrates the
 ETS read projection before Cowboy starts. This preserves duplicate-CSR and
 public-key reuse protection across a full IAS restart. Unsupported schema
 versions fail startup closed.
+
+
+## Public certificate material
+
+CA and client certificate PEM is stored as `ias_certificate_material_record`
+records in KVS. The record key distinguishes attached certificate material from
+staged CMP material. Writes are durable-first and the existing
+`ias_certificate_material` module remains the compatibility façade and ETS read
+projection. Startup validates every record and rehydrates the projection before
+Cowboy starts. Unsupported schema versions, damaged protection envelopes,
+fingerprint mismatches, invalid PEM, or an unavailable configured protection
+provider fail startup closed.
+
+Private keys, encrypted private keys, CSRs, shared secrets, and complete OVPN
+artifacts are never accepted by this store. Full PEM reads require an explicit
+internal purpose such as `ovpn_assembly`, `certificate_chain_validation`, or
+`operator_inspection`; status and Demo State surfaces never include PEM bodies.
+
+Attached certificate material is retained until explicit certificate-material
+deletion or Clear Demo State. Staged CMP material uses
+`certificate_material_staged_ttl_seconds` (24 hours by default), is pruned at
+startup, and is moved atomically from the staged key to the attached certificate
+key.
+
+The protection provider is configured independently from KVS.
+`ias_certificate_material_protection_public` is the default because X.509
+certificates are public data; it stores normalized PEM with a SHA-256 integrity
+envelope. Deployments that require ciphertext at rest can configure
+`ias_certificate_material_protection_aes_gcm` and provide an external 32-byte
+`certificate_material_encryption_key`. IAS fails closed if that key is missing or
+incorrect. The encryption key itself is never stored in KVS.
 
 ## VPN provisioning delivery audit
 
@@ -74,8 +105,8 @@ The Demo State page reports both classification and current counts:
 - durable wizard drafts;
 - durable delivery audit entries;
 - ETS delivery audit projection entries;
-- volatile certificate materials;
-- durable CSR enrollment states and their ETS projection.
+- durable CSR enrollment states and their ETS projection;
+- durable public certificate materials, their ETS projection, and the active protection provider.
 
 A durable count and its ETS projection count are shown separately so a failed or
 incomplete rehydration is visible rather than silently masked.

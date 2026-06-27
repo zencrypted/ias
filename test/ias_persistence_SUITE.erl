@@ -4,6 +4,7 @@
 -include_lib("stdlib/include/assert.hrl").
 -include("ias_domain_object.hrl").
 -include("ias_csr_enrollment_record.hrl").
+-include("ias_certificate_material_record.hrl").
 
 -export([all/0,
          init_per_suite/1,
@@ -15,8 +16,10 @@
          wizard_completion_survives_ias_restart/1,
          vpn_delivery_audit_survives_ias_restart/1,
          csr_enrollment_state_survives_ias_restart/1,
+         certificate_material_survives_ias_restart/1,
          incompatible_durable_schema_fails_closed/1,
          incompatible_csr_enrollment_schema_fails_closed/1,
+         incompatible_certificate_material_schema_fails_closed/1,
          reconciliation_rpc/5]).
 
 -define(COOKIE, ias_persistence_ct_cookie).
@@ -31,8 +34,10 @@ all() ->
      wizard_completion_survives_ias_restart,
      vpn_delivery_audit_survives_ias_restart,
      csr_enrollment_state_survives_ias_restart,
+     certificate_material_survives_ias_restart,
      incompatible_durable_schema_fails_closed,
-     incompatible_csr_enrollment_schema_fails_closed].
+     incompatible_csr_enrollment_schema_fails_closed,
+     incompatible_certificate_material_schema_fails_closed].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -390,6 +395,72 @@ csr_enrollment_state_survives_ias_restart(Config) ->
     ?assertEqual(3, maps:get(ets_csr_enrollment_states, Diagnostics)),
     ok.
 
+certificate_material_survives_ias_restart(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    CertificateId = <<"stage6d-client-certificate">>,
+    AttachedCertificateId = <<"stage6d-attached-certificate">>,
+    EnrollmentId = <<"stage6d-staged-enrollment">>,
+    _ = rpc_ok(Node,
+               ias_demo_store,
+               put_runtime_object,
+               [stage6d_certificate(CertificateId)]),
+    _ = rpc_ok(Node,
+               ias_demo_store,
+               put_runtime_object,
+               [stage6d_certificate(AttachedCertificateId)]),
+    {ok, Status} = rpc_ok(Node,
+                          ias_certificate_material,
+                          put,
+                          [CertificateId,
+                           client_certificate,
+                           stage6d_client_pem(),
+                           operator_load]),
+    {ok, _Staged} = rpc_ok(Node,
+                            ias_certificate_material,
+                            stage_cmp,
+                            [EnrollmentId, stage6d_client_pem()]),
+    ?assertEqual(public_integrity_sha256,
+                 maps:get(protection_mode, Status)),
+    ?assertEqual(2,
+                 rpc_ok(Node,
+                        ias_certificate_material,
+                        projection_count,
+                        [])),
+
+    Config1 = restart_ias(Config, "ias-stage6d-certificate-material.log", success),
+    Node1 = proplists:get_value(ias_node, Config1),
+    ?assertMatch({ok, #{certificate_id := CertificateId,
+                        material_type := client_certificate,
+                        source := operator_load,
+                        body := _}},
+                 rpc_ok(Node1,
+                        ias_certificate_material,
+                        get,
+                        [CertificateId, operator_inspection])),
+    ?assertMatch({ok, #{enrollment_id := EnrollmentId,
+                        material_type := client_certificate,
+                        body := _}},
+                 rpc_ok(Node1,
+                        ias_certificate_material_store,
+                        get_staged,
+                        [EnrollmentId])),
+    {ok, Attached} = rpc_ok(Node1,
+                            ias_certificate_material,
+                            attach_staged,
+                            [EnrollmentId, AttachedCertificateId]),
+    ?assertEqual(cmp_response, maps:get(source, Attached)),
+    ?assertEqual(not_found,
+                 rpc_ok(Node1,
+                        ias_certificate_material_store,
+                        get_staged,
+                        [EnrollmentId])),
+    Diagnostics = rpc_ok(Node1, ias_persistence_policy, diagnostics, []),
+    ?assertEqual(2, maps:get(durable_certificate_materials, Diagnostics)),
+    ?assertEqual(2, maps:get(ets_certificate_materials, Diagnostics)),
+    ?assertEqual(public_integrity_sha256,
+                 maps:get(certificate_material_protection, Diagnostics)),
+    ok.
+
 incompatible_durable_schema_fails_closed(Config) ->
     Node = proplists:get_value(ias_node, Config),
     InvalidId = <<"stage4-invalid-schema">>,
@@ -466,6 +537,50 @@ incompatible_csr_enrollment_schema_fails_closed(Config) ->
     ok = wait_for_tcp_closed(Port, 5000),
     ok.
 
+incompatible_certificate_material_schema_fails_closed(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    CertificateId = <<"stage6d-invalid-material-schema">>,
+    _ = rpc_ok(Node,
+               ias_demo_store,
+               put_runtime_object,
+               [stage6d_certificate(CertificateId)]),
+    {ok, _} = rpc_ok(Node,
+                      ias_certificate_material,
+                      put,
+                      [CertificateId,
+                       client_certificate,
+                       stage6d_client_pem(),
+                       operator_load]),
+    Key = {certificate, CertificateId},
+    {ok, Record0} = rpc_ok(Node,
+                           kvs,
+                           get,
+                           [ias_certificate_material_record, Key]),
+    Invalid = Record0#ias_certificate_material_record{schema_version = 999},
+    ok = rpc_ok(Node, kvs, put, [Invalid]),
+
+    Config1 = restart_ias(Config, "ias-invalid-material-schema.log", failure),
+    Node1 = proplists:get_value(ias_node, Config1),
+    StartResult = rpc_ok(Node1,
+                         persistent_term,
+                         get,
+                         [?START_RESULT_KEY, pending]),
+    ?assertMatch({error, _}, StartResult),
+    ?assert(contains_term(
+              StartResult,
+              {unsupported_certificate_material_schema_version, 999})),
+    ?assertEqual(undefined, rpc_ok(Node1, erlang, whereis, [ias])),
+    ?assertEqual(false,
+                 lists:keymember(ias,
+                                 1,
+                                 rpc_ok(Node1,
+                                        application,
+                                        which_applications,
+                                        []))),
+    Port = proplists:get_value(ias_port, Config1),
+    ok = wait_for_tcp_closed(Port, 5000),
+    ok.
+
 reconciliation_rpc(_VpnNode,
                    vpn_provisioning,
                    recovery_heads,
@@ -487,6 +602,31 @@ reconciliation_rpc(_VpnNode, Module, Function, Args, _Timeout) ->
                   Module,
                   Function,
                   Args}).
+
+stage6d_certificate(Id) ->
+    #{id => Id,
+      kind => certificate,
+      source => certificate_issue_demo,
+      name => <<"Stage 6D certificate">>,
+      subject => <<"CN=Stage 6D">>,
+      issuer => <<"CN=IAS Test CA">>,
+      certificate_role => client_certificate,
+      certificate_status => trusted,
+      private_key_stored => false,
+      certificate_body_stored => false,
+      ca_body_stored => false}.
+
+stage6d_client_pem() ->
+    <<"-----BEGIN CERTIFICATE-----\n"
+      "MIIBZDCCAQqgAwIBAgIUa1wxwBw2MaSaN2Zaqvu/4gWUgDMwCgYIKoZIzj0EAwIw\n"
+      "FjEUMBIGA1UEAwwLSUFTIFRlc3QgQ0EwHhcNMjYwNjIxMTIxMzA0WhcNMzYwNjE4\n"
+      "MTIxMzA0WjAaMRgwFgYDVQQDDA9JQVMgVGVzdCBDbGllbnQwWTATBgcqhkjOPQIB\n"
+      "BggqhkjOPQMBBwNCAAT9brxfCaaU/6LLtCNKICvq1UwQDTH9hS9teBzUhEPuxGcA\n"
+      "0wdjEO6F1kR64uUgAoUYOOlIqj31MWH5CcqBwuuxozIwMDAMBgNVHRMBAf8EAjAA\n"
+      "MAsGA1UdDwQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDAjAKBggqhkjOPQQDAgNI\n"
+      "ADBFAiEA2ye4DSJJuQnZ43+peLW5YsQHGEdGx9r1zuCKHxNcY0kCICsBo8QieTgA\n"
+      "Iq0sBJ/RxQ+E19tAL+EarYX6zvA00gz9\n"
+      "-----END CERTIFICATE-----\n">>.
 
 complete_graph() ->
     DeviceId = <<"stage4-wizard-device">>,

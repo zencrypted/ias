@@ -242,7 +242,8 @@ matching_public_key(CsrMetadata, CertMetadata) ->
 validate_chain(CertPem, CertMetadata) ->
     case ias_configured_ca_trust_anchor:load() of
         {ok, CaCertificate} ->
-            case ias_certificate_material:get(maps:get(id, CaCertificate)) of
+            case ias_certificate_material:get(maps:get(id, CaCertificate),
+                                              certificate_chain_validation) of
                 {ok, #{body := CaPem}} ->
                     case ias_x509_validation:validate_pair(CaPem, CertPem) of
                         {ok, _PairMetadata} -> {ok, CertMetadata};

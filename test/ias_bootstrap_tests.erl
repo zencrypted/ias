@@ -17,8 +17,15 @@ durable_projection_is_rehydrated_before_runtime_start() ->
                 <<"bootstrap-csr">>,
                 #{device_id => DeviceId,
                   public_key_fingerprint => <<"bootstrap-public-key">>}),
+    CertificateId = <<"bootstrap-certificate-material">>,
+    _ = ias_demo_store:put_runtime_object(certificate(CertificateId)),
+    {ok, _} = ias_certificate_material:put(CertificateId,
+                                            client_certificate,
+                                            client_pem(),
+                                            operator_load),
     true = ets:delete_all_objects(ias_demo_store),
     true = ets:delete_all_objects(ias_csr_enrollment_state),
+    true = ets:delete_all_objects(ias_certificate_material),
 
     {ok, Health} = ias_bootstrap:prepare(),
 
@@ -29,7 +36,11 @@ durable_projection_is_rehydrated_before_runtime_start() ->
                  ias_demo_store:get(DeviceId)),
     ?assertMatch({ok, #{status := submitted,
                         device_id := DeviceId}},
-                 ias_csr_enrollment_state:get(<<"bootstrap-csr">>)).
+                 ias_csr_enrollment_state:get(<<"bootstrap-csr">>)),
+    ?assertMatch({ok, #{body := _Pem,
+                        material_type := client_certificate}},
+                 ias_certificate_material:get(CertificateId,
+                                              operator_inspection)).
 
 invalid_durable_state_fails_closed() ->
     SentinelId = <<"bootstrap-current-projection">>,
@@ -62,7 +73,9 @@ setup() ->
     ok = ias_vpn_authority:ensure(),
     ok = ias_vpn_reconciliation_incidents:ensure(),
     ok = ias_csr_enrollment_store:ensure(),
+    ok = ias_certificate_material_store:ensure(),
     ok = ias_csr_enrollment_state:clear(),
+    ok = ias_certificate_material:clear(),
     ok = ias_demo_store:clear(),
     ok.
 
@@ -70,8 +83,34 @@ cleanup(_State) ->
     _ = kvs:delete(ias_domain_object,
                    {device, <<"bootstrap-invalid-schema">>}),
     ok = ias_csr_enrollment_state:clear(),
+    ok = ias_certificate_material:clear(),
     ok = ias_demo_store:clear(),
     ok.
+
+certificate(Id) ->
+    #{id => Id,
+      kind => certificate,
+      source => bootstrap_test,
+      name => <<"Bootstrap certificate">>,
+      subject => <<"CN=Bootstrap">>,
+      issuer => <<"CN=IAS Test CA">>,
+      certificate_role => client_certificate,
+      certificate_status => trusted,
+      private_key_stored => false,
+      certificate_body_stored => false,
+      ca_body_stored => false}.
+
+client_pem() ->
+    <<"-----BEGIN CERTIFICATE-----\n"
+      "MIIBZDCCAQqgAwIBAgIUa1wxwBw2MaSaN2Zaqvu/4gWUgDMwCgYIKoZIzj0EAwIw\n"
+      "FjEUMBIGA1UEAwwLSUFTIFRlc3QgQ0EwHhcNMjYwNjIxMTIxMzA0WhcNMzYwNjE4\n"
+      "MTIxMzA0WjAaMRgwFgYDVQQDDA9JQVMgVGVzdCBDbGllbnQwWTATBgcqhkjOPQIB\n"
+      "BggqhkjOPQMBBwNCAAT9brxfCaaU/6LLtCNKICvq1UwQDTH9hS9teBzUhEPuxGcA\n"
+      "0wdjEO6F1kR64uUgAoUYOOlIqj31MWH5CcqBwuuxozIwMDAMBgNVHRMBAf8EAjAA\n"
+      "MAsGA1UdDwQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDAjAKBggqhkjOPQQDAgNI\n"
+      "ADBFAiEA2ye4DSJJuQnZ43+peLW5YsQHGEdGx9r1zuCKHxNcY0kCICsBo8QieTgA\n"
+      "Iq0sBJ/RxQ+E19tAL+EarYX6zvA00gz9\n"
+      "-----END CERTIFICATE-----\n">>.
 
 device(Id) ->
     #{id => Id,
