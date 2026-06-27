@@ -387,23 +387,42 @@ records without an explicit conflict policy.
 
 ## Orphan VPN Projections
 
-Durable IAS state is a prerequisite for safe orphan recovery, but it does not
-automatically resolve orphans.
+Durable IAS state is the authority prerequisite for orphan disposition. VPN
+metadata is never copied into ETS automatically and never reverses the normal
+`IAS -> VPN` ownership direction.
 
-Two future explicit operations are expected:
+Stage 7 implements two explicit, audited operations:
 
 ```text
 Decommission from VPN
 Recover into IAS
 ```
 
-`Recover into IAS` must create a validated durable IAS graph, not a temporary ETS
-record. It requires operator selection or creation of the owning User, Device,
-Certificate, VPN Service, Security Profile and relationship edges as applicable.
-The action must be audited and must validate the current orphan snapshot token
-before committing.
+`Decommission from VPN` validates the current incident token and immutable VPN
+snapshot, creates or resumes a durable IAS resolution operation, invokes the
+VPN compare-and-remove boundary, refreshes reconciliation, and closes the
+incident only after the orphan is absent. VPN verifies revision, digest, peer
+identity, IAS ownership, and dynamic allocation identity before removing runtime
+peers, registry entries, allocation binding, and provisioning heads. Repeating a
+completed VPN removal is idempotent.
 
-Until that workflow is designed, automatic orphan adoption remains prohibited.
+`Recover into IAS` requires a validated recovery manifest retained in the VPN
+provisioning head. The manifest contains only non-secret graph metadata and is
+bound to the canonical command digest. IAS builds a deterministic recovery plan,
+classifies objects and relationships as create/reuse/conflict, revalidates the
+fresh VPN snapshot, and atomically commits domain records, relationships, VPN
+authority, and the recovery operation. Existing objects are reused only when
+compatible; conflicting identities are never overwritten.
+
+Recovery may be `full` when matching public certificate material already exists
+in IAS, or `metadata_only` when only certificate metadata and fingerprint can be
+restored. Private keys, CSR/CMP/OVPN bodies, passwords, shared secrets, and PEM
+bodies are never recovered from VPN. Legacy orphan records without a recovery
+manifest remain visible and fail-closed with recovery disabled.
+
+Both workflows are durable, restart-safe, token-bound, idempotent, and exposed
+through explicit operator controls in the VPN reconciliation UI. Automatic orphan
+adoption and automatic destructive cleanup remain prohibited.
 
 ## Implementation Stages
 
@@ -640,8 +659,29 @@ fails startup closed.
 
 ### Stage 7 — Orphan disposition workflow
 
-Only after durable domain state is operating, implement audited
-`Decommission from VPN` and `Recover into IAS` procedures.
+**Status:** Implemented.
+
+Stage 7A adds validated recovery manifests to canonical VPN commands and durable
+VPN provisioning heads, exposes recoverability diagnostics, and keeps legacy
+orphans visible but non-recoverable. IAS VPN authority and reconciliation
+incident access use the KVS boundary rather than direct Mnesia calls.
+
+Stage 7B implements `Decommission from VPN` as a durable IAS saga with phases
+`pending -> vpn_confirmed -> reconciliation_confirmed -> completed`. VPN performs
+compare-and-remove against the expected revision, digest, peer set, ownership,
+and allocation ID. Stale snapshots fail closed and repeated completion is
+idempotent.
+
+Stage 7C implements `Recover into IAS` as a durable IAS saga with phases
+`planned -> graph_committed -> reconciliation_confirmed -> completed`. Recovery
+plans validate the manifest and current VPN identity, reject object conflicts,
+and atomically commit the durable graph, relationships, VPN authority, and
+operation state before publishing the ETS projection. Restart and rollback tests
+cover partial completion, repeated recovery, metadata-only certificate recovery,
+and snapshot conflicts.
+
+Stage 7D aligns the architecture, durable-state, delivery, and technical-debt
+documentation with the completed implementation.
 
 ## Test Plan
 
@@ -677,4 +717,4 @@ The first durable-state milestone is complete when:
 - no forbidden material is stored in the domain table;
 - startup fails on incompatible durable data instead of silently dropping it;
 - a restart CT verifies the complete path with the same Mnesia directory;
-- orphan VPN projections are still fail-closed and are not automatically adopted.
+- orphan VPN projections remain fail-closed by default and are changed only through explicit audited recovery or decommission workflows.

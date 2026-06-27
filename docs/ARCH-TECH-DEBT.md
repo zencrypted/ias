@@ -770,28 +770,35 @@ releases and is no longer used by current IAS dynamic upsert delivery.
 
 ## TD-019: Durable IAS/VPN Projection Reconciliation
 
-**Status:** Partially resolved
+**Status:** Resolved
 
 **Area:** IAS/VPN Dynamic Allocation Recovery
 
-### Completed
+### Resolution
 
-VPN persists allocation ownership, generations, revision heads, restrictive
-barriers, and the recoverable registry projection in KVS/Mnesia. IAS persists its
-canonical VPN command ledger and public Device binding/decommission metadata in
-its own KVS/Mnesia table. Both sides now survive independent node restarts without
-silently resetting their local revision or allocation identity.
+VPN persists allocation ownership, generations, canonical provisioning heads,
+restrictive barriers, recovery manifests, and the public registry projection. IAS
+persists its canonical VPN command ledger, public Device binding/decommission
+metadata, reconciliation incidents, and durable orphan operation ledgers through
+KVS. Both sides survive independent node restarts without resetting revision or
+allocation identity.
 
-### Remaining Direction
+`ias_vpn_reconciliation` compares the durable projections after reconnect.
+IAS-ahead `vpn_behind` and `missing_in_vpn` states can be replayed idempotently from
+the exact durable canonical command. VPN-ahead, digest mismatch, foreign identity,
+and runtime contradictions remain fail-closed as divergence. Reconciliation uses
+fresh read-only VPN recovery-head and registry snapshots and validates snapshot
+tokens before any mutating operation.
 
-IAS and VPN must compare their durable projections after reconnect. IAS-ahead
-state should be replayed idempotently, while VPN-ahead state or an unknown VPN
-allocation must be reported as divergence and handled fail-closed. This is Stage
-8B.2 and remains open.
+Orphan disposition is completed by TD-021: validated recovery manifests support
+explicit recovery into the IAS graph, while compare-and-remove supports explicit
+decommission.
 
-### Priority
+### Verification
 
-High before production deployment
+EUnit and Common Test cover independent restart, replay, equal-revision digest
+divergence, false-orphan prevention after IAS rehydration, dynamic allocation
+identity, stale snapshot rejection, and idempotent recovery/decommission.
 
 ---
 
@@ -843,58 +850,45 @@ the page preserves the last-known rows and asks the operator to retry with
 
 ## TD-021: Orphan VPN Projection Disposition Policy
 
-**Status:** Open
+**Status:** Resolved
 
 **Area:** IAS/VPN Reconciliation / Recovery Policy
 
-### Problem
+### Resolution
 
-Reconciliation can identify a VPN projection marked as IAS-owned while IAS has
-no matching durable VPN authority record. The projection is reported as
-`orphan`, but the product does not yet define a complete operator workflow for
-its disposition.
-
-Copying the VPN record into `ias_demo_store` is not a valid recovery mechanism:
-ETS is volatile, VPN does not contain the complete IAS object graph, and
-automatic adoption would reverse the intended `IAS -> VPN` authority direction.
-Likewise, automatically deleting the VPN projection could remove legitimate
-access created before the durable authority ledger was introduced or during a
-partially completed provisioning transaction.
-
-### Constraints
-
-- automatic orphan adoption is prohibited;
-- automatic destructive cleanup is prohibited;
-- an orphan must remain fail-closed and visible as an incident;
-- any disposition must validate the current reconciliation snapshot token;
-- actor, note, timestamp, source metadata and result must be audited;
-- recovery into IAS requires durable domain-state persistence, not an ETS-only
-  object.
-
-### Desired Direction
-
-Define two explicit administrative procedures:
+Orphans remain fail-closed and visible as durable reconciliation incidents. No
+automatic adoption or destructive cleanup is performed. The operator has two
+explicit, audited actions, each bound to the current incident token and immutable
+VPN snapshot:
 
 ```text
 Decommission from VPN
 Recover into IAS
 ```
 
-`Decommission from VPN` should validate that the projection is still orphaned,
-apply the appropriate restrictive/decommission command, and close the incident
-only after reconciliation confirms removal.
+`Decommission from VPN` records a durable IAS operation, calls the VPN
+compare-and-remove API, and closes the incident only after a fresh reconciliation
+confirms removal. VPN verifies IAS ownership, revision, digest, peer identity, and
+dynamic allocation ID before deleting runtime peers, registry entries, allocation
+binding, and provisioning heads. The operation is restart-safe and idempotent.
 
-`Recover into IAS` should guide an operator through validation and creation of a
-complete durable IAS graph: Device ownership, Certificate metadata, VPN Service,
-Security Profile and required relationships. VPN metadata is evidence for the
-recovery plan, not an authority source by itself.
+`Recover into IAS` requires a validated, non-secret recovery manifest bound to
+the canonical VPN command digest. IAS builds a preview, classifies graph records
+as create/reuse/conflict, verifies the fresh VPN identity, and atomically commits
+objects, relationships, VPN authority, and the recovery-operation phase. Existing
+records are never overwritten on conflict. Recovery supports `full` and
+`metadata_only` certificate modes and never imports private keys or artifact
+bodies from VPN.
 
-The detailed durable-state prerequisite is documented in
-`docs/IAS-DURABLE-STATE.md`.
+Legacy or malformed orphan projections remain non-recoverable. Stale tokens,
+digest mismatch, conflicting dynamic-pair heads, changed registry identity, or
+domain conflicts abort without mutating IAS or VPN state.
 
-### Priority
+### Verification
 
-Medium during development; High before production deployment
+Tests cover single-peer and dynamic-pair disposition, stale snapshot rejection,
+rollback, restart/resume, repeated calls, metadata-only recovery, incident
+closure, and final synchronized/absent reconciliation state.
 
 ---
 

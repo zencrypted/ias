@@ -13,6 +13,10 @@ confidentiality boundary, and recovery semantics are defined.
 | `ias_vpn_provisioning_delivery_store` | durable append-only | ETS delivery-history projection | sanitized delivery audit metadata |
 | `ias_csr_enrollment_store` | durable | ETS CSR enrollment projection | resumable enrollment metadata and duplicate/reuse protection |
 | `ias_certificate_material_store` | durable | ETS public-material projection | validated CA/client X.509 PEM; private keys forbidden |
+| `ias_vpn_authority` | durable | Device authority overlay | canonical IAS VPN command, revision, digest, and public binding metadata |
+| `ias_vpn_reconciliation_incidents` | durable | reconciliation incident UI | token-bound operator incident history |
+| `ias_vpn_orphan_resolution_store` | durable saga | Demo State diagnostics | restart-safe orphan decommission phases and audit metadata |
+| `ias_vpn_orphan_recovery_store` | durable saga | Demo State diagnostics | restart-safe recovery plan and completion phases |
 
 Durable application code accesses records through KVS. Cross-record atomicity is
 provided through `ias_kvs_transaction` and its configured backend provider.
@@ -110,3 +114,21 @@ The Demo State page reports both classification and current counts:
 
 A durable count and its ETS projection count are shown separately so a failed or
 incomplete rehydration is visible rather than silently masked.
+
+## VPN orphan disposition ledgers
+
+The decommission and recovery ledgers retain one latest operation per Device.
+They contain only sanitized snapshots, plans, actor/note metadata, phase, attempts,
+errors, and completion summaries. They do not contain private keys, PEM bodies,
+CSR/CMP/OVPN artifacts, passwords, or shared secrets.
+
+Decommission phases are `pending`, `vpn_confirmed`,
+`reconciliation_confirmed`, and `completed`. Recovery phases are `planned`,
+`graph_committed`, `reconciliation_confirmed`, and `completed`. A changed incident
+token cannot replace an in-flight operation; repeated calls with the same token
+resume or return the existing completed operation.
+
+Recovery commits supported domain records, relationships, VPN authority, and the
+`graph_committed` operation transition in one KVS transaction. ETS projection is
+published only after commit. Decommission performs the remote VPN mutation
+idempotently and records each confirmed local phase durably before advancing.

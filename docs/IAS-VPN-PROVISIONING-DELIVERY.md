@@ -428,7 +428,7 @@ scope for this stage. Local persistence is implemented on both IAS and VPN.
 Stage 8B.2A adds explicit read-only cross-node comparison below, while Stage
 8B.2B adds an explicit safe replay action without enabling background repair.
 
-## Durable IAS VPN authority (Stage 8B.1)
+## Durable IAS VPN authority
 
 IAS stores the authoritative VPN control-plane projection in KVS/Mnesia table
 `ias_vpn_device_state`. The durable record contains the canonical revision and
@@ -442,9 +442,9 @@ VPN authority before publishing the updated object in ETS. Clearing demo state
 is an explicit destructive reset and also clears the durable VPN authority.
 
 Cross-node comparison and controlled replay are layered on top of this authority
-by Stage 8B.2A and Stage 8B.2B.
+by the read-only reconciliation and explicit replay layers.
 
-## Read-only IAS/VPN reconciliation (Stage 8B.2A)
+## Read-only IAS/VPN reconciliation
 
 `ias_vpn_reconciliation` compares the durable IAS authority with two safe,
 read-only VPN snapshots: validated provisioning recovery heads and public peer
@@ -472,7 +472,7 @@ its revision, because the VPN ledger digest intentionally differs from the
 internal IAS command-change digest stored by Stage 8B.1. Returned snapshots are
 filtered to public provisioning and registry fields only.
 
-## Explicit safe replay (Stage 8B.2B)
+## Explicit safe replay
 
 Read-only reconciliation remains the default operation:
 
@@ -502,6 +502,43 @@ does not add another delivery attempt.
 
 The zero-argument form replays only currently eligible authority records,
 skips synchronized and blocked records, and returns a final read-only report.
-`divergence`, `orphan`, foreign VPN state, and authority records without a
-canonical command remain fail-closed. Explicit divergence and orphan resolution
-remain Stage 8B.2C work.
+
+## Orphan recovery manifest and preview
+
+Canonical IAS provisioning commands may carry a validated recovery manifest. The
+manifest contains only non-secret Device, Certificate metadata, VPN Service,
+Security Profile, Security Policy, relationship, allocation, and provenance
+metadata. It is included in the canonical command digest and retained only in the
+durable VPN provisioning head; it is not copied into runtime peer configuration.
+
+Reconciliation reports legacy orphan heads without a manifest as
+`recoverable = false`. A valid manifest produces a read-only recovery preview
+with `full` or `metadata_only` certificate mode. Malformed, secret-bearing,
+Device-mismatched, or mutually inconsistent dynamic-pair manifests fail closed.
+
+## Explicit orphan decommission
+
+`Decommission from VPN` is a durable IAS saga. IAS validates the current incident
+token and sends an immutable expected snapshot to
+`vpn_provisioning:decommission_orphan/1`. VPN performs compare-and-remove against
+revision, digest, peer set, IAS ownership, and allocation ID before removing
+runtime peers, registry entries, allocator binding, and provisioning heads. IAS
+then refreshes reconciliation and resolves the incident only after the orphan is
+confirmed absent. Repeated calls after successful removal are idempotent.
+
+## Explicit recovery into IAS
+
+`Recover into IAS` builds a deterministic plan from the validated recovery
+manifest and current VPN snapshot. Objects and relationships are classified as
+create, reuse, or conflict. IAS revalidates the VPN identity and atomically commits
+the supported durable graph, relationships, VPN authority, and recovery operation
+state. ETS is updated only after commit. Conflicts, stale snapshots, and digest
+mismatch abort without overwrite. The incident is resolved only after fresh
+reconciliation reports `synchronized`.
+
+Both disposition workflows require explicit operator confirmation and retain
+actor, note, token, attempts, result, and completion metadata in durable KVS
+operation ledgers.
+`divergence`, foreign VPN state, and authority records without a canonical
+command remain fail-closed. Orphan projections are handled only through the
+explicit disposition workflows below.
