@@ -15,6 +15,7 @@
          status/0]).
 
 -include("ias_vpn_authority.hrl").
+-include_lib("kvs/include/metainfo.hrl").
 
 -define(TABLE, ias_vpn_device_state).
 -define(SCHEMA_VERSION, 1).
@@ -23,41 +24,48 @@
 ensure() ->
     case ensure_storage() of
         ok ->
-            case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
+            case ias_kvs_transaction:ensure() of
                 ok -> validate_all();
-                {timeout, Tables} ->
-                    {error, {vpn_authority_tables_unavailable, Tables}};
-                {error, Reason} ->
-                    {error, {vpn_authority_tables_unavailable, Reason}}
+                {error, _} = Error -> Error
             end;
         {error, _} = Error -> Error
     end.
 
 get(DeviceId0) ->
     DeviceId = normalize_id(DeviceId0),
-    case transaction(fun() -> mnesia:read(?TABLE, DeviceId, read) end) of
-        {ok, []} -> not_found;
-        {ok, [Record]} ->
-            case validate_record(Record) of
-                ok -> {ok, record_to_map(Record)};
-                {error, Reason} -> {error, Reason}
+    case ensure_storage() of
+        ok ->
+            case kvs_get_record(DeviceId) of
+                not_found -> not_found;
+                {ok, Record} ->
+                    case validate_record(Record) of
+                        ok -> {ok, record_to_map(Record)};
+                        {error, _} = Error -> Error
+                    end;
+                {error, _} = Error -> Error
             end;
-        {error, Reason} -> {error, Reason}
+        {error, _} = Error -> Error
     end.
 
 all() ->
-    case transaction(
-           fun() ->
-               mnesia:foldl(
-                 fun(Record, Acc) ->
-                     ok = validate_record_or_abort(Record),
-                     [record_to_map(Record) | Acc]
-                 end,
-                 [],
-                 ?TABLE)
-           end) of
-        {ok, Records} -> {ok, lists:reverse(Records)};
-        {error, Reason} -> {error, Reason}
+    case ensure_storage() of
+        ok ->
+            case read_records() of
+                {ok, Records} ->
+                    case validate_records(Records) of
+                        ok ->
+                            Sorted = lists:sort(
+                                       fun(A, B) ->
+                                           A#ias_vpn_device_state.device_id =<
+                                               B#ias_vpn_device_state.device_id
+                                       end,
+                                       Records),
+                            {ok, [record_to_map(Record) || Record <- Sorted]};
+                        {error, _} = Error -> Error
+                    end;
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
     end.
 
 prepare(DeviceId0, Command0) when is_map(Command0) ->
@@ -68,8 +76,8 @@ prepare(DeviceId0, Command0) when is_map(Command0) ->
         true ->
             case transaction(
                    fun() ->
-                       Record0 = read_or_default(DeviceId, write),
-                       ok = validate_record_or_abort(Record0),
+                       Record0 = read_or_default(DeviceId),
+                       validate_record_or_abort(Record0),
                        case {Record0#ias_vpn_device_state.command_digest,
                              Record0#ias_vpn_device_state.canonical_command} of
                            {Digest, Command} when is_map(Command), map_size(Command) > 0 ->
@@ -81,17 +89,18 @@ prepare(DeviceId0, Command0) when is_map(Command0) ->
                                           revision = Revision,
                                           command_digest = Digest,
                                           canonical_command = Command,
-                                          lifecycle_state = command_lifecycle(Command0,
-                                                                              Record0#ias_vpn_device_state.lifecycle_state),
+                                          lifecycle_state = command_lifecycle(
+                                                              Command0,
+                                                              Record0#ias_vpn_device_state.lifecycle_state),
                                           updated_at = now_seconds()},
-                               ok = validate_record_or_abort(Record),
-                               mnesia:write(Record),
+                               validate_record_or_abort(Record),
+                               kvs_put_or_abort(Record),
                                {changed, Command}
                        end
                    end) of
                 {ok, {unchanged, Command}} -> {ok, Command, unchanged};
                 {ok, {changed, Command}} -> {ok, Command, changed};
-                {error, Reason} -> {error, Reason}
+                {error, Reason} -> {error, normalize_abort(Reason)}
             end
     end;
 prepare(_DeviceId, _Command) ->
@@ -102,8 +111,8 @@ ensure_minimum_revision(DeviceId0, Revision)
     DeviceId = normalize_id(DeviceId0),
     case transaction(
            fun() ->
-               Record0 = read_or_default(DeviceId, write),
-               ok = validate_record_or_abort(Record0),
+               Record0 = read_or_default(DeviceId),
+               validate_record_or_abort(Record0),
                case Record0#ias_vpn_device_state.revision >= Revision of
                    true -> unchanged;
                    false ->
@@ -112,13 +121,13 @@ ensure_minimum_revision(DeviceId0, Revision)
                                   command_digest = undefined,
                                   canonical_command = #{},
                                   updated_at = now_seconds()},
-                       ok = validate_record_or_abort(Record),
-                       mnesia:write(Record),
+                       validate_record_or_abort(Record),
+                       kvs_put_or_abort(Record),
                        changed
                end
            end) of
         {ok, _} -> ok;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} -> {error, normalize_abort(Reason)}
     end;
 ensure_minimum_revision(_DeviceId, _Revision) ->
     {error, invalid_revision}.
@@ -156,23 +165,24 @@ sync_device(#{kind := device, id := DeviceId0} = Device) ->
                 true ->
                     case transaction(
                            fun() ->
-                               Record0 = read_or_default(DeviceId, write),
-                               ok = validate_record_or_abort(Record0),
+                               Record0 = read_or_default(DeviceId),
+                               validate_record_or_abort(Record0),
                                Record = Record0#ias_vpn_device_state{
                                           binding = Binding,
-                                          lifecycle_state = device_lifecycle(Binding,
-                                                                             LastDecommission,
-                                                                             Record0#ias_vpn_device_state.lifecycle_state),
+                                          lifecycle_state = device_lifecycle(
+                                                              Binding,
+                                                              LastDecommission,
+                                                              Record0#ias_vpn_device_state.lifecycle_state),
                                           last_decommission = LastDecommission,
                                           decommission_history = History,
                                           decommissioned_at = DecommissionedAt,
                                           updated_at = now_seconds()},
-                               ok = validate_record_or_abort(Record),
-                               mnesia:write(Record),
+                               validate_record_or_abort(Record),
+                               kvs_put_or_abort(Record),
                                ok
                            end) of
                         {ok, ok} -> ok;
-                        {error, Reason} -> {error, Reason}
+                        {error, Reason} -> {error, normalize_abort(Reason)}
                     end
             end
     end;
@@ -190,224 +200,215 @@ overlay_device(Object) ->
 
 delete(DeviceId0) ->
     DeviceId = normalize_id(DeviceId0),
-    case transaction(fun() -> mnesia:delete({?TABLE, DeviceId}), ok end) of
+    case transaction(fun() -> kvs_delete_or_abort(DeviceId), ok end) of
         {ok, ok} -> ok;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} -> {error, normalize_abort(Reason)}
     end.
 
 reset() ->
-    case ensure_storage() of
-        ok ->
-            case mnesia:clear_table(?TABLE) of
-                {atomic, ok} -> ok;
-                {aborted, Reason} ->
-                    {error, {vpn_authority_reset_failed, Reason}}
-            end;
-        {error, _} = Error -> Error
+    case transaction(fun reset_in_transaction/0) of
+        {ok, ok} -> ok;
+        {error, Reason} -> {error, {vpn_authority_reset_failed,
+                                    normalize_abort(Reason)}}
     end.
 
 reset_provisioning() ->
     case transaction(
            fun() ->
-               lists:foreach(fun reset_provisioning_record/1,
-                             mnesia:all_keys(?TABLE)),
-               ok
+               case read_records() of
+                   {ok, Records} ->
+                       lists:foreach(fun reset_provisioning_record/1, Records),
+                       ok;
+                   {error, Reason} -> ias_kvs_transaction:abort(Reason)
+               end
            end) of
         {ok, ok} -> ok;
-        {error, Reason} -> {error, Reason}
+        {error, Reason} -> {error, normalize_abort(Reason)}
     end.
 
-reset_provisioning_record(DeviceId) ->
-    [Record0] = mnesia:read(?TABLE, DeviceId, write),
-    ok = validate_record_or_abort(Record0),
+reset_provisioning_record(#ias_vpn_device_state{} = Record0) ->
+    validate_record_or_abort(Record0),
     Record = Record0#ias_vpn_device_state{
                revision = 0,
                command_digest = undefined,
                canonical_command = #{},
                lifecycle_state = stored_device_lifecycle(Record0),
                updated_at = now_seconds()},
-    ok = validate_record_or_abort(Record),
-    mnesia:write(Record).
+    validate_record_or_abort(Record),
+    kvs_put_or_abort(Record).
 
 status() ->
-    case transaction(fun() -> mnesia:foldl(fun record_status/2, [], ?TABLE) end) of
-        {ok, Entries0} ->
-            Entries = lists:reverse(Entries0),
-            #{devices => length(Entries),
+    case all() of
+        {ok, Records} ->
+            #{devices => length(Records),
               persistence => durable,
+              backend => kvs,
               revisions => maps:from_list([{maps:get(device_id, Entry),
                                              maps:get(revision, Entry)}
-                                            || Entry <- Entries]),
+                                            || Entry <- Records]),
               lifecycle => maps:from_list([{maps:get(device_id, Entry),
                                             maps:get(lifecycle_state, Entry)}
-                                           || Entry <- Entries])};
+                                           || Entry <- Records])};
         {error, Reason} -> exit({vpn_authority_status_failed, Reason})
     end.
 
 validate_all() ->
-    case transaction(
-           fun() ->
-               mnesia:foldl(
-                 fun(Record, ok) -> validate_record_or_abort(Record) end,
-                 ok,
-                 ?TABLE)
-           end) of
-        {ok, ok} -> ok;
-        {error, Reason} -> {error, Reason}
+    case read_records() of
+        {ok, Records} -> validate_records(Records);
+        {error, _} = Error -> Error
     end.
 
 transaction(Fun) ->
     case ensure_storage() of
-        ok ->
-            case mnesia:sync_transaction(Fun) of
-                {atomic, Result} -> {ok, Result};
-                {aborted, Reason} -> {error, normalize_abort(Reason)}
-            end;
+        ok -> ias_kvs_transaction:run(Fun);
         {error, _} = Error -> Error
     end.
 
-ensure_storage() ->
-    case ensure_mnesia_running() of
-        ok ->
-            case ensure_disc_schema() of
-                ok -> ensure_authority_table();
-                {error, _} = Error -> Error
-            end;
+reset_in_transaction() ->
+    case read_records() of
+        {ok, Records} ->
+            lists:foreach(
+              fun(#ias_vpn_device_state{device_id = DeviceId}) ->
+                      kvs_delete_or_abort(DeviceId);
+                 (Invalid) ->
+                      ias_kvs_transaction:abort(
+                        {vpn_authority_reset_invalid_record, Invalid})
+              end,
+              Records),
+            ok;
+        {error, Reason} -> ias_kvs_transaction:abort(Reason)
+    end.
+
+read_or_default(DeviceId) ->
+    case kvs_get_record(DeviceId) of
+        not_found -> #ias_vpn_device_state{device_id = DeviceId,
+                                            updated_at = now_seconds()};
+        {ok, Record} -> Record;
+        {error, Reason} -> ias_kvs_transaction:abort(Reason)
+    end.
+
+validate_records([]) -> ok;
+validate_records([Record | Rest]) ->
+    case validate_record(Record) of
+        ok -> validate_records(Rest);
         {error, _} = Error -> Error
-    end.
-
-ensure_mnesia_running() ->
-    case catch mnesia:system_info(is_running) of
-        yes -> ok;
-        starting -> wait_for_mnesia(?WAIT_TIMEOUT);
-        no -> start_mnesia();
-        stopping -> {error, {vpn_authority_mnesia_unavailable, stopping}};
-        {'EXIT', _} -> start_mnesia();
-        State -> {error, {vpn_authority_mnesia_unavailable, State}}
-    end.
-
-start_mnesia() ->
-    case ensure_mnesia_schema() of
-        ok ->
-            case application:ensure_all_started(mnesia) of
-                {ok, _Started} -> wait_for_mnesia(?WAIT_TIMEOUT);
-                {error, Reason} ->
-                    {error, {vpn_authority_mnesia_start_failed, Reason}}
-            end;
-        {error, _} = Error -> Error
-    end.
-
-ensure_mnesia_schema() ->
-    case mnesia:create_schema([node()]) of
-        ok -> ok;
-        {error, Reason} ->
-            case contains_already_exists(Reason) of
-                true -> ok;
-                false -> {error, {vpn_authority_schema_create_failed, Reason}}
-            end
-    end.
-
-wait_for_mnesia(Timeout) ->
-    wait_for_mnesia(Timeout, erlang:monotonic_time(millisecond)).
-
-wait_for_mnesia(Timeout, StartedAt) ->
-    case catch mnesia:system_info(is_running) of
-        yes -> ok;
-        State ->
-            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
-            case Elapsed >= Timeout of
-                true -> {error, {vpn_authority_mnesia_start_timeout, State}};
-                false ->
-                    timer:sleep(10),
-                    wait_for_mnesia(Timeout, StartedAt)
-            end
-    end.
-
-ensure_disc_schema() ->
-    case catch mnesia:table_info(schema, storage_type) of
-        disc_copies -> ok;
-        ram_copies ->
-            case mnesia:change_table_copy_type(schema, node(), disc_copies) of
-                {atomic, ok} -> ok;
-                {aborted, Reason} ->
-                    case contains_already_exists(Reason) of
-                        true -> ok;
-                        false ->
-                            {error,
-                             {vpn_authority_schema_persistence_failed,
-                              Reason}}
-                    end
-            end;
-        {'EXIT', Reason} ->
-            {error, {vpn_authority_schema_unavailable, Reason}};
-        StorageType ->
-            {error, {vpn_authority_invalid_schema_storage, StorageType}}
-    end.
-
-ensure_authority_table() ->
-    case lists:member(?TABLE, mnesia:system_info(tables)) of
-        true -> wait_for_authority_table();
-        false -> create_authority_table()
-    end.
-
-create_authority_table() ->
-    Options = [{attributes, record_info(fields, ias_vpn_device_state)},
-               {type, set},
-               {disc_copies, [node()]}],
-    case mnesia:create_table(?TABLE, Options) of
-        {atomic, ok} -> wait_for_authority_table();
-        {aborted, Reason} ->
-            case contains_already_exists(Reason) of
-                true -> wait_for_authority_table();
-                false -> {error, {vpn_authority_table_create_failed, Reason}}
-            end
-    end.
-
-wait_for_authority_table() ->
-    case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
-        ok -> validate_authority_table();
-        {timeout, Tables} ->
-            {error, {vpn_authority_tables_unavailable, Tables}};
-        {error, Reason} ->
-            {error, {vpn_authority_tables_unavailable, Reason}}
-    end.
-
-validate_authority_table() ->
-    ExpectedAttributes = record_info(fields, ias_vpn_device_state),
-    ActualAttributes = mnesia:table_info(?TABLE, attributes),
-    StorageType = mnesia:table_info(?TABLE, storage_type),
-    TableType = mnesia:table_info(?TABLE, type),
-    case {ActualAttributes, StorageType, TableType} of
-        {ExpectedAttributes, disc_copies, set} -> ok;
-        _ ->
-            {error,
-             {invalid_vpn_authority_table,
-              #{attributes => ActualAttributes,
-                storage_type => StorageType,
-                type => TableType}}}
-    end.
-
-contains_already_exists(already_exists) -> true;
-contains_already_exists(Term) when is_tuple(Term) ->
-    lists:any(fun contains_already_exists/1, tuple_to_list(Term));
-contains_already_exists(Term) when is_list(Term) ->
-    lists:any(fun contains_already_exists/1, Term);
-contains_already_exists(_) -> false.
-
-normalize_abort({vpn_authority_invalid_record, Reason}) -> Reason;
-normalize_abort(Reason) -> {vpn_authority_transaction_failed, Reason}.
-
-read_or_default(DeviceId, Lock) ->
-    case mnesia:read(?TABLE, DeviceId, Lock) of
-        [] -> #ias_vpn_device_state{device_id = DeviceId, updated_at = now_seconds()};
-        [Record] -> Record
     end.
 
 validate_record_or_abort(Record) ->
     case validate_record(Record) of
         ok -> ok;
-        {error, Reason} -> mnesia:abort({vpn_authority_invalid_record, Reason})
+        {error, Reason} ->
+            ias_kvs_transaction:abort({vpn_authority_invalid_record, Reason})
     end.
+
+read_records() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) -> {ok, Records};
+        {error, Reason} -> {error, {vpn_authority_kvs_read_failed, Reason}};
+        {'EXIT', Reason} -> {error, {vpn_authority_kvs_read_failed, Reason}};
+        Other -> {error, {vpn_authority_kvs_unexpected_result, Other}}
+    end.
+
+kvs_get_record(DeviceId) ->
+    case catch kvs:get(?TABLE, DeviceId) of
+        {ok, #ias_vpn_device_state{} = Record} -> {ok, Record};
+        {error, not_found} -> not_found;
+        {error, Reason} -> {error, {vpn_authority_kvs_read_failed, Reason}};
+        {'EXIT', Reason} -> {error, {vpn_authority_kvs_read_failed, Reason}};
+        Other -> {error, {vpn_authority_kvs_unexpected_result, Other}}
+    end.
+
+kvs_put_or_abort(Record) ->
+    case catch kvs:put(Record) of
+        ok -> ok;
+        {ok, _} -> ok;
+        {error, Reason} ->
+            ias_kvs_transaction:abort({vpn_authority_kvs_write_failed, Reason});
+        {'EXIT', Reason} ->
+            ias_kvs_transaction:abort({vpn_authority_kvs_write_failed, Reason});
+        Other ->
+            ias_kvs_transaction:abort({vpn_authority_kvs_unexpected_result, Other})
+    end.
+
+kvs_delete_or_abort(DeviceId) ->
+    case catch kvs:delete(?TABLE, DeviceId) of
+        ok -> ok;
+        {ok, _} -> ok;
+        {error, not_found} -> ok;
+        {error, Reason} ->
+            ias_kvs_transaction:abort({vpn_authority_kvs_delete_failed, Reason});
+        {'EXIT', Reason} ->
+            ias_kvs_transaction:abort({vpn_authority_kvs_delete_failed, Reason});
+        Other ->
+            ias_kvs_transaction:abort({vpn_authority_kvs_unexpected_result, Other})
+    end.
+
+ensure_storage() ->
+    case application:ensure_all_started(kvs) of
+        {ok, _Started} ->
+            ok = ensure_kvs_schema_modules(),
+            case validate_kvs_metadata() of
+                ok -> ensure_kvs_table();
+                {error, _} = Error -> Error
+            end;
+        {error, Reason} ->
+            {error, {vpn_authority_kvs_start_failed, Reason}}
+    end.
+
+ensure_kvs_schema_modules() ->
+    Existing = application:get_env(kvs, schema, []),
+    Required = [kvs, kvs_stream, ias_kvs],
+    application:set_env(kvs, schema, lists:usort(Existing ++ Required)).
+
+validate_kvs_metadata() ->
+    ExpectedFields = record_info(fields, ias_vpn_device_state),
+    case kvs:table(?TABLE) of
+        #table{fields = ExpectedFields, type = set, copy_type = disc_copies} -> ok;
+        false -> {error, {vpn_authority_kvs_schema_missing, ?TABLE}};
+        #table{} = Table ->
+            {error,
+             {invalid_vpn_authority_kvs_metadata,
+              #{fields => Table#table.fields,
+                type => Table#table.type,
+                copy_type => Table#table.copy_type}}}
+    end.
+
+ensure_kvs_table() ->
+    case validate_kvs_access() of
+        ok -> ok;
+        {error, _} ->
+            case catch kvs:join() of
+                {'EXIT', Reason} -> {error, {vpn_authority_kvs_join_failed, Reason}};
+                _ -> wait_for_kvs_table(?WAIT_TIMEOUT)
+            end
+    end.
+
+wait_for_kvs_table(Timeout) ->
+    wait_for_kvs_table(Timeout, erlang:monotonic_time(millisecond)).
+
+wait_for_kvs_table(Timeout, StartedAt) ->
+    case validate_kvs_access() of
+        ok -> ok;
+        {error, _} ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= Timeout of
+                true -> {error, {vpn_authority_kvs_table_unavailable, ?TABLE}};
+                false ->
+                    timer:sleep(10),
+                    wait_for_kvs_table(Timeout, StartedAt)
+            end
+    end.
+
+validate_kvs_access() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) -> ok;
+        {error, Reason} -> {error, Reason};
+        {'EXIT', Reason} -> {error, Reason};
+        Other -> {error, {unexpected_kvs_access_result, Other}}
+    end.
+
+normalize_abort({vpn_authority_invalid_record, Reason}) -> Reason;
+normalize_abort(Reason) -> Reason.
 
 validate_record(#ias_vpn_device_state{
                    device_id = DeviceId,
@@ -568,7 +569,7 @@ record_status(Record, Acc) ->
             [#{device_id => Record#ias_vpn_device_state.device_id,
                revision => Record#ias_vpn_device_state.revision,
                lifecycle_state => Record#ias_vpn_device_state.lifecycle_state} | Acc];
-        {error, Reason} -> mnesia:abort({vpn_authority_invalid_record, Reason})
+        {error, Reason} -> ias_kvs_transaction:abort({vpn_authority_invalid_record, Reason})
     end.
 
 binding_fields() ->

@@ -26,7 +26,7 @@ build_and_deliver(DeviceId, Operation) ->
     build_and_deliver(DeviceId, Operation, #{}).
 
 build_and_deliver(DeviceId, Operation, AuditContext) when is_map(AuditContext) ->
-    case ias_vpn_provisioning_command:build(DeviceId, Operation) of
+    case ias_vpn_provisioning_command:build(DeviceId, Operation, AuditContext) of
         {ok, Command} ->
             case deliver_with_runtime(Command, AuditContext) of
                 {ok, Delivery, DynamicPair} ->

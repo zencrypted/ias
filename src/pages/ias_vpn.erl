@@ -449,7 +449,8 @@ reconciliation_entries(Entries) ->
         #h3{body = ias_html:text("Reconciliation Records")},
         #table{class = <<"ias-table">>,
                header = header(["Device", "Status", "Reason", "IAS Revision",
-                                "VPN Revision", "Digest", "Runtime Entries", "Action"]),
+                                "VPN Revision", "Digest", "Runtime Entries",
+                                "Recovery", "Action"]),
                body = #tbody{body = [reconciliation_entry_row(Entry)
                                       || Entry <- Entries]}}
     ]}.
@@ -465,6 +466,7 @@ reconciliation_entry_row(Entry) ->
         #td{body = ias_html:text(vpn_revision(Entry))},
         #td{body = ias_html:text(maps:get(digest_match, Entry, undefined))},
         #td{body = ias_html:text(registry_count(Entry))},
+        #td{body = recovery_preview_cell(Entry)},
         #td{body = replay_button(DeviceId, Status)}
     ]}.
 
@@ -484,6 +486,31 @@ registry_count(#{vpn := Vpn}) when is_map(Vpn) ->
         _ -> 0
     end;
 registry_count(_Entry) -> 0.
+
+recovery_preview_cell(#{status := orphan,
+                        recoverable := true,
+                        recovery := Recovery}) when is_map(Recovery) ->
+    #panel{style = <<"font-size:11px;color:#166534;">>, body = [
+        #p{style = <<"margin:0;font-weight:700;">>,
+           body = ias_html:text("Recoverable preview")},
+        #p{style = <<"margin:2px 0;">>,
+           body = ias_html:join([maps:get(mode, Recovery, metadata_only),
+                                 "; objects ",
+                                 maps:get(object_count, Recovery, 0),
+                                 "; relationships ",
+                                 maps:get(relationship_count, Recovery, 0)])},
+        #p{style = <<"margin:2px 0;color:#64748b;">>,
+           body = ias_html:text("Stage 7A is read-only; recovery action is not enabled yet.")}
+    ]};
+recovery_preview_cell(#{status := orphan,
+                        recovery := Recovery}) when is_map(Recovery) ->
+    #span{style = <<"font-size:11px;color:#b91c1c;">>,
+          body = ias_html:join(["Unavailable: ",
+                                maps:get(reason, Recovery,
+                                         recovery_manifest_missing)])};
+recovery_preview_cell(_Entry) ->
+    #span{style = <<"font-size:11px;color:#64748b;">>,
+          body = ias_html:text("-")}.
 
 replay_button(DeviceId, Status)
   when Status =:= vpn_behind; Status =:= missing_in_vpn ->

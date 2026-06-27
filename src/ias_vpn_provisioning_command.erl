@@ -1,6 +1,7 @@
 -module(ias_vpn_provisioning_command).
 -export([build/1,
          build/2,
+         build/3,
          desired/2,
          summary/1]).
 
@@ -8,20 +9,25 @@ build(DeviceId) ->
     case device(DeviceId) of
         {ok, Device} ->
             Operation = inferred_operation(Device),
-            build_for_device(Device, Operation);
+            build_for_device(Device, Operation, #{});
         not_found ->
             {error, not_found}
     end.
 
 build(DeviceId, Operation) ->
+    build(DeviceId, Operation, #{}).
+
+build(DeviceId, Operation, Context) when is_map(Context) ->
     case valid_operation(Operation) of
         false -> {error, invalid_operation};
         true ->
             case device(DeviceId) of
-                {ok, Device} -> build_for_device(Device, Operation);
+                {ok, Device} -> build_for_device(Device, Operation, Context);
                 not_found -> {error, not_found}
             end
-    end.
+    end;
+build(_DeviceId, _Operation, _Context) ->
+    {error, invalid_recovery_manifest_context}.
 
 
 desired(DeviceId, Operation) ->
@@ -55,14 +61,21 @@ summary(Command) when is_map(Command) ->
 summary(_) ->
     #{}.
 
-build_for_device(Device, Operation) ->
+build_for_device(Device, Operation, Context) ->
     DeviceId = maps:get(id, Device),
     Decision = ias_authorization_decision:device_decision(DeviceId, access_vpn),
     Certificate = linked_certificate(DeviceId),
+    Desired0 = desired_state(Device, Certificate, Decision, Operation),
+    RecoveryContext = recovery_context(DeviceId, Context),
+    Desired = case ias_vpn_recovery_manifest:build(DeviceId,
+                                                    RecoveryContext) of
+                  {ok, Manifest} -> Desired0#{recovery_manifest => Manifest};
+                  {error, _Reason} -> Desired0
+              end,
     Command0 = #{peer_id => peer_id(Device),
                  operation => Operation,
                  source => ias,
-                 desired_state => desired_state(Device, Certificate, Decision, Operation)},
+                 desired_state => Desired},
     case ias_vpn_provisioning_state:prepare(DeviceId, Command0) of
         {ok, Command, _Change} -> {ok, Command};
         Error -> Error
@@ -208,6 +221,22 @@ device(DeviceId) ->
     case ias_demo_store:get(DeviceId) of
         {ok, #{kind := device} = Device} -> {ok, Device};
         _ -> not_found
+    end.
+
+recovery_context(DeviceId, Context) ->
+    Existing = existing_recovery_context(DeviceId),
+    maps:merge(Existing,
+               maps:with([provisioning_transaction_id, wizard_id], Context)).
+
+existing_recovery_context(DeviceId) ->
+    case ias_vpn_provisioning_state:last_command(DeviceId) of
+        {ok, #{desired_state := Desired}} when is_map(Desired) ->
+            case maps:get(recovery_manifest, Desired, undefined) of
+                Manifest when is_map(Manifest) ->
+                    maps:with([provisioning_transaction_id, wizard_id], Manifest);
+                _ -> #{}
+            end;
+        _ -> #{}
     end.
 
 valid_operation(upsert) -> true;

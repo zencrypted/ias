@@ -675,20 +675,64 @@ add_orphan_registry(DeviceId, PeerId, Entry, Acc) ->
     Acc#{DeviceId => Candidate}.
 
 orphan_entry(DeviceId, Candidate) ->
+    RawHeads = lists:reverse(maps:get(heads, Candidate)),
     Heads = [#{peer_id => PeerId, head => head_summary(Head)}
-             || {PeerId, Head} <- lists:reverse(maps:get(heads, Candidate))],
+             || {PeerId, Head} <- RawHeads],
     Registry = [registry_summary(Entry)
                 || {_PeerId, Entry} <- lists:reverse(
                                           maps:get(registry, Candidate))],
+    {Recoverable, Recovery, Manifest} = orphan_recovery(DeviceId, RawHeads),
     #{device_id => DeviceId,
       status => orphan,
       reason => vpn_device_without_ias_authority,
       read_only => true,
       automatic_action => none,
       replay_performed => false,
+      recoverable => Recoverable,
+      recovery => Recovery,
       ias => undefined,
-      vpn => #{heads => Heads, registry => Registry},
+      vpn => #{heads => Heads,
+               registry => Registry,
+               recovery_manifest => Manifest},
       digest_match => undefined}.
+
+orphan_recovery(DeviceId, RawHeads) ->
+    Manifests = lists:usort(
+                  [Manifest
+                   || {_PeerId, Head} <- RawHeads,
+                      Manifest <- [maps:get(recovery_manifest,
+                                            maps:get(desired_state, Head, #{}),
+                                            undefined)],
+                      Manifest =/= undefined]),
+    case Manifests of
+        [] ->
+            {false,
+             #{recoverable => false,
+               reason => recovery_manifest_missing},
+             undefined};
+        [Manifest] ->
+            Preview = ias_vpn_recovery_manifest:preview(Manifest),
+            ManifestDeviceId = maps:get(device_id, Preview, undefined),
+            case maps:get(recoverable, Preview, false) of
+                false -> {false, Preview, Manifest};
+                true ->
+                    case normalize_id(ManifestDeviceId) =:= DeviceId of
+                        true -> {true, Preview, Manifest};
+                        false ->
+                            {false,
+                             Preview#{recoverable => false,
+                                      reason =>
+                                          recovery_manifest_device_mismatch},
+                             Manifest}
+                    end
+            end;
+        _ ->
+            {false,
+             #{recoverable => false,
+               reason => conflicting_recovery_manifests,
+               manifest_count => length(Manifests)},
+             undefined}
+    end.
 
 ias_managed_head(Head) ->
     is_ias_source(maps:get(source, Head, undefined)).
@@ -709,6 +753,7 @@ valid_heads(Heads) ->
           maps:get(revision, Head, -1) >= 0 andalso
           lists:member(maps:get(phase, Head, applied), [pending, applied]) andalso
           is_map(maps:get(desired_state, Head, #{})) andalso
+          valid_head_recovery_manifest(Head) andalso
           valid_optional_digest(maps:get(digest, Head, undefined))
       end,
       maps:to_list(Heads)).
@@ -723,6 +768,13 @@ valid_registry_entries(Entries) ->
 valid_peer_id(Value) when is_atom(Value) -> Value =/= undefined;
 valid_peer_id(Value) when is_binary(Value) -> byte_size(Value) > 0;
 valid_peer_id(_) -> false.
+
+valid_head_recovery_manifest(Head) ->
+    Desired = maps:get(desired_state, Head, #{}),
+    case maps:get(recovery_manifest, Desired, undefined) of
+        undefined -> true;
+        Manifest -> ias_vpn_recovery_manifest:validate(Manifest) =:= ok
+    end.
 
 valid_optional_digest(undefined) -> true;
 valid_optional_digest(Digest) when is_binary(Digest) -> byte_size(Digest) =:= 32;
@@ -782,7 +834,8 @@ head_summary(Head) when is_map(Head) ->
                                       allocation_slot,
                                       allocation_generation,
                                       allocation_role,
-                                      remote_peer_id],
+                                      remote_peer_id,
+                                      recovery_manifest],
                                      Desired)}.
 
 command_summary(Command) when is_map(Command), map_size(Command) > 0 ->

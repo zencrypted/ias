@@ -1,9 +1,8 @@
 %%%-------------------------------------------------------------------
 %% @doc Durable fail-closed ledger for IAS/VPN divergence and orphan incidents.
 %%
-%% Reconciliation reports remain read-only. Records are created or refreshed
-%% only by an explicit scan, acknowledged against a current snapshot token, and
-%% resolved only after a caller has verified that the dangerous state cleared.
+%% Storage access is KVS-only. Reconciliation reports remain read-only;
+%% records are changed only by explicit scan/acknowledge/resolve operations.
 %%%-------------------------------------------------------------------
 -module(ias_vpn_reconciliation_incidents).
 
@@ -17,6 +16,7 @@
          token/1]).
 
 -include("ias_vpn_reconciliation_incident.hrl").
+-include_lib("kvs/include/metainfo.hrl").
 
 -define(TABLE, ias_vpn_reconciliation_incident).
 -define(SCHEMA_VERSION, 1).
@@ -25,29 +25,26 @@
 ensure() ->
     case ias_vpn_authority:ensure() of
         ok ->
-            case ensure_table() of
-                ok -> validate_all_records();
+            case ensure_storage() of
+                ok ->
+                    case ias_kvs_transaction:ensure() of
+                        ok -> validate_all_records();
+                        {error, _} = Error -> Error
+                    end;
                 {error, _} = Error -> Error
             end;
         {error, Reason} -> {error, {vpn_incident_authority_unavailable, Reason}}
     end.
 
 reset() ->
-    case ensure() of
-        ok ->
-            case mnesia:clear_table(?TABLE) of
-                {atomic, ok} -> ok;
-                {aborted, Reason} -> {error, {vpn_incident_reset_failed, Reason}}
-            end;
-        {error, _} = Error -> Error
+    case transaction(fun reset_in_transaction/0) of
+        {ok, ok} -> ok;
+        {error, Reason} -> {error, {vpn_incident_reset_failed, Reason}}
     end.
 
 scan(Entries) when is_list(Entries) ->
     Dangerous = [Entry || Entry <- Entries, dangerous(Entry)],
-    case transaction(
-           fun() ->
-               [upsert_incident(Entry) || Entry <- Dangerous]
-           end) of
+    case transaction(fun() -> [upsert_incident(Entry) || Entry <- Dangerous] end) of
         {ok, Records} -> {ok, [record_to_map(Record) || Record <- Records]};
         {error, Reason} -> {error, {vpn_incident_scan_failed, Reason}}
     end;
@@ -55,30 +52,35 @@ scan(_Entries) ->
     {error, invalid_reconciliation_entries}.
 
 all() ->
-    case transaction(
-           fun() ->
-               mnesia:foldl(
-                 fun(Record, Acc) ->
-                     ok = validate_record_or_abort(Record),
-                     [Record | Acc]
-                 end,
-                 [],
-                 ?TABLE)
-           end) of
-        {ok, Records} ->
-            {ok, lists:sort(fun compare_incidents/2,
-                            [record_to_map(Record) || Record <- Records])};
+    case ensure_storage() of
+        ok ->
+            case read_records() of
+                {ok, Records} ->
+                    case validate_records(Records) of
+                        ok ->
+                            {ok, lists:sort(fun compare_incidents/2,
+                                            [record_to_map(Record)
+                                             || Record <- Records])};
+                        {error, Reason} ->
+                            {error, {vpn_incident_read_failed, Reason}}
+                    end;
+                {error, Reason} -> {error, {vpn_incident_read_failed, Reason}}
+            end;
         {error, Reason} -> {error, {vpn_incident_read_failed, Reason}}
     end.
 
 get(DeviceId0) ->
     DeviceId = normalize_id(DeviceId0),
-    case transaction(fun() -> mnesia:read(?TABLE, DeviceId, read) end) of
-        {ok, []} -> not_found;
-        {ok, [Record]} ->
-            case validate_record(Record) of
-                ok -> {ok, record_to_map(Record)};
-                {error, Reason} -> {error, Reason}
+    case ensure_storage() of
+        ok ->
+            case kvs_get_record(DeviceId) of
+                not_found -> not_found;
+                {ok, Record} ->
+                    case validate_record(Record) of
+                        ok -> {ok, record_to_map(Record)};
+                        {error, Reason} -> {error, Reason}
+                    end;
+                {error, Reason} -> {error, {vpn_incident_read_failed, Reason}}
             end;
         {error, Reason} -> {error, {vpn_incident_read_failed, Reason}}
     end.
@@ -94,10 +96,10 @@ acknowledge(DeviceId0, Token, Actor0, Note0, CurrentEntry) ->
         true ->
             case transaction(
                    fun() ->
-                       Record0 = read_required(DeviceId, write),
-                       ok = validate_record_or_abort(Record0),
+                       Record0 = read_required(DeviceId),
+                       validate_record_or_abort(Record0),
                        case Record0#ias_vpn_reconciliation_incident.token =:= Token of
-                           false -> mnesia:abort(stale_incident_token);
+                           false -> ias_kvs_transaction:abort(stale_incident_token);
                            true ->
                                Now = now_seconds(),
                                Record = Record0#ias_vpn_reconciliation_incident{
@@ -106,8 +108,8 @@ acknowledge(DeviceId0, Token, Actor0, Note0, CurrentEntry) ->
                                           acknowledged_note = Note,
                                           acknowledged_at = Now,
                                           updated_at = Now},
-                               ok = validate_record_or_abort(Record),
-                               mnesia:write(Record),
+                               validate_record_or_abort(Record),
+                               kvs_put_or_abort(Record),
                                Record
                        end
                    end) of
@@ -125,10 +127,10 @@ resolve(DeviceId0, Token, Actor0, Note0, Clearance) when is_map(Clearance) ->
         true ->
             case transaction(
                    fun() ->
-                       Record0 = read_required(DeviceId, write),
-                       ok = validate_record_or_abort(Record0),
+                       Record0 = read_required(DeviceId),
+                       validate_record_or_abort(Record0),
                        case Record0#ias_vpn_reconciliation_incident.token =:= Token of
-                           false -> mnesia:abort(stale_incident_token);
+                           false -> ias_kvs_transaction:abort(stale_incident_token);
                            true ->
                                Now = now_seconds(),
                                Snapshot = maps:get(snapshot, Clearance, #{}),
@@ -139,8 +141,8 @@ resolve(DeviceId0, Token, Actor0, Note0, Clearance) when is_map(Clearance) ->
                                           resolved_note = Note,
                                           resolved_at = Now,
                                           updated_at = Now},
-                               ok = validate_record_or_abort(Record),
-                               mnesia:write(Record),
+                               validate_record_or_abort(Record),
+                               kvs_put_or_abort(Record),
                                Record
                        end
                    end) of
@@ -164,8 +166,8 @@ upsert_incident(Entry) ->
     Token = token(Entry),
     Snapshot = incident_snapshot(Entry),
     Now = now_seconds(),
-    case mnesia:read(?TABLE, DeviceId, write) of
-        [] ->
+    case kvs_get_record(DeviceId) of
+        not_found ->
             Record = #ias_vpn_reconciliation_incident{
                         device_id = DeviceId,
                         kind = Kind,
@@ -177,11 +179,11 @@ upsert_incident(Entry) ->
                         last_seen = Now,
                         occurrences = 1,
                         updated_at = Now},
-            ok = validate_record_or_abort(Record),
-            mnesia:write(Record),
+            validate_record_or_abort(Record),
+            kvs_put_or_abort(Record),
             Record;
-        [Record0] ->
-            ok = validate_record_or_abort(Record0),
+        {ok, Record0} ->
+            validate_record_or_abort(Record0),
             Changed = Record0#ias_vpn_reconciliation_incident.token =/= Token,
             Reopened = Record0#ias_vpn_reconciliation_incident.status =:= resolved,
             Occurrences = case Changed orelse Reopened of
@@ -200,23 +202,42 @@ upsert_incident(Entry) ->
                        snapshot = Snapshot,
                        last_seen = Now,
                        occurrences = Occurrences,
-                       acknowledged_by = case Status of open -> undefined; _ -> Record0#ias_vpn_reconciliation_incident.acknowledged_by end,
-                       acknowledged_note = case Status of open -> undefined; _ -> Record0#ias_vpn_reconciliation_incident.acknowledged_note end,
-                       acknowledged_at = case Status of open -> undefined; _ -> Record0#ias_vpn_reconciliation_incident.acknowledged_at end,
-                       resolved_by = case Status of open -> undefined; _ -> Record0#ias_vpn_reconciliation_incident.resolved_by end,
-                       resolved_note = case Status of open -> undefined; _ -> Record0#ias_vpn_reconciliation_incident.resolved_note end,
-                       resolved_at = case Status of open -> undefined; _ -> Record0#ias_vpn_reconciliation_incident.resolved_at end,
+                       acknowledged_by = reset_if_open(Status,
+                                                       undefined,
+                                                       Record0#ias_vpn_reconciliation_incident.acknowledged_by),
+                       acknowledged_note = reset_if_open(Status,
+                                                         undefined,
+                                                         Record0#ias_vpn_reconciliation_incident.acknowledged_note),
+                       acknowledged_at = reset_if_open(Status,
+                                                       undefined,
+                                                       Record0#ias_vpn_reconciliation_incident.acknowledged_at),
+                       resolved_by = reset_if_open(Status,
+                                                   undefined,
+                                                   Record0#ias_vpn_reconciliation_incident.resolved_by),
+                       resolved_note = reset_if_open(Status,
+                                                     undefined,
+                                                     Record0#ias_vpn_reconciliation_incident.resolved_note),
+                       resolved_at = reset_if_open(Status,
+                                                   undefined,
+                                                   Record0#ias_vpn_reconciliation_incident.resolved_at),
                        updated_at = Now},
-            ok = validate_record_or_abort(Record),
-            mnesia:write(Record),
-            Record
+            validate_record_or_abort(Record),
+            kvs_put_or_abort(Record),
+            Record;
+        {error, Reason0} ->
+            ias_kvs_transaction:abort(Reason0)
     end.
+
+reset_if_open(open, Value, _Existing) -> Value;
+reset_if_open(_Status, _Value, Existing) -> Existing.
 
 incident_snapshot(Entry) ->
     #{device_id => normalize_id(maps:get(device_id, Entry, undefined)),
       status => maps:get(status, Entry, undefined),
       reason => maps:get(reason, Entry, undefined),
       digest_match => maps:get(digest_match, Entry, undefined),
+      recoverable => maps:get(recoverable, Entry, false),
+      recovery => maps:get(recovery, Entry, undefined),
       ias => maps:get(ias, Entry, undefined),
       vpn => maps:get(vpn, Entry, undefined)}.
 
@@ -229,83 +250,160 @@ valid_clearance(#{state := absent}) -> true;
 valid_clearance(_) -> false.
 
 validate_all_records() ->
-    case mnesia:sync_transaction(
-           fun() ->
-               mnesia:foldl(
-                 fun(Record, ok) -> validate_record_or_abort(Record) end,
-                 ok,
-                 ?TABLE)
-           end) of
-        {atomic, ok} -> ok;
-        {aborted, Reason} -> {error, {vpn_incident_validation_failed, Reason}}
+    case read_records() of
+        {ok, Records} ->
+            case validate_records(Records) of
+                ok -> ok;
+                {error, Reason} -> {error, {vpn_incident_validation_failed, Reason}}
+            end;
+        {error, Reason} -> {error, {vpn_incident_validation_failed, Reason}}
     end.
 
 transaction(Fun) ->
-    case ensure() of
-        ok ->
-            case mnesia:sync_transaction(Fun) of
-                {atomic, Value} -> {ok, Value};
-                {aborted, Reason} -> {error, Reason}
-            end;
+    case ensure_storage() of
+        ok -> ias_kvs_transaction:run(Fun);
         {error, Reason} -> {error, Reason}
     end.
 
-ensure_table() ->
-    case lists:member(?TABLE, mnesia:system_info(tables)) of
-        true -> wait_and_validate_table();
-        false -> create_table()
+reset_in_transaction() ->
+    case read_records() of
+        {ok, Records} ->
+            lists:foreach(
+              fun(#ias_vpn_reconciliation_incident{device_id = DeviceId}) ->
+                      kvs_delete_or_abort(DeviceId);
+                 (Invalid) ->
+                      ias_kvs_transaction:abort({vpn_incident_reset_invalid_record,
+                                                 Invalid})
+              end,
+              Records),
+            ok;
+        {error, Reason} -> ias_kvs_transaction:abort(Reason)
     end.
 
-create_table() ->
-    Options = [{attributes, record_info(fields, ias_vpn_reconciliation_incident)},
-               {disc_copies, [node()]},
-               {type, set}],
-    case mnesia:create_table(?TABLE, Options) of
-        {atomic, ok} -> wait_and_validate_table();
-        {aborted, Reason} ->
-            case contains_already_exists(Reason) of
-                true -> wait_and_validate_table();
-                false -> {error, {vpn_incident_table_create_failed, Reason}}
-            end
-    end.
-
-wait_and_validate_table() ->
-    case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
-        ok -> validate_table();
-        {timeout, Tables} -> {error, {vpn_incident_table_unavailable, Tables}};
-        {error, Reason} -> {error, {vpn_incident_table_unavailable, Reason}}
-    end.
-
-validate_table() ->
-    Expected = record_info(fields, ias_vpn_reconciliation_incident),
-    case {mnesia:table_info(?TABLE, attributes),
-          mnesia:table_info(?TABLE, storage_type),
-          mnesia:table_info(?TABLE, type)} of
-        {Expected, disc_copies, set} -> ok;
-        {Attributes, Storage, Type} ->
-            {error, {vpn_incident_table_mismatch,
-                     #{attributes => Attributes,
-                       storage_type => Storage,
-                       type => Type}}}
-    end.
-
-contains_already_exists(already_exists) -> true;
-contains_already_exists(Term) when is_tuple(Term) ->
-    lists:any(fun contains_already_exists/1, tuple_to_list(Term));
-contains_already_exists(Term) when is_list(Term) ->
-    lists:any(fun contains_already_exists/1, Term);
-contains_already_exists(_) -> false.
-
-read_required(DeviceId, Lock) ->
-    case mnesia:read(?TABLE, DeviceId, Lock) of
-        [Record] -> Record;
-        [] -> mnesia:abort(incident_not_found)
+read_required(DeviceId) ->
+    case kvs_get_record(DeviceId) of
+        {ok, Record} -> Record;
+        not_found -> ias_kvs_transaction:abort(incident_not_found);
+        {error, Reason} -> ias_kvs_transaction:abort(Reason)
     end.
 
 validate_record_or_abort(Record) ->
     case validate_record(Record) of
         ok -> ok;
-        {error, Reason} -> mnesia:abort({invalid_vpn_incident_record, Reason})
+        {error, Reason} ->
+            ias_kvs_transaction:abort({invalid_vpn_incident_record, Reason})
+    end.
+
+validate_records([]) -> ok;
+validate_records([Record | Rest]) ->
+    case validate_record(Record) of
+        ok -> validate_records(Rest);
+        {error, _} = Error -> Error
+    end.
+
+read_records() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) -> {ok, Records};
+        {error, Reason} -> {error, {vpn_incident_kvs_read_failed, Reason}};
+        {'EXIT', Reason} -> {error, {vpn_incident_kvs_read_failed, Reason}};
+        Other -> {error, {vpn_incident_kvs_unexpected_result, Other}}
+    end.
+
+kvs_get_record(DeviceId) ->
+    case catch kvs:get(?TABLE, DeviceId) of
+        {ok, #ias_vpn_reconciliation_incident{} = Record} -> {ok, Record};
+        {error, not_found} -> not_found;
+        {error, Reason} -> {error, {vpn_incident_kvs_read_failed, Reason}};
+        {'EXIT', Reason} -> {error, {vpn_incident_kvs_read_failed, Reason}};
+        Other -> {error, {vpn_incident_kvs_unexpected_result, Other}}
+    end.
+
+kvs_put_or_abort(Record) ->
+    case catch kvs:put(Record) of
+        ok -> ok;
+        {ok, _} -> ok;
+        {error, Reason} ->
+            ias_kvs_transaction:abort({vpn_incident_kvs_write_failed, Reason});
+        {'EXIT', Reason} ->
+            ias_kvs_transaction:abort({vpn_incident_kvs_write_failed, Reason});
+        Other ->
+            ias_kvs_transaction:abort({vpn_incident_kvs_unexpected_result, Other})
+    end.
+
+kvs_delete_or_abort(DeviceId) ->
+    case catch kvs:delete(?TABLE, DeviceId) of
+        ok -> ok;
+        {ok, _} -> ok;
+        {error, not_found} -> ok;
+        {error, Reason} ->
+            ias_kvs_transaction:abort({vpn_incident_kvs_delete_failed, Reason});
+        {'EXIT', Reason} ->
+            ias_kvs_transaction:abort({vpn_incident_kvs_delete_failed, Reason});
+        Other ->
+            ias_kvs_transaction:abort({vpn_incident_kvs_unexpected_result, Other})
+    end.
+
+ensure_storage() ->
+    case application:ensure_all_started(kvs) of
+        {ok, _Started} ->
+            ok = ensure_kvs_schema_modules(),
+            case validate_kvs_metadata() of
+                ok -> ensure_kvs_table();
+                {error, _} = Error -> Error
+            end;
+        {error, Reason} -> {error, {vpn_incident_kvs_start_failed, Reason}}
+    end.
+
+ensure_kvs_schema_modules() ->
+    Existing = application:get_env(kvs, schema, []),
+    Required = [kvs, kvs_stream, ias_kvs],
+    application:set_env(kvs, schema, lists:usort(Existing ++ Required)).
+
+validate_kvs_metadata() ->
+    ExpectedFields = record_info(fields, ias_vpn_reconciliation_incident),
+    case kvs:table(?TABLE) of
+        #table{fields = ExpectedFields, type = set, copy_type = disc_copies} -> ok;
+        false -> {error, {vpn_incident_kvs_schema_missing, ?TABLE}};
+        #table{} = Table ->
+            {error,
+             {invalid_vpn_incident_kvs_metadata,
+              #{fields => Table#table.fields,
+                type => Table#table.type,
+                copy_type => Table#table.copy_type}}}
+    end.
+
+ensure_kvs_table() ->
+    case validate_kvs_access() of
+        ok -> ok;
+        {error, _} ->
+            case catch kvs:join() of
+                {'EXIT', Reason} -> {error, {vpn_incident_kvs_join_failed, Reason}};
+                _ -> wait_for_kvs_table(?WAIT_TIMEOUT)
+            end
+    end.
+
+wait_for_kvs_table(Timeout) ->
+    wait_for_kvs_table(Timeout, erlang:monotonic_time(millisecond)).
+
+wait_for_kvs_table(Timeout, StartedAt) ->
+    case validate_kvs_access() of
+        ok -> ok;
+        {error, _} ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= Timeout of
+                true -> {error, {vpn_incident_kvs_table_unavailable, ?TABLE}};
+                false ->
+                    timer:sleep(10),
+                    wait_for_kvs_table(Timeout, StartedAt)
+            end
+    end.
+
+validate_kvs_access() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) -> ok;
+        {error, Reason} -> {error, Reason};
+        {'EXIT', Reason} -> {error, Reason};
+        Other -> {error, {unexpected_kvs_access_result, Other}}
     end.
 
 validate_record(#ias_vpn_reconciliation_incident{

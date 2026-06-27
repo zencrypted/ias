@@ -1,6 +1,7 @@
 -module(ias_vpn_authority_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include("ias_vpn_authority.hrl").
+-include_lib("kvs/include/metainfo.hrl").
 
 durable_revision_and_binding_overlay_test_() ->
     {setup,
@@ -47,9 +48,8 @@ durable_revision_and_binding_overlay_test_() ->
                           byte_size(maps:get(command_digest, Authority))),
              ?assertEqual(Command2,
                           maps:get(canonical_command, Authority)),
-             ?assertEqual(disc_copies,
-                          mnesia:table_info(ias_vpn_device_state,
-                                            storage_type)),
+             #table{copy_type = disc_copies,
+                    type = set} = kvs:table(ias_vpn_device_state),
              ok = ias_vpn_provisioning_state:reset(),
              ?assertEqual(0,
                           ias_vpn_provisioning_state:current_revision(DeviceId)),
@@ -98,7 +98,7 @@ unsupported_authority_schema_fails_closed_test_() ->
      fun(#{device_id := DeviceId}) ->
          fun() ->
              ok = ias_vpn_authority:reset(),
-             ok = mnesia:dirty_write(
+             ok = kvs:put(
                     #ias_vpn_device_state{device_id = DeviceId,
                                           schema_version = 99,
                                           updated_at = 1782330100}),

@@ -1,6 +1,7 @@
 -module(ias_vpn_reconciliation_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kvs/include/metainfo.hrl").
 
 synchronized_snapshot_is_reported_read_only_test_() ->
     reconciliation_fixture(
@@ -91,7 +92,41 @@ vpn_only_device_is_reported_as_orphan_test_() ->
              ?assertEqual(orphan, maps:get(status, Orphan)),
              ?assertEqual(vpn_device_without_ias_authority,
                           maps:get(reason, Orphan)),
-             ?assertEqual(false, maps:get(replay_performed, Orphan))
+             ?assertEqual(false, maps:get(replay_performed, Orphan)),
+             ?assertEqual(false, maps:get(recoverable, Orphan)),
+             ?assertEqual(recovery_manifest_missing,
+                          maps:get(reason, maps:get(recovery, Orphan)))
+         end
+     end}.
+
+vpn_only_device_with_manifest_has_recovery_preview_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-recoverable-device">>,
+             PeerId = <<"vpn-recoverable-peer">>,
+             Manifest = recovery_manifest(DeviceId),
+             Command0 = command(DeviceId, PeerId, upsert, true),
+             Desired0 = maps:get(desired_state, Command0),
+             Command = Command0#{revision => 8,
+                                 desired_state => Desired0#{recovery_manifest =>
+                                                               Manifest}},
+             set_snapshot(#{PeerId => head(Command, applied)},
+                          [registry_entry(DeviceId, PeerId, Command)]),
+             {ok, Report} = ias_vpn_reconciliation:report(),
+             [Orphan] = maps:get(entries, Report),
+             ?assertEqual(orphan, maps:get(status, Orphan)),
+             ?assertEqual(true, maps:get(recoverable, Orphan)),
+             Recovery = maps:get(recovery, Orphan),
+             ?assertEqual(true, maps:get(recoverable, Recovery)),
+             ?assertEqual(metadata_only, maps:get(mode, Recovery)),
+             ?assertEqual(DeviceId, maps:get(device_id, Recovery)),
+             ?assertEqual(3, maps:get(object_count, Recovery)),
+             ?assertEqual(2, maps:get(relationship_count, Recovery)),
+             ?assertEqual(Manifest,
+                          maps:get(recovery_manifest, maps:get(vpn, Orphan)))
          end
      end}.
 
@@ -352,6 +387,46 @@ command(DeviceId, PeerId, Operation, Enabled) ->
                          enabled => Enabled,
                          revoked => Operation =:= revoke}}.
 
+
+recovery_manifest(DeviceId) ->
+    CertificateId = <<DeviceId/binary, "-certificate">>,
+    ServiceId = <<DeviceId/binary, "-service">>,
+    #{schema_version => 1,
+      provisioning_transaction_id => <<"vpn-provisioning-transaction">>,
+      device => #{kind => device,
+                  id => DeviceId,
+                  name => <<"Recovered device">>},
+      certificate => #{kind => certificate,
+                       id => CertificateId,
+                       fingerprint_sha256 => <<"fingerprint">>},
+      vpn_service => #{kind => vpn_service,
+                       id => ServiceId,
+                       remote_host => <<"vpn.example.test">>,
+                       remote_port => 1194,
+                       protocol => udp},
+      objects => [#{kind => device,
+                    id => DeviceId,
+                    name => <<"Recovered device">>},
+                  #{kind => certificate,
+                    id => CertificateId,
+                    fingerprint_sha256 => <<"fingerprint">>},
+                  #{kind => vpn_service,
+                    id => ServiceId,
+                    remote_host => <<"vpn.example.test">>,
+                    remote_port => 1194,
+                    protocol => udp}],
+      relationships =>
+          [#{relation_type => uses_certificate,
+             source_kind => device,
+             source_id => DeviceId,
+             target_kind => certificate,
+             target_id => CertificateId},
+           #{relation_type => uses_vpn_service,
+             source_kind => device,
+             source_id => DeviceId,
+             target_kind => vpn_service,
+             target_id => ServiceId}]}.
+
 vpn_digest(Command) ->
     crypto:hash(sha256,
                 term_to_binary(maps:remove(dynamic_device_id, Command),
@@ -371,9 +446,8 @@ divergence_incident_requires_current_token_and_verified_resolution_test_() ->
           {ok, Incident0} = ias_vpn_reconciliation:incident(DeviceId),
           Token = maps:get(token, Incident0),
           ?assertEqual(32, byte_size(Token)),
-          ?assertEqual(disc_copies,
-                       mnesia:table_info(ias_vpn_reconciliation_incident,
-                                         storage_type)),
+          #table{copy_type = disc_copies,
+                 type = set} = kvs:table(ias_vpn_reconciliation_incident),
           ?assertEqual(open, maps:get(status, Incident0)),
           ?assertEqual(divergence, maps:get(kind, Incident0)),
           ?assertMatch({error, _},
