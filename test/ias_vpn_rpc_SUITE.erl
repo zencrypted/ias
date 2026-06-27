@@ -854,10 +854,15 @@ replayed_dataplane_frame_is_rejected(Config) ->
                                               DeviceId,
                                               client_a),
     ?assertEqual(applied, maps:get(delivery_status, UpsertDelivery)),
+    %% The preceding testcase deliberately restarts only client_a.  This suite
+    %% shares one VPN VM, so establish a fresh two-ended session before testing
+    %% replay-window semantics rather than inheriting a half-rotated handshake.
+    ok = restart_vpn_peer(VpnNode, peer_b),
+    ok = restart_vpn_peer(VpnNode, client_a),
     {ok, ClientSession} =
-        wait_for_session_established(VpnNode, client_a, 5000),
+        wait_for_session_established(VpnNode, client_a, 10000),
     {ok, GatewaySession} =
-        wait_for_session_established(VpnNode, peer_b, 5000),
+        wait_for_session_established(VpnNode, peer_b, 10000),
     ?assertEqual(established, maps:get(handshake_status, ClientSession)),
     ?assertEqual(established, maps:get(handshake_status, GatewaySession)),
 
@@ -1304,6 +1309,29 @@ deliver_upsert_after_runtime_revision(VpnNode, DeviceId, PeerId) ->
     Command = Command0#{revision => RuntimeRevision + 1},
     ias_vpn_provisioning_delivery:deliver(Command).
 
+
+restart_vpn_peer(VpnNode, PeerId) ->
+    {ok, OldPid} = rpc:call(VpnNode,
+                            vpn_manager,
+                            debug_peer_pid,
+                            [PeerId],
+                            ?RPC_TIMEOUT_MS),
+    {ok, OldPid} = rpc:call(VpnNode,
+                            vpn_manager,
+                            debug_restart_peer,
+                            [PeerId],
+                            ?RPC_TIMEOUT_MS),
+    {ok, NewPid} = wait_for_peer_restart(VpnNode,
+                                         PeerId,
+                                         OldPid,
+                                         5000),
+    true = NewPid =/= OldPid,
+    true = rpc:call(VpnNode,
+                    erlang,
+                    is_process_alive,
+                    [NewPid],
+                    ?RPC_TIMEOUT_MS),
+    ok.
 
 wait_for_peer_restart(VpnNode, PeerId, OldPid, TimeoutMs) ->
     wait_for_peer_restart(VpnNode,
