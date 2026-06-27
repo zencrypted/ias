@@ -336,6 +336,8 @@ Durable Domain Objects
 Durable Relationships
 ETS Projection Objects
 ETS Projection Relationships
+Durable Projection SHA-256
+ETS Projection SHA-256
 Wizard Drafts (volatile/durable)
 Last Rehydration Time
 Projection Status: synchronized | mismatch | unavailable
@@ -471,11 +473,16 @@ fresh expected projection built from KVS and reports:
 - durable object and relationship counts;
 - ETS object and relationship counts;
 - `synchronized`, `mismatch` or `unavailable`;
+- SHA-256 tokens for the validated durable projection and current ETS projection;
 - last rehydration attempt, successful rehydration time and error.
 
-The rehydration API is intentionally not invoked from application startup yet.
-That boot-order change belongs to Stage 3B so the engine can be tested without
-changing when Cowboy begins accepting requests.
+The hashes are deterministic diagnostics over the complete projected entry set.
+They make equal-count content drift visible, but are not signatures or an
+authentication boundary; full map equality still determines synchronized state.
+
+Stage 3A introduced the independently testable engine. Stage 3B subsequently
+connected it to the fail-closed application bootstrap before Cowboy begins
+accepting requests.
 
 ### Stage 3B — Startup integration and diagnostics UI
 
@@ -494,6 +501,7 @@ The Demo State page now renders a separate Durable Projection Health card with:
 - synchronized, mismatch or unavailable status;
 - durable object, relationship and total counts;
 - ETS projection object, relationship and total counts;
+- deterministic SHA-256 hashes of the validated durable projection and ETS projection;
 - last successful rehydration, last attempt and last error.
 
 The page copy also distinguishes the KVS source of truth from the ETS read
@@ -503,14 +511,36 @@ KVS demo graph as well as the ETS projection and related demo runtime stores.
 
 ### Stage 4 — Restart Common Test
 
-Add a test that:
+**Status:** Implemented.
 
-1. creates a complete wizard object graph;
-2. records object and relationship identities;
-3. restarts IAS with the same Mnesia directory;
-4. verifies all domain objects and edges are rehydrated;
-5. verifies VPN authority remains bound to the same Device;
-6. verifies reconciliation does not create a false orphan.
+`ias_persistence_SUITE` starts IAS in a separate Erlang VM with a dedicated HTTP
+port and Mnesia directory. The suite creates the supported Device, VPN Service,
+CA certificate, client certificate and six-edge wizard graph, persists a VPN
+authority command and binding, stops the complete IAS VM, and starts it again
+against the same Mnesia directory.
+
+The restart contract verifies:
+
+1. every object and relationship identity is rehydrated before HTTP startup;
+2. the durable and ETS SHA-256 projection hashes are equal and remain stable
+   across the restart;
+3. the VPN authority revision, canonical command and Device binding survive;
+4. a matching IAS-owned VPN snapshot remains `synchronized` with zero false
+   orphan records;
+5. static Security Profile seed data remains available;
+6. two consecutive restarts are idempotent, do not duplicate ETS records,
+   and do not resurrect a durably deleted object;
+7. an incompatible durable schema causes IAS application startup to fail before
+   Cowboy opens its configured TCP port.
+
+The suite uses a deterministic reconciliation RPC fixture for the matching VPN
+snapshot. Live IAS-to-VPN process and node-restart behavior remains covered by
+`ias_vpn_rpc_SUITE`; the Stage 4 suite isolates the IAS persistence boundary.
+Run it with:
+
+```bash
+rebar3 ct --suite test/ias_persistence_SUITE
+```
 
 ### Stage 5 — Durable wizard drafts
 

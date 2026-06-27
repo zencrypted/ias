@@ -12,6 +12,7 @@ rehydration_contract_test_() ->
           [?_test(objects_and_relationships_are_rehydrated()),
            ?_test(vpn_authority_is_overlaid_during_rehydration()),
            ?_test(rehydration_is_idempotent()),
+           ?_test(projection_hash_detects_equal_count_content_drift()),
            ?_test(invalid_durable_state_preserves_current_projection())]}
      end}.
 
@@ -81,6 +82,26 @@ rehydration_is_idempotent() ->
     ?assertEqual(synchronized, maps:get(status, SecondHealth)),
     ?assertEqual(undefined,
                  maps:get(last_rehydration_error, SecondHealth)).
+
+
+projection_hash_detects_equal_count_content_drift() ->
+    ok = ias_demo_store:clear(),
+    DeviceId = <<"rehydrate-hash-device">>,
+    Stored = ias_demo_store:put_runtime_object(device(DeviceId)),
+    Synchronized = ias_demo_store:projection_health(),
+    DurableHash = maps:get(durable_projection_hash, Synchronized),
+    ?assertEqual(DurableHash, maps:get(ets_projection_hash, Synchronized)),
+    ?assertEqual(64, byte_size(DurableHash)),
+
+    Drifted = Stored#{name => <<"Drifted ETS-only name">>},
+    true = ets:insert(ias_demo_store, {{device, DeviceId}, Drifted}),
+    Mismatch = ias_demo_store:projection_health(),
+
+    ?assertEqual(mismatch, maps:get(status, Mismatch)),
+    ?assertEqual(maps:get(durable_total, Mismatch),
+                 maps:get(ets_projection_total, Mismatch)),
+    ?assertNotEqual(maps:get(durable_projection_hash, Mismatch),
+                    maps:get(ets_projection_hash, Mismatch)).
 
 invalid_durable_state_preserves_current_projection() ->
     ok = ias_demo_store:clear(),

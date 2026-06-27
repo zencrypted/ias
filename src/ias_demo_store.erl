@@ -32,6 +32,7 @@
 -define(TABLE, ias_demo_store).
 -define(OWNER, ias_demo_store_owner).
 -define(PROJECTION_HEALTH_KEY, {?MODULE, projection_health}).
+-define(PROJECTION_HASH_ALGORITHM, sha256).
 
 ensure() ->
     ensure_table().
@@ -100,14 +101,18 @@ runtime_objects() ->
 rehydrate() ->
     ensure(),
     case prepare_expected_projection() of
-        {ok, Entries, DurableCounts} ->
+        {ok, Entries, DurableCounts, DurableHash} ->
             case replace_runtime_projection(Entries) of
                 ok ->
                     mark_rehydration_success(),
-                    RuntimeCounts = projection_counts(ets:tab2list(?TABLE)),
+                    RuntimeEntries = ets:tab2list(?TABLE),
+                    RuntimeCounts = projection_counts(RuntimeEntries),
+                    RuntimeHash = projection_hash(RuntimeEntries),
                     {ok, projection_report(synchronized,
                                            DurableCounts,
                                            RuntimeCounts,
+                                           DurableHash,
+                                           RuntimeHash,
                                            projection_metadata())};
                 {error, Reason} = Error ->
                     mark_rehydration_failure(Reason),
@@ -124,16 +129,24 @@ projection_health() ->
     RuntimeCounts = projection_counts(RuntimeEntries),
     Metadata = projection_metadata(),
     case prepare_expected_projection() of
-        {ok, ExpectedEntries, DurableCounts} ->
+        {ok, ExpectedEntries, DurableCounts, DurableHash} ->
+            RuntimeHash = projection_hash(RuntimeEntries),
             Status = case projection_matches(ExpectedEntries, RuntimeEntries) of
                          true -> synchronized;
                          false -> mismatch
                      end,
-            projection_report(Status, DurableCounts, RuntimeCounts, Metadata);
+            projection_report(Status,
+                              DurableCounts,
+                              RuntimeCounts,
+                              DurableHash,
+                              RuntimeHash,
+                              Metadata);
         {error, Reason} ->
             projection_report(unavailable,
                               undefined,
                               RuntimeCounts,
+                              undefined,
+                              projection_hash(RuntimeEntries),
                               Metadata#{last_rehydration_error => Reason})
     end.
 
@@ -451,7 +464,7 @@ build_expected_projection(Records) ->
     try build_expected_projection(Records, #{}) of
         {ok, EntryMap} ->
             Entries = lists:sort(maps:to_list(EntryMap)),
-            {ok, Entries, projection_counts(Entries)};
+            {ok, Entries, projection_counts(Entries), projection_hash(Entries)};
         {error, _} = Error ->
             Error
     catch
@@ -516,6 +529,15 @@ restore_runtime_projection(Previous, Failure) ->
 projection_matches(ExpectedEntries, RuntimeEntries) ->
     maps:from_list(ExpectedEntries) =:= maps:from_list(RuntimeEntries).
 
+projection_hash(Entries) ->
+    CanonicalEntries = lists:sort(Entries),
+    Digest = crypto:hash(?PROJECTION_HASH_ALGORITHM,
+                         term_to_binary(CanonicalEntries, [deterministic])),
+    hex_digest(Digest).
+
+hex_digest(Binary) ->
+    iolist_to_binary([io_lib:format("~2.16.0b", [Byte]) || <<Byte>> <= Binary]).
+
 projection_counts(Entries) ->
     lists:foldl(
       fun({_Key, #{kind := relationship}}, Counts) ->
@@ -528,7 +550,12 @@ projection_counts(Entries) ->
       #{objects => 0, relationships => 0, total => 0},
       Entries).
 
-projection_report(Status, DurableCounts, RuntimeCounts, Metadata) ->
+projection_report(Status,
+                  DurableCounts,
+                  RuntimeCounts,
+                  DurableHash,
+                  RuntimeHash,
+                  Metadata) ->
     DurableObjects = count_value(objects, DurableCounts),
     DurableRelationships = count_value(relationships, DurableCounts),
     DurableTotal = count_value(total, DurableCounts),
@@ -539,7 +566,10 @@ projection_report(Status, DurableCounts, RuntimeCounts, Metadata) ->
         durable_total => DurableTotal,
         ets_projection_objects => maps:get(objects, RuntimeCounts),
         ets_projection_relationships => maps:get(relationships, RuntimeCounts),
-        ets_projection_total => maps:get(total, RuntimeCounts)},
+        ets_projection_total => maps:get(total, RuntimeCounts),
+        projection_hash_algorithm => ?PROJECTION_HASH_ALGORITHM,
+        durable_projection_hash => DurableHash,
+        ets_projection_hash => RuntimeHash},
       Metadata).
 
 count_value(_Key, undefined) ->

@@ -1,0 +1,936 @@
+-module(ias_persistence_SUITE).
+
+-include_lib("common_test/include/ct.hrl").
+-include_lib("stdlib/include/assert.hrl").
+-include("ias_domain_object.hrl").
+
+-export([all/0,
+         init_per_suite/1,
+         init_per_testcase/2,
+         end_per_testcase/2,
+         end_per_suite/1,
+         domain_graph_survives_ias_restart/1,
+         repeated_restart_is_idempotent/1,
+         incompatible_durable_schema_fails_closed/1,
+         reconciliation_rpc/5]).
+
+-define(COOKIE, ias_persistence_ct_cookie).
+-define(STARTUP_TIMEOUT_MS, 30000).
+-define(RPC_TIMEOUT_MS, 10000).
+-define(START_RESULT_KEY, {ias_persistence_ct, start_result}).
+-define(SNAPSHOT_KEY, {?MODULE, vpn_snapshot}).
+
+all() ->
+    [domain_graph_survives_ias_restart,
+     repeated_restart_is_idempotent,
+     incompatible_durable_schema_fails_closed].
+
+init_per_suite(Config) ->
+    ok = ensure_distributed_controller(),
+    true = erlang:set_cookie(node(), ?COOKIE),
+    IasRepo = filename:absname(ias_repo_from_env()),
+    ok = validate_ias_repo(IasRepo),
+    [{ias_repo, IasRepo} | Config].
+
+init_per_testcase(TestCase, Config) ->
+    IasRepo = proplists:get_value(ias_repo, Config),
+    RuntimeRoot = testcase_runtime_root(TestCase, Config),
+    MnesiaDir = filename:join(RuntimeRoot, "mnesia"),
+    ConfigPath = filename:join(RuntimeRoot, "ias-persistence.config"),
+    LogPath = filename:join(RuntimeRoot, "ias-initial.log"),
+    Port = free_tcp_port(),
+    Node = testcase_node(TestCase),
+    ok = ensure_no_conflicting_node(Node),
+    ok = reset_runtime_root(RuntimeRoot),
+    ok = write_runtime_config(IasRepo, ConfigPath, Port),
+    case start_ias(IasRepo, Node, ConfigPath, MnesiaDir, LogPath) of
+        {ok, Process, {ok, _Started}} ->
+            track_ias_process(Node, Process),
+            case wait_for_tcp_open(Port, ?STARTUP_TIMEOUT_MS) of
+                ok ->
+                    [{ias_node, Node},
+                     {ias_process, Process},
+                     {ias_mnesia_dir, MnesiaDir},
+                     {ias_runtime_config, ConfigPath},
+                     {ias_log, LogPath},
+                     {ias_port, Port} | Config];
+                {error, Reason} ->
+                    _ = stop_ias(Node, Process),
+                    ct:fail({ias_initial_http_start_failed,
+                             Reason,
+                             read_log(LogPath)})
+            end;
+        {ok, Process, StartResult} ->
+            track_ias_process(Node, Process),
+            _ = stop_ias(Node, Process),
+            ct:fail({ias_initial_start_failed,
+                     StartResult,
+                     read_log(LogPath)})
+    end.
+
+end_per_testcase(_TestCase, Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    Process = proplists:get_value(ias_process, Config),
+    _ = stop_ias(Node, Process),
+    ok.
+
+end_per_suite(_Config) ->
+    ok.
+
+domain_graph_survives_ias_restart(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    {Objects, Relationships, Ids, Binding} = complete_graph(),
+    {ok, _Graph} = rpc_ok(Node, ias_demo_store, commit_graph,
+                          [Objects, Relationships]),
+
+    DeviceId = maps:get(device, Ids),
+    PeerId = maps:get(peer, Ids),
+    Command0 = provisioning_command(DeviceId, PeerId),
+    {ok, Command, changed} =
+        rpc_ok(Node, ias_vpn_authority, prepare, [DeviceId, Command0]),
+    ok = install_reconciliation_snapshot(Node,
+                                         reconciliation_snapshot(DeviceId,
+                                                                 PeerId,
+                                                                 Command)),
+
+    HealthBefore = rpc_ok(Node, ias_demo_store, projection_health, []),
+    assert_synchronized_hashes(HealthBefore),
+    DurableHash = maps:get(durable_projection_hash, HealthBefore),
+    {ok, AuthorityBefore} = rpc_ok(Node, ias_vpn_authority, get, [DeviceId]),
+    {ok, ReportBefore} = rpc_ok(Node, ias_vpn_reconciliation, report, []),
+    assert_reconciliation_synchronized(ReportBefore, DeviceId),
+
+    Config1 = restart_ias(Config, "ias-restarted.log", success),
+    Node1 = proplists:get_value(ias_node, Config1),
+
+    HealthAfter = rpc_ok(Node1, ias_demo_store, projection_health, []),
+    assert_synchronized_hashes(HealthAfter),
+    ?assertEqual(DurableHash,
+                 maps:get(durable_projection_hash, HealthAfter)),
+    ?assertEqual(length(Objects), maps:get(durable_objects, HealthAfter)),
+    ?assertEqual(length(Relationships),
+                 maps:get(durable_relationships, HealthAfter)),
+
+    lists:foreach(
+      fun(Id) ->
+          ?assertMatch({ok, #{id := Id}},
+                       rpc_ok(Node1, ias_demo_store, get, [Id]))
+      end,
+      graph_ids(Ids)),
+
+    GraphReport = rpc_ok(Node1,
+                         ias_relationship_graph,
+                         graph_consistency_report,
+                         []),
+    ?assertEqual([], maps:get(broken_relationships, GraphReport)),
+    ?assertEqual([], maps:get(unknown_relationships, GraphReport)),
+    ?assertEqual(length(Relationships),
+                 maps:get(total_relationships, GraphReport)),
+
+    {ok, RestoredDevice} = rpc_ok(Node1, ias_demo_store, get, [DeviceId]),
+    ?assertEqual(maps:get(runtime_peer_id, Binding),
+                 maps:get(runtime_peer_id, RestoredDevice)),
+    ?assertEqual(maps:get(vpn_allocation_id, Binding),
+                 maps:get(vpn_allocation_id, RestoredDevice)),
+    ?assertEqual(established,
+                 maps:get(vpn_dynamic_pair_state, RestoredDevice)),
+
+    {ok, AuthorityAfter} = rpc_ok(Node1, ias_vpn_authority, get, [DeviceId]),
+    ?assertEqual(maps:get(revision, AuthorityBefore),
+                 maps:get(revision, AuthorityAfter)),
+    ?assertEqual(maps:get(canonical_command, AuthorityBefore),
+                 maps:get(canonical_command, AuthorityAfter)),
+    ?assertEqual(maps:get(binding, AuthorityBefore),
+                 maps:get(binding, AuthorityAfter)),
+
+    ok = install_reconciliation_snapshot(Node1,
+                                         reconciliation_snapshot(DeviceId,
+                                                                 PeerId,
+                                                                 Command)),
+    {ok, ReportAfter} = rpc_ok(Node1, ias_vpn_reconciliation, report, []),
+    assert_reconciliation_synchronized(ReportAfter, DeviceId),
+
+    Profiles = rpc_ok(Node1, ias_demo_store, security_profiles, []),
+    ?assert(lists:any(fun(#{id := administrator}) -> true;
+                        (_) -> false
+                     end,
+                     Profiles)),
+    ok.
+
+repeated_restart_is_idempotent(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    DeviceId = <<"stage4-repeat-device">>,
+    DeletedId = <<"stage4-deleted-device">>,
+    Device = simple_device(DeviceId, #{}),
+    _Stored = rpc_ok(Node, ias_demo_store, put_runtime_object, [Device]),
+    _Deleted = rpc_ok(Node,
+                      ias_demo_store,
+                      put_runtime_object,
+                      [simple_device(DeletedId, #{})]),
+    ok = rpc_ok(Node,
+                ias_demo_store,
+                delete_runtime_object,
+                [device, DeletedId]),
+    Initial = rpc_ok(Node, ias_demo_store, projection_health, []),
+    assert_synchronized_hashes(Initial),
+    Hash = maps:get(durable_projection_hash, Initial),
+
+    Config1 = restart_ias(Config, "ias-repeat-1.log", success),
+    Health1 = rpc_ok(proplists:get_value(ias_node, Config1),
+                     ias_demo_store,
+                     projection_health,
+                     []),
+    assert_stable_single_object(Health1, Hash),
+
+    Config2 = restart_ias(Config1, "ias-repeat-2.log", success),
+    Node2 = proplists:get_value(ias_node, Config2),
+    Health2 = rpc_ok(Node2, ias_demo_store, projection_health, []),
+    assert_stable_single_object(Health2, Hash),
+    ?assertEqual(1, length(rpc_ok(Node2, ias_demo_store, runtime_objects, []))),
+    ?assertMatch({ok, #{id := DeviceId}},
+                 rpc_ok(Node2, ias_demo_store, get, [DeviceId])),
+    ?assertEqual(not_found,
+                 rpc_ok(Node2, ias_demo_store, get, [DeletedId])),
+    ok.
+
+incompatible_durable_schema_fails_closed(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    InvalidId = <<"stage4-invalid-schema">>,
+    Invalid = #ias_domain_object{
+                 key = {device, InvalidId},
+                 schema_version = 999,
+                 kind = device,
+                 object_id = InvalidId,
+                 payload = simple_device(InvalidId, #{}),
+                 revision = 1,
+                 created_at = 1,
+                 updated_at = 1},
+    ok = rpc_ok(Node, kvs, put, [Invalid]),
+
+    Config1 = restart_ias(Config, "ias-invalid-restart.log", failure),
+    Node1 = proplists:get_value(ias_node, Config1),
+    StartResult = rpc_ok(Node1,
+                         persistent_term,
+                         get,
+                         [?START_RESULT_KEY, pending]),
+    ?assertMatch({error, _}, StartResult),
+    ?assert(contains_term(StartResult,
+                          {unsupported_domain_schema_version, 999})),
+    ?assertEqual(undefined, rpc_ok(Node1, erlang, whereis, [ias])),
+    ?assertEqual(undefined,
+                 rpc_ok(Node1, ets, info, [ias_demo_store])),
+    ?assertEqual(false,
+                 lists:keymember(ias,
+                                 1,
+                                 rpc_ok(Node1,
+                                        application,
+                                        which_applications,
+                                        []))),
+    Port = proplists:get_value(ias_port, Config1),
+    ok = wait_for_tcp_closed(Port, 5000),
+    ok.
+
+reconciliation_rpc(_VpnNode,
+                   vpn_provisioning,
+                   recovery_heads,
+                   [],
+                   _Timeout) ->
+    Snapshot = persistent_term:get(?SNAPSHOT_KEY,
+                                   #{heads => #{}, registry => []}),
+    {ok, maps:get(heads, Snapshot, #{})};
+reconciliation_rpc(_VpnNode,
+                   vpn_peer_registry,
+                   list,
+                   [],
+                   _Timeout) ->
+    Snapshot = persistent_term:get(?SNAPSHOT_KEY,
+                                   #{heads => #{}, registry => []}),
+    maps:get(registry, Snapshot, []);
+reconciliation_rpc(_VpnNode, Module, Function, Args, _Timeout) ->
+    erlang:error({unexpected_stage4_reconciliation_rpc,
+                  Module,
+                  Function,
+                  Args}).
+
+complete_graph() ->
+    DeviceId = <<"stage4-wizard-device">>,
+    ServiceId = <<"stage4-wizard-service">>,
+    CaId = <<"stage4-wizard-ca">>,
+    ClientId = <<"stage4-wizard-client-certificate">>,
+    PeerId = <<"stage4-wizard-peer">>,
+    Binding = #{runtime_peer_id => PeerId,
+                vpn_peer => PeerId,
+                vpn_allocation_id => <<"stage4-allocation">>,
+                vpn_allocator_instance_id => <<"stage4-allocator">>,
+                vpn_client_peer_id => PeerId,
+                vpn_allocation_slot => 7,
+                vpn_allocation_generation => 3,
+                vpn_allocation_state => reserved,
+                vpn_allocation_persistence => durable,
+                vpn_allocation_created_at => 1782500000,
+                vpn_dynamic_pair_state => established,
+                vpn_dynamic_pair_reconciled_at => 1782500001,
+                vpn_runtime_certificate_fingerprint => fingerprint()},
+    Device = simple_device(DeviceId, Binding),
+    Service = #{id => ServiceId,
+                kind => vpn_service,
+                source => provisioning_wizard,
+                name => <<"Stage 4 OpenVPN">>,
+                service => openvpn,
+                remote => <<"vpn.stage4.example:1194">>,
+                remote_host => <<"vpn.stage4.example">>,
+                remote_port => <<"1194">>,
+                protocol => <<"udp">>},
+    Ca = #{id => CaId,
+           kind => certificate,
+           source => ca_certificate,
+           name => <<"Stage 4 CA">>,
+           subject => <<"CN=Stage 4 CA">>,
+           issuer => <<"CN=Stage 4 CA">>,
+           certificate_role => ca_certificate,
+           certificate_status => trusted,
+           private_key_stored => false,
+           certificate_body_stored => false},
+    Client = #{id => ClientId,
+               kind => certificate,
+               source => certificate_issue_demo,
+               name => <<"Stage 4 client certificate">>,
+               subject => <<"CN=stage4-client">>,
+               issuer => <<"CN=Stage 4 CA">>,
+               certificate_role => client_certificate,
+               certificate_status => trusted,
+               profile_id => administrator,
+               profile => administrator,
+               fingerprint_sha256 => fingerprint(),
+               private_key_stored => false,
+               certificate_body_stored => false},
+    Relationships = [
+        relationship(<<"stage4-device-profile">>,
+                     uses_security_profile,
+                     device,
+                     DeviceId,
+                     security_profile,
+                     administrator),
+        relationship(<<"stage4-device-service">>,
+                     uses_service,
+                     device,
+                     DeviceId,
+                     vpn_service,
+                     ServiceId),
+        relationship(<<"stage4-device-certificate">>,
+                     uses_certificate,
+                     device,
+                     DeviceId,
+                     certificate,
+                     ClientId),
+        relationship(<<"stage4-service-ca">>,
+                     uses_ca_certificate,
+                     vpn_service,
+                     ServiceId,
+                     certificate,
+                     CaId),
+        relationship(<<"stage4-device-policy">>,
+                     uses_security_policy,
+                     device,
+                     DeviceId,
+                     security_policy,
+                     <<"high_security">>),
+        relationship(<<"stage4-certificate-policy">>,
+                     uses_security_policy,
+                     certificate,
+                     ClientId,
+                     security_policy,
+                     <<"high_security">>)
+    ],
+    Ids = #{device => DeviceId,
+            service => ServiceId,
+            ca => CaId,
+            client_certificate => ClientId,
+            peer => PeerId,
+            relationships => [maps:get(relationship_id, R)
+                              || R <- Relationships]},
+    {[Device, Service, Ca, Client], Relationships, Ids, Binding}.
+
+simple_device(Id, Binding) ->
+    maps:merge(
+      #{id => Id,
+        kind => device,
+        source => provisioning_wizard,
+        owner => alice,
+        name => <<"Stage 4 persisted laptop">>,
+        type => <<"vpn-client">>,
+        endpoint => <<"vpn.stage4.example:1194">>,
+        transport => udp,
+        tunnel_device => tun,
+        private_key_provider => <<"device_file">>,
+        private_key_ref => <<"client.key">>,
+        private_key_stored => false,
+        certificate_body_stored => false,
+        ca_body_stored => false},
+      Binding).
+
+relationship(Id, Type, SourceKind, SourceId, TargetKind, TargetId) ->
+    #{relationship_id => Id,
+      relation_type => Type,
+      source_kind => SourceKind,
+      source_id => SourceId,
+      target_kind => TargetKind,
+      target_id => TargetId}.
+
+graph_ids(Ids) ->
+    [maps:get(device, Ids),
+     maps:get(service, Ids),
+     maps:get(ca, Ids),
+     maps:get(client_certificate, Ids)] ++ maps:get(relationships, Ids).
+
+provisioning_command(DeviceId, PeerId) ->
+    #{peer_id => PeerId,
+      operation => upsert,
+      source => ias,
+      desired_state => #{device_id => DeviceId,
+                         profile_id => administrator,
+                         authorization_mode => policy,
+                         authorized => true,
+                         authorization_reason => stage4_restart_test,
+                         certificate_fingerprint => fingerprint(),
+                         enabled => true,
+                         revoked => false}}.
+
+reconciliation_snapshot(DeviceId, PeerId, Command) ->
+    Desired = maps:get(desired_state, Command),
+    Head = #{revision => maps:get(revision, Command),
+             digest => crypto:hash(
+                         sha256,
+                         term_to_binary(maps:remove(dynamic_device_id, Command),
+                                        [deterministic])),
+             phase => applied,
+             operation => maps:get(operation, Command),
+             source => ias,
+             lifecycle_state => active,
+             desired_state => Desired,
+             updated_at => 1782500010,
+             durable => true},
+    Registry = [#{id => PeerId,
+                  device_id => DeviceId,
+                  enabled => true,
+                  provisioning_source => ias,
+                  profile_id => administrator,
+                  authorization_mode => policy,
+                  authorized => true,
+                  authorization_reason => stage4_restart_test,
+                  certificate_fingerprint => fingerprint(),
+                  revision => maps:get(revision, Command),
+                  revoked => false,
+                  last_provisioning_operation => upsert,
+                  updated_at => 1782500010}],
+    #{heads => #{PeerId => Head}, registry => Registry}.
+
+install_reconciliation_snapshot(Node, Snapshot) ->
+    ok = rpc_ok(Node, persistent_term, put, [?SNAPSHOT_KEY, Snapshot]),
+    Fun = fun ?MODULE:reconciliation_rpc/5,
+    ok = rpc_ok(Node,
+                application,
+                set_env,
+                [ias, vpn_provisioning_transport, erlang_rpc]),
+    ok = rpc_ok(Node,
+                application,
+                set_env,
+                [ias, vpn_provisioning_rpc_fun, Fun]),
+    ok.
+
+assert_reconciliation_synchronized(Report, DeviceId) ->
+    ?assertEqual(synchronized, maps:get(state, Report)),
+    ?assertEqual(0, maps:get(orphan_records, Report)),
+    ?assertEqual(1, maps:get(authority_records, Report)),
+    [Entry] = maps:get(entries, Report),
+    ?assertEqual(DeviceId, maps:get(device_id, Entry)),
+    ?assertEqual(synchronized, maps:get(status, Entry)).
+
+assert_synchronized_hashes(Health) ->
+    ?assertEqual(synchronized, maps:get(status, Health)),
+    ?assertEqual(sha256, maps:get(projection_hash_algorithm, Health)),
+    DurableHash = maps:get(durable_projection_hash, Health),
+    RuntimeHash = maps:get(ets_projection_hash, Health),
+    ?assert(is_binary(DurableHash)),
+    ?assertEqual(64, byte_size(DurableHash)),
+    ?assertEqual(DurableHash, RuntimeHash).
+
+assert_stable_single_object(Health, Hash) ->
+    assert_synchronized_hashes(Health),
+    ?assertEqual(1, maps:get(durable_objects, Health)),
+    ?assertEqual(0, maps:get(durable_relationships, Health)),
+    ?assertEqual(1, maps:get(ets_projection_total, Health)),
+    ?assertEqual(Hash, maps:get(durable_projection_hash, Health)).
+
+fingerprint() ->
+    <<"0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF">>.
+
+restart_ias(Config, LogName, Expected) ->
+    Node = proplists:get_value(ias_node, Config),
+    Process = proplists:get_value(ias_process, Config),
+    ok = stop_ias(Node, Process),
+    IasRepo = proplists:get_value(ias_repo, Config),
+    ConfigPath = proplists:get_value(ias_runtime_config, Config),
+    MnesiaDir = proplists:get_value(ias_mnesia_dir, Config),
+    LogPath = filename:join(filename:dirname(
+                              proplists:get_value(ias_log, Config)),
+                            LogName),
+    {ok, NewProcess, StartResult} =
+        start_ias(IasRepo, Node, ConfigPath, MnesiaDir, LogPath),
+    track_ias_process(Node, NewProcess),
+    case Expected of
+        success ->
+            ?assertMatch({ok, _}, StartResult),
+            ok = wait_for_tcp_open(proplists:get_value(ias_port, Config),
+                                   ?STARTUP_TIMEOUT_MS);
+        failure ->
+            ?assertMatch({error, _}, StartResult),
+            ok = wait_for_tcp_closed(proplists:get_value(ias_port, Config),
+                                     5000)
+    end,
+    lists:keystore(ias_log,
+                   1,
+                   lists:keystore(ias_process, 1, Config,
+                                  {ias_process, NewProcess}),
+                   {ias_log, LogPath}).
+
+track_ias_process(Node, Process) ->
+    persistent_term:put({?MODULE, current_ias_process, Node}, Process),
+    ok.
+
+current_ias_process(Node, Fallback) ->
+    persistent_term:get({?MODULE, current_ias_process, Node}, Fallback).
+
+clear_tracked_ias_process(Node) ->
+    persistent_term:erase({?MODULE, current_ias_process, Node}),
+    ok.
+
+start_ias(IasRepo, Node, ConfigPath, MnesiaDir, LogPath) ->
+    Parent = self(),
+    Process = spawn(fun() ->
+                            ias_process_owner(Parent,
+                                              IasRepo,
+                                              Node,
+                                              ConfigPath,
+                                              MnesiaDir,
+                                              LogPath)
+                    end),
+    receive
+        {ias_process_started, Process} ->
+            ok;
+        {ias_process_failed, Process, Reason2} ->
+            ct:fail({ias_process_spawn_failed, Reason2})
+    after 10000 ->
+        exit(Process, kill),
+        ct:fail({ias_process_spawn_timeout, LogPath})
+    end,
+    case wait_for_node(Node, ?STARTUP_TIMEOUT_MS) of
+        ok ->
+            case wait_for_start_result(Node, ?STARTUP_TIMEOUT_MS) of
+                {ok, StartResult} -> {ok, Process, StartResult};
+                {error, Reason} ->
+                    _ = stop_ias_process(Process),
+                    ct:fail({ias_start_result_timeout,
+                             Reason,
+                             read_log(LogPath)})
+            end;
+        {error, Reason} ->
+            _ = stop_ias_process(Process),
+            ct:fail({ias_node_start_timeout, Reason, read_log(LogPath)})
+    end.
+
+ias_process_owner(Parent,
+                  IasRepo,
+                  Node,
+                  ConfigPath,
+                  MnesiaDir,
+                  LogPath) ->
+    process_flag(trap_exit, true),
+    case file:open(LogPath, [write, raw, binary]) of
+        {ok, Log} ->
+            try
+                Erl = require_executable("erl"),
+                Args = ["-noshell",
+                        "-noinput",
+                        "-name", atom_to_list(Node),
+                        "-setcookie", atom_to_list(?COOKIE),
+                        "-config", filename:rootname(ConfigPath),
+                        "-mnesia", "dir", erl_term_argument(MnesiaDir)]
+                       ++ code_path_args(ias_code_paths(IasRepo))
+                       ++ ["-eval", ias_start_expression()],
+                Port = open_port({spawn_executable, Erl},
+                                 [{args, Args},
+                                  {cd, IasRepo},
+                                  binary,
+                                  exit_status,
+                                  stderr_to_stdout,
+                                  use_stdio]),
+                OsPid = case erlang:port_info(Port, os_pid) of
+                            {os_pid, Value} -> Value;
+                            undefined -> undefined
+                        end,
+                Parent ! {ias_process_started, self()},
+                ias_process_loop(Port, Log, OsPid)
+            catch
+                Class:Reason:Stacktrace ->
+                    Parent ! {ias_process_failed,
+                              self(),
+                              {Class, Reason, Stacktrace}}
+            after
+                file:close(Log)
+            end;
+        {error, Reason} ->
+            Parent ! {ias_process_failed,
+                      self(),
+                      {ias_log_open_failed, LogPath, Reason}}
+    end.
+
+ias_start_expression() ->
+    "Result = application:ensure_all_started(ias), " ++
+    "persistent_term:put({ias_persistence_ct,start_result}, Result), " ++
+    "io:format(standard_error, \"IAS persistence CT start result: ~p~n\", [Result]), " ++
+    "receive after infinity -> ok end.".
+
+ias_process_loop(Port, Log, OsPid) ->
+    receive
+        {Port, {data, Data}} ->
+            ok = file:write(Log, Data),
+            ias_process_loop(Port, Log, OsPid);
+        {Port, {exit_status, Status}} ->
+            ok = file:write(Log,
+                            iolist_to_binary(
+                              io_lib:format("~nIAS exited with status ~p~n",
+                                            [Status]))),
+            ok;
+        stop ->
+            _ = catch port_close(Port),
+            _ = terminate_os_process(OsPid),
+            ok;
+        {'EXIT', Port, _Reason} ->
+            _ = terminate_os_process(OsPid),
+            ok
+    end.
+
+stop_ias(Node, Process0) ->
+    Process = current_ias_process(Node, Process0),
+    _ = rpc:call(Node, init, stop, [], 2000),
+    _ = wait_for_node_down(Node, 5000),
+    ok = stop_ias_process(Process),
+    clear_tracked_ias_process(Node).
+
+stop_ias_process(Process) when is_pid(Process) ->
+    Monitor = erlang:monitor(process, Process),
+    Process ! stop,
+    receive
+        {'DOWN', Monitor, process, Process, _Reason} -> ok
+    after 3000 ->
+        exit(Process, kill),
+        receive
+            {'DOWN', Monitor, process, Process, _Reason} -> ok
+        after 1000 -> ok
+        end
+    end;
+stop_ias_process(_) ->
+    ok.
+
+wait_for_start_result(Node, TimeoutMs) ->
+    StartedAt = erlang:monotonic_time(millisecond),
+    wait_for_start_result(Node, TimeoutMs, StartedAt).
+
+wait_for_start_result(Node, TimeoutMs, StartedAt) ->
+    case rpc:call(Node,
+                  persistent_term,
+                  get,
+                  [?START_RESULT_KEY, pending],
+                  ?RPC_TIMEOUT_MS) of
+        pending ->
+            wait_or_timeout(fun() -> wait_for_start_result(Node,
+                                                           TimeoutMs,
+                                                           StartedAt)
+                            end,
+                            TimeoutMs,
+                            StartedAt,
+                            pending);
+        {badrpc, Reason} ->
+            wait_or_timeout(fun() -> wait_for_start_result(Node,
+                                                           TimeoutMs,
+                                                           StartedAt)
+                            end,
+                            TimeoutMs,
+                            StartedAt,
+                            {badrpc, Reason});
+        Result ->
+            {ok, Result}
+    end.
+
+wait_or_timeout(Retry, TimeoutMs, StartedAt, Last) ->
+    case erlang:monotonic_time(millisecond) - StartedAt >= TimeoutMs of
+        true -> {error, {timeout, Last}};
+        false -> timer:sleep(100), Retry()
+    end.
+
+write_runtime_config(IasRepo, Path, Port) ->
+    {ok, [Config0]} = file:consult(filename:join(IasRepo, "sys.config")),
+    Config1 = set_app_env(Config0, n2o, port, Port),
+    Config2 = set_app_env(Config1,
+                          ias,
+                          vpn_provisioning_transport,
+                          disabled),
+    ok = filelib:ensure_dir(Path),
+    file:write_file(Path,
+                    iolist_to_binary(io_lib:format("~tp.~n", [Config2]))).
+
+set_app_env(Config, App, Key, Value) ->
+    Env0 = proplists:get_value(App, Config, []),
+    Env = lists:keystore(Key, 1, Env0, {Key, Value}),
+    lists:keystore(App, 1, Config, {App, Env}).
+
+testcase_runtime_root(TestCase, Config) ->
+    PrivDir = proplists:get_value(priv_dir, Config, "_build/test/logs"),
+    filename:join(PrivDir, atom_to_list(TestCase)).
+
+testcase_node(TestCase) ->
+    list_to_atom("ias_persistence_" ++ atom_to_list(TestCase) ++
+                 "@127.0.0.1").
+
+ias_repo_from_env() ->
+    case os:getenv("IAS_REPO") of
+        false -> discover_ias_repo();
+        Value -> Value
+    end.
+
+discover_ias_repo() ->
+    Candidates = case code:which(ias) of
+                     non_existing -> [];
+                     BeamPath when is_list(BeamPath) ->
+                         [filename:dirname(BeamPath)]
+                 end,
+    {ok, Cwd} = file:get_cwd(),
+    case first_repo_root(Candidates ++ [Cwd]) of
+        {ok, Root} -> Root;
+        not_found -> Cwd
+    end.
+
+first_repo_root([]) ->
+    not_found;
+first_repo_root([Path | Rest]) ->
+    case find_repo_root(Path, 10) of
+        {ok, _} = Found -> Found;
+        not_found -> first_repo_root(Rest)
+    end.
+
+find_repo_root(_Path, 0) ->
+    not_found;
+find_repo_root(Path, Attempts) ->
+    case filelib:is_regular(filename:join(Path, "rebar.config")) andalso
+         filelib:is_regular(filename:join(Path, "sys.config")) of
+        true -> {ok, Path};
+        false ->
+            Parent = filename:dirname(Path),
+            case Parent =:= Path of
+                true -> not_found;
+                false -> find_repo_root(Parent, Attempts - 1)
+            end
+    end.
+
+validate_ias_repo(IasRepo) ->
+    Required = [filename:join(IasRepo, "rebar.config"),
+                filename:join(IasRepo, "sys.config")],
+    case [Path || Path <- Required, not filelib:is_regular(Path)] of
+        [] -> ok;
+        Missing -> ct:fail({invalid_ias_repo, IasRepo, Missing})
+    end.
+
+reset_runtime_root(RuntimeRoot) ->
+    case file:del_dir_r(RuntimeRoot) of
+        ok -> ok;
+        {error, enoent} -> ok;
+        {error, Reason} -> ct:fail({runtime_root_reset_failed,
+                                    RuntimeRoot,
+                                    Reason})
+    end,
+    filelib:ensure_dir(filename:join(RuntimeRoot, "placeholder")).
+
+ensure_no_conflicting_node(Node) ->
+    case net_adm:ping(Node) of
+        pang -> ok;
+        pong ->
+            _ = rpc:call(Node, init, stop, [], 1000),
+            case wait_for_node_down(Node, 5000) of
+                ok -> ok;
+                {error, Reason} -> ct:fail({stale_ias_persistence_node,
+                                            Node,
+                                            Reason})
+            end
+    end.
+
+ensure_distributed_controller() ->
+    case node() of
+        nonode@nohost ->
+            case net_kernel:start(['ias_persistence_controller@127.0.0.1',
+                                   longnames]) of
+                {ok, _Pid} -> ok;
+                {error, {already_started, _Pid}} -> ok;
+                Other -> ct:fail({cannot_start_distributed_controller, Other})
+            end;
+        _ -> ok
+    end.
+
+ias_code_paths(IasRepo) ->
+    TestPatterns = [
+        filename:join([IasRepo, "_build", "test", "lib", "*", "ebin"]),
+        filename:join([IasRepo, "_build", "test", "lib", "*", "test"])
+    ],
+    DefaultPatterns = [
+        filename:join([IasRepo, "_build", "default", "lib", "*", "ebin"]),
+        filename:join([IasRepo, "_build", "default", "lib", "*", "test"])
+    ],
+    TestProfilePaths = wildcard_paths(TestPatterns),
+    ProfilePaths = case TestProfilePaths of
+                       [] -> wildcard_paths(DefaultPatterns);
+                       _ -> TestProfilePaths
+                   end,
+    CurrentTestPath = case code:which(?MODULE) of
+                          non_existing -> [];
+                          BeamPath -> [filename:dirname(BeamPath)]
+                      end,
+    Paths = unique_paths(ProfilePaths ++ CurrentTestPath),
+    case Paths of
+        [] -> ct:fail({ias_code_paths_missing,
+                       TestPatterns ++ DefaultPatterns});
+        _ -> Paths
+    end.
+
+wildcard_paths(Patterns) ->
+    lists:append([filelib:wildcard(Pattern) || Pattern <- Patterns]).
+
+unique_paths(Paths) ->
+    lists:reverse(
+      lists:foldl(fun(Path, Acc) ->
+                          case lists:member(Path, Acc) of
+                              true -> Acc;
+                              false -> [Path | Acc]
+                          end
+                  end,
+                  [],
+                  Paths)).
+
+code_path_args(Paths) ->
+    %% Each later -pa is prepended by erl, so keep the current CT test path
+    %% last and therefore ahead of any duplicate fallback beam.
+    lists:append([["-pa", Path] || Path <- Paths]).
+
+rpc_ok(Node, Module, Function, Args) ->
+    case rpc:call(Node, Module, Function, Args, ?RPC_TIMEOUT_MS) of
+        {badrpc, Reason} -> ct:fail({ias_rpc_failed,
+                                    Node,
+                                    Module,
+                                    Function,
+                                    Reason});
+        Result -> Result
+    end.
+
+free_tcp_port() ->
+    {ok, Socket} = gen_tcp:listen(0,
+                                  [binary,
+                                   {active, false},
+                                   {reuseaddr, true},
+                                   {ip, {127,0,0,1}}]),
+    {ok, {_Address, Port}} = inet:sockname(Socket),
+    ok = gen_tcp:close(Socket),
+    Port.
+
+wait_for_tcp_open(Port, TimeoutMs) ->
+    wait_for_tcp_state(Port, open, TimeoutMs,
+                       erlang:monotonic_time(millisecond)).
+
+wait_for_tcp_closed(Port, TimeoutMs) ->
+    wait_for_tcp_state(Port, closed, TimeoutMs,
+                       erlang:monotonic_time(millisecond)).
+
+wait_for_tcp_state(Port, Expected, TimeoutMs, StartedAt) ->
+    State = case gen_tcp:connect({127,0,0,1},
+                                 Port,
+                                 [binary, {active, false}],
+                                 250) of
+                {ok, Socket} -> ok = gen_tcp:close(Socket), open;
+                {error, _} -> closed
+            end,
+    case State =:= Expected of
+        true -> ok;
+        false ->
+            case erlang:monotonic_time(millisecond) - StartedAt >= TimeoutMs of
+                true -> {error, {tcp_state_timeout, Port, Expected, State}};
+                false -> timer:sleep(100),
+                         wait_for_tcp_state(Port,
+                                            Expected,
+                                            TimeoutMs,
+                                            StartedAt)
+            end
+    end.
+
+wait_for_node(Node, TimeoutMs) ->
+    wait_for_node(Node, TimeoutMs, erlang:monotonic_time(millisecond)).
+
+wait_for_node(Node, TimeoutMs, StartedAt) ->
+    case net_adm:ping(Node) of
+        pong -> ok;
+        pang ->
+            case erlang:monotonic_time(millisecond) - StartedAt >= TimeoutMs of
+                true -> {error, timeout};
+                false -> timer:sleep(100),
+                         wait_for_node(Node, TimeoutMs, StartedAt)
+            end
+    end.
+
+wait_for_node_down(Node, TimeoutMs) ->
+    wait_for_node_down(Node, TimeoutMs,
+                       erlang:monotonic_time(millisecond)).
+
+wait_for_node_down(Node, TimeoutMs, StartedAt) ->
+    case net_adm:ping(Node) of
+        pang -> ok;
+        pong ->
+            case erlang:monotonic_time(millisecond) - StartedAt >= TimeoutMs of
+                true -> {error, timeout};
+                false -> timer:sleep(100),
+                         wait_for_node_down(Node, TimeoutMs, StartedAt)
+            end
+    end.
+
+require_executable(Name) ->
+    case os:find_executable(Name) of
+        false -> erlang:error({executable_not_found, Name});
+        Path -> Path
+    end.
+
+erl_term_argument(Term) ->
+    lists:flatten(io_lib:format("~tp", [Term])).
+
+terminate_os_process(undefined) ->
+    ok;
+terminate_os_process(OsPid) when is_integer(OsPid) ->
+    _ = os:cmd("kill -TERM " ++ integer_to_list(OsPid) ++ " 2>/dev/null || true"),
+    ok.
+
+contains_term(Term, Expected) when Term =:= Expected ->
+    true;
+contains_term(Term, Expected) when is_tuple(Term) ->
+    lists:any(fun(Item) -> contains_term(Item, Expected) end,
+              tuple_to_list(Term));
+contains_term(Term, Expected) when is_list(Term) ->
+    lists:any(fun(Item) -> contains_term(Item, Expected) end, Term);
+contains_term(Term, Expected) when is_map(Term) ->
+    lists:any(fun({Key, Value}) ->
+                      contains_term(Key, Expected) orelse
+                      contains_term(Value, Expected)
+              end,
+              maps:to_list(Term));
+contains_term(_Term, _Expected) ->
+    false.
+
+read_log(Path) ->
+    case file:read_file(Path) of
+        {ok, Binary} -> Binary;
+        {error, Reason} -> {log_unavailable, Reason}
+    end.

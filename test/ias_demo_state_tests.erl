@@ -397,6 +397,10 @@ projection_summary_includes_durable_health_test() ->
     ?assertEqual(1, maps:get(ets_projection_objects, Summary)),
     ?assertEqual(maps:get(durable_total, Summary),
                  maps:get(ets_projection_total, Summary)),
+    ?assertEqual(sha256, maps:get(projection_hash_algorithm, Summary)),
+    ?assertEqual(maps:get(durable_projection_hash, Summary),
+                 maps:get(ets_projection_hash, Summary)),
+    ?assertEqual(64, byte_size(maps:get(durable_projection_hash, Summary))),
     ias_demo_state:clear().
 
 decode_snapshot(Term) ->

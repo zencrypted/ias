@@ -10,7 +10,10 @@ synchronized_projection_health_is_rendered_test() ->
         ?assertMatch({_, _}, binary:match(Html, <<"Durable Projection Health">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"SYNCHRONIZED">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"Durable Objects">>)),
-        ?assertMatch({_, _}, binary:match(Html, <<"ETS Projection Total">>))
+        ?assertMatch({_, _}, binary:match(Html, <<"ETS Projection Total">>)),
+        ?assertMatch({_, _}, binary:match(Html, <<"Projection Hash Algorithm">>)),
+        ?assertMatch({_, _}, binary:match(Html, <<"Durable Projection Hash">>)),
+        ?assertMatch({_, _}, binary:match(Html, <<"ETS Projection Hash">>))
     after
         ok = ias_demo_store:clear()
     end.

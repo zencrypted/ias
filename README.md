@@ -131,6 +131,22 @@ IAS орієнтований на адміністраторів, операто
 * Максим Сохацький
 * Юрій Масловський
 
+## IAS Persistence Restart Common Test
+
+The Stage 4 persistence suite starts IAS in a separate Erlang VM, writes a
+supported wizard-shaped domain graph through KVS, stops the complete VM and
+starts it again with the same Mnesia directory:
+
+```bash
+rebar3 ct --suite test/ias_persistence_SUITE
+```
+
+It verifies object and relationship rehydration, stable durable/ETS projection
+hashes, VPN authority overlay, absence of a false reconciliation orphan,
+idempotent repeated restart, durable deletion and fail-closed startup for an
+incompatible schema. It does not require a VPN checkout; live VPN integration
+remains covered by `ias_vpn_rpc_SUITE`.
+
 ## IAS to VPN Common Test
 
 The IAS repository contains an opt-in Common Test suite that starts a real VPN

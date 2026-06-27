@@ -889,7 +889,7 @@ Medium during development; High before production deployment
 
 ## TD-022: Durable IAS Domain State And Rehydration
 
-**Status:** Partially resolved
+**Status:** Resolved for the supported domain graph
 
 **Area:** IAS Object Graph / Runtime Persistence
 
@@ -930,23 +930,28 @@ or unavailable state with object/relationship counts.
 Stage 3B added fail-closed startup integration through
 `ias_bootstrap:prepare/0`. KVS, the durable domain store, VPN authority and the
 incident ledger are validated and ETS is rehydrated before Cowboy starts. Demo
-State now exposes durable/ETS counts, projection status and rehydration metadata.
-The remaining restart proof belongs to Stage 4 Common Test.
+State exposes durable/ETS counts, projection status and rehydration metadata.
+
+Stage 4 added deterministic SHA-256 tokens for the durable and ETS projections
+and `ias_persistence_SUITE`. The Common Test restarts a separate IAS VM against
+the same Mnesia directory, verifies the complete supported wizard graph and VPN
+authority overlay, proves reconciliation does not create a false orphan, checks
+idempotent repeated restart, and confirms that an incompatible schema leaves the
+HTTP port closed.
 
 ### Remaining Direction
 
-Use the IAS-owned KVS domain store, currently backed by Mnesia `disc_copies`, as the source of truth
-for supported public domain metadata and relationship edges. Keep ETS as a
-runtime read projection rebuilt from validated durable records before HTTP
-startup.
+The supported public domain graph now uses the IAS-owned KVS store, backed by
+Mnesia `disc_copies`, as its source of truth and rebuilds ETS before HTTP startup.
+Writes are durable-first, graph commits are atomic within the KVS domain boundary,
+and incompatible schemas fail closed.
 
-Writes must be KVS-durable-first and update ETS only after commit. Supported
-multi-object domain graphs now use one durable unit of work. Enrollment
-completion still crosses the certificate-material store, Device key-reference
-updates and volatile wizard draft state, so its wider recovery boundary remains
-coordinated with `TD-014`. Unsupported schemas and secret-bearing payloads must
-fail closed. Private keys, TLS secrets, OVPN bodies, certificate bodies and
-browser/session state are outside the first domain-store scope.
+Enrollment completion still crosses the certificate-material store, Device
+key-reference updates and volatile wizard draft state, so its wider recovery
+boundary remains coordinated with `TD-014`. Durable wizard drafts, public
+certificate material, audit retention and secret storage remain separate future
+stages. Private keys, TLS secrets, OVPN bodies, certificate bodies and
+browser/session state are outside this resolved domain-graph milestone.
 
 Implementation stages, persistence classification, schema proposal, failure
 semantics, restart tests and acceptance criteria are defined in
