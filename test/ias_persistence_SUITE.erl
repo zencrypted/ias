@@ -700,13 +700,16 @@ ias_repo_from_env() ->
     end.
 
 discover_ias_repo() ->
-    Candidates = case code:which(ias) of
-                     non_existing -> [];
-                     BeamPath when is_list(BeamPath) ->
-                         [filename:dirname(BeamPath)]
-                 end,
     {ok, Cwd} = file:get_cwd(),
-    case first_repo_root(Candidates ++ [Cwd]) of
+    BeamCandidates = case code:which(ias) of
+                         non_existing -> [];
+                         BeamPath when is_list(BeamPath) ->
+                             [filename:dirname(BeamPath)]
+                     end,
+    %% Rebar may expose the project application through a path below _build.
+    %% Prefer the Common Test working tree so a build copy is not mistaken for
+    %% the source checkout and used as the base for another nested _build path.
+    case first_repo_root([Cwd | BeamCandidates]) of
         {ok, Root} -> Root;
         not_found -> Cwd
     end.
@@ -785,20 +788,27 @@ ias_code_paths(IasRepo) ->
         filename:join([IasRepo, "_build", "default", "lib", "*", "ebin"]),
         filename:join([IasRepo, "_build", "default", "lib", "*", "test"])
     ],
-    TestProfilePaths = wildcard_paths(TestPatterns),
-    ProfilePaths = case TestProfilePaths of
-                       [] -> wildcard_paths(DefaultPatterns);
-                       _ -> TestProfilePaths
-                   end,
+    %% A partially populated test profile must not hide the default profile:
+    %% the application descriptor can still live in the latter while CT beams
+    %% are loaded from the former.
+    ProfilePaths = wildcard_paths(TestPatterns ++ DefaultPatterns),
     CurrentTestPath = case code:which(?MODULE) of
                           non_existing -> [];
                           BeamPath -> [filename:dirname(BeamPath)]
                       end,
     Paths = unique_paths(ProfilePaths ++ CurrentTestPath),
-    case Paths of
-        [] -> ct:fail({ias_code_paths_missing,
-                       TestPatterns ++ DefaultPatterns});
-        _ -> Paths
+    AppPaths = [Path || Path <- Paths,
+                        filelib:is_regular(filename:join(Path, "ias.app"))],
+    case {Paths, AppPaths} of
+        {[], _} ->
+            ct:fail({ias_code_paths_missing,
+                     TestPatterns ++ DefaultPatterns});
+        {_, []} ->
+            ct:fail({ias_application_descriptor_missing,
+                     IasRepo,
+                     Paths});
+        {_, _} ->
+            Paths
     end.
 
 wildcard_paths(Patterns) ->
@@ -816,9 +826,9 @@ unique_paths(Paths) ->
                   Paths)).
 
 code_path_args(Paths) ->
-    %% Each later -pa is prepended by erl, so keep the current CT test path
-    %% last and therefore ahead of any duplicate fallback beam.
-    lists:append([["-pa", Path] || Path <- Paths]).
+    %% Each later -pa is prepended by erl. Pass lower-priority fallback paths
+    %% first so the freshly compiled test profile remains ahead of default.
+    lists:append([["-pa", Path] || Path <- lists:reverse(Paths)]).
 
 rpc_ok(Node, Module, Function, Args) ->
     case rpc:call(Node, Module, Function, Args, ?RPC_TIMEOUT_MS) of
