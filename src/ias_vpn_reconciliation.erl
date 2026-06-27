@@ -19,7 +19,8 @@
          incident/1,
          acknowledge_incident/4,
          resolve_incident/4,
-         decommission_orphan/4]).
+         decommission_orphan/4,
+         recover_orphan/4]).
 
 -define(DEFAULT_TIMEOUT, 5000).
 
@@ -358,6 +359,201 @@ orphan_decommission_result(Operation) ->
       resolved_incident => maps:get(resolved_incident,
                                     Operation,
                                     undefined),
+      attempts => maps:get(attempts, Operation, 0),
+      completed_at => maps:get(completed_at, Operation, undefined)}.
+
+%% @doc Adopt a current recoverable VPN orphan into IAS without changing VPN.
+%% The durable local saga restores graph metadata and VPN authority atomically,
+%% then verifies synchronization and resolves the incident.
+-spec recover_orphan(term(), binary(), term(), term()) ->
+          {ok, map()} | {error, term()}.
+recover_orphan(DeviceId0, Token, Actor0, Note0) ->
+    DeviceId = normalize_id(DeviceId0),
+    Actor = normalize_action_text(Actor0, <<"ias-ui-admin">>),
+    Note = normalize_action_text(Note0, <<>>),
+    case valid_incident_token(Token) of
+        false -> {error, stale_or_invalid_incident_token};
+        true ->
+            case ias_vpn_orphan_recovery_store:get(DeviceId) of
+                {ok, Operation} ->
+                    case {maps:get(incident_token, Operation, undefined),
+                          maps:get(status, Operation, undefined)} of
+                        {Token, _Status} ->
+                            resume_orphan_recovery(Operation, Token);
+                        {_PreviousToken, completed} ->
+                            start_orphan_recovery(DeviceId, Token, Actor, Note);
+                        _ ->
+                            {error, vpn_orphan_recovery_operation_in_progress}
+                    end;
+                not_found -> start_orphan_recovery(DeviceId, Token, Actor, Note);
+                {error, _} = Error -> Error
+            end
+    end.
+
+start_orphan_recovery(DeviceId, Token, Actor, Note) ->
+    case incident(DeviceId) of
+        {ok, Incident} ->
+            case valid_orphan_incident(Incident, Token) of
+                false -> {error, stale_or_invalid_incident_token};
+                true ->
+                    case current_report_entry(DeviceId) of
+                        {ok, Entry} ->
+                            case ias_vpn_orphan_recovery:plan(Entry) of
+                                {ok, Plan} ->
+                                    case ias_vpn_orphan_recovery_store:start_or_resume(
+                                           DeviceId, Token, Plan, Actor, Note) of
+                                        {ok, Operation} ->
+                                            resume_orphan_recovery(Operation, Token);
+                                        {error, _} = Error -> Error
+                                    end;
+                                {error, _} = Error -> Error
+                            end;
+                        not_found -> {error, vpn_incident_snapshot_missing};
+                        {error, _} = Error -> Error
+                    end
+            end;
+        not_found -> {error, vpn_incident_not_found};
+        {error, _} = Error -> Error
+    end.
+
+resume_orphan_recovery(Operation, Token) ->
+    case maps:get(incident_token, Operation, undefined) =:= Token of
+        false -> {error, stale_or_invalid_incident_token};
+        true ->
+            case maps:get(status, Operation, undefined) of
+                planned -> orphan_recovery_graph_phase(Operation);
+                graph_committed -> orphan_recovery_reconciliation_phase(Operation);
+                reconciliation_confirmed -> orphan_recovery_incident_phase(Operation);
+                completed -> {ok, orphan_recovery_result(Operation)};
+                Status -> {error, {invalid_vpn_orphan_recovery_status, Status}}
+            end
+    end.
+
+orphan_recovery_graph_phase(Operation) ->
+    DeviceId = maps:get(device_id, Operation),
+    Token = maps:get(incident_token, Operation),
+    Plan = maps:get(plan, Operation),
+    case current_report_entry(DeviceId) of
+        {ok, Entry} ->
+            case ias_vpn_orphan_recovery:validate_current(Plan, Entry) of
+                ok ->
+                    case ias_vpn_orphan_recovery:commit(DeviceId, Token, Plan) of
+                        {ok, #{operation := Updated}} ->
+                            resume_orphan_recovery(Updated, Token);
+                        {error, Reason} -> orphan_recovery_failed(Operation, Reason)
+                    end;
+                {error, Reason} -> orphan_recovery_failed(Operation, Reason)
+            end;
+        not_found -> orphan_recovery_failed(Operation,
+                                            vpn_incident_snapshot_missing);
+        {error, Reason} -> orphan_recovery_failed(Operation, Reason)
+    end.
+
+orphan_recovery_reconciliation_phase(Operation) ->
+    DeviceId = maps:get(device_id, Operation),
+    Token = maps:get(incident_token, Operation),
+    case ensure_orphan_recovery_projection() of
+        ok ->
+            case current_report_entry(DeviceId) of
+                {ok, #{status := synchronized} = Entry} ->
+                    Clearance = #{state => synchronized, snapshot => Entry},
+                    case ias_vpn_orphan_recovery_store:
+                           mark_reconciliation_confirmed(
+                             DeviceId, Token, Clearance) of
+                        {ok, Updated} -> resume_orphan_recovery(Updated, Token);
+                        {error, _} = Error -> Error
+                    end;
+                {ok, Entry} ->
+                    orphan_recovery_failed(
+                      Operation,
+                      {vpn_orphan_recovery_not_synchronized,
+                       maps:get(status, Entry, undefined),
+                       maps:get(reason, Entry, undefined)});
+                not_found ->
+                    orphan_recovery_failed(
+                      Operation,
+                      vpn_orphan_recovery_authority_missing);
+                {error, Reason} ->
+                    orphan_recovery_failed(
+                      Operation,
+                      {vpn_orphan_recovery_verification_failed,
+                       sanitize_reason(Reason)})
+            end;
+        {error, Reason} ->
+            orphan_recovery_failed(
+              Operation,
+              {vpn_orphan_recovery_projection_failed,
+               sanitize_reason(Reason)})
+    end.
+
+ensure_orphan_recovery_projection() ->
+    case ias_demo_store:rehydrate() of
+        {ok, _Health} -> ok;
+        {error, _} = Error -> Error;
+        Other -> {error, {unexpected_projection_rehydration_result, Other}}
+    end.
+
+orphan_recovery_incident_phase(Operation) ->
+    DeviceId = maps:get(device_id, Operation),
+    Token = maps:get(incident_token, Operation),
+    Actor = maps:get(actor, Operation, <<"ias-ui-admin">>),
+    Note = maps:get(note, Operation, <<>>),
+    Clearance = maps:get(clearance, Operation),
+    case incident(DeviceId) of
+        {ok, #{status := resolved, token := Token} = Resolved} ->
+            complete_orphan_recovery(Operation, Resolved);
+        {ok, _Incident} ->
+            case ias_vpn_reconciliation_incidents:resolve(DeviceId,
+                                                           Token,
+                                                           Actor,
+                                                           Note,
+                                                           Clearance) of
+                {ok, Resolved0} ->
+                    case verify_incident_resolution(DeviceId,
+                                                    Resolved0,
+                                                    Clearance) of
+                        {ok, Resolved} ->
+                            complete_orphan_recovery(Operation, Resolved);
+                        {error, Reason} -> orphan_recovery_failed(Operation, Reason)
+                    end;
+                {error, Reason} -> orphan_recovery_failed(Operation, Reason)
+            end;
+        not_found -> orphan_recovery_failed(Operation, vpn_incident_not_found);
+        {error, Reason} -> orphan_recovery_failed(Operation, Reason)
+    end.
+
+complete_orphan_recovery(Operation, ResolvedIncident) ->
+    DeviceId = maps:get(device_id, Operation),
+    Token = maps:get(incident_token, Operation),
+    case ias_vpn_orphan_recovery_store:mark_completed(DeviceId,
+                                                       Token,
+                                                       ResolvedIncident) of
+        {ok, Completed} -> {ok, orphan_recovery_result(Completed)};
+        {error, _} = Error -> Error
+    end.
+
+orphan_recovery_failed(Operation, Reason) ->
+    _ = ias_vpn_orphan_recovery_store:record_error(
+          maps:get(device_id, Operation),
+          maps:get(incident_token, Operation),
+          Reason),
+    {error, Reason}.
+
+orphan_recovery_result(Operation) ->
+    Plan = maps:get(plan, Operation, #{}),
+    #{requested_action => recover_orphan,
+      outcome => completed,
+      device_id => maps:get(device_id, Operation),
+      operation_id => maps:get(operation_id, Operation),
+      status => maps:get(status, Operation),
+      recovery_mode => maps:get(recovery_mode, Plan, undefined),
+      create_objects => maps:get(create_objects, Plan, []),
+      reuse_objects => maps:get(reuse_objects, Plan, []),
+      create_relationships => maps:get(create_relationships, Plan, []),
+      reuse_relationships => maps:get(reuse_relationships, Plan, []),
+      commit_summary => maps:get(commit_summary, Operation, undefined),
+      clearance => maps:get(clearance, Operation, undefined),
+      resolved_incident => maps:get(resolved_incident, Operation, undefined),
       attempts => maps:get(attempts, Operation, 0),
       completed_at => maps:get(completed_at, Operation, undefined)}.
 

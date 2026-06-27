@@ -5,6 +5,7 @@
 -include("ias_domain_object.hrl").
 -include("ias_csr_enrollment_record.hrl").
 -include("ias_certificate_material_record.hrl").
+-include("ias_vpn_orphan_recovery_operation.hrl").
 
 -export([all/0,
          init_per_suite/1,
@@ -17,9 +18,11 @@
          vpn_delivery_audit_survives_ias_restart/1,
          csr_enrollment_state_survives_ias_restart/1,
          certificate_material_survives_ias_restart/1,
+         vpn_orphan_recovery_survives_ias_restart/1,
          incompatible_durable_schema_fails_closed/1,
          incompatible_csr_enrollment_schema_fails_closed/1,
          incompatible_certificate_material_schema_fails_closed/1,
+         incompatible_vpn_orphan_recovery_schema_fails_closed/1,
          reconciliation_rpc/5]).
 
 -define(COOKIE, ias_persistence_ct_cookie).
@@ -35,9 +38,11 @@ all() ->
      vpn_delivery_audit_survives_ias_restart,
      csr_enrollment_state_survives_ias_restart,
      certificate_material_survives_ias_restart,
+     vpn_orphan_recovery_survives_ias_restart,
      incompatible_durable_schema_fails_closed,
      incompatible_csr_enrollment_schema_fails_closed,
-     incompatible_certificate_material_schema_fails_closed].
+     incompatible_certificate_material_schema_fails_closed,
+     incompatible_vpn_orphan_recovery_schema_fails_closed].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -461,6 +466,56 @@ certificate_material_survives_ias_restart(Config) ->
                  maps:get(certificate_material_protection, Diagnostics)),
     ok.
 
+vpn_orphan_recovery_survives_ias_restart(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    DeviceId = <<"stage7c-recovery-device">>,
+    PeerId = <<"stage7c-recovery-peer">>,
+    Manifest = stage7c_recovery_manifest(DeviceId),
+    Command = stage7c_recovery_command(DeviceId, PeerId, Manifest),
+    Snapshot = stage7c_orphan_snapshot(DeviceId, PeerId, Command),
+    ok = install_reconciliation_snapshot(Node, Snapshot),
+    {ok, _Scan} = rpc_ok(Node, ias_vpn_reconciliation, scan_incidents, []),
+    {ok, Incident} = rpc_ok(Node,
+                            ias_vpn_reconciliation,
+                            incident,
+                            [DeviceId]),
+    Token = maps:get(token, Incident),
+    {ok, Result} = rpc_ok(Node,
+                          ias_vpn_reconciliation,
+                          recover_orphan,
+                          [DeviceId, Token, <<"ct-admin">>, <<"adopt">>]),
+    ?assertEqual(completed, maps:get(status, Result)),
+    ?assertEqual(metadata_only, maps:get(recovery_mode, Result)),
+
+    Config1 = restart_ias(Config, "ias-stage7c-orphan-recovery.log", success),
+    Node1 = proplists:get_value(ias_node, Config1),
+    {ok, Operation} = rpc_ok(Node1,
+                             ias_vpn_orphan_recovery_store,
+                             get,
+                             [DeviceId]),
+    ?assertEqual(completed, maps:get(status, Operation)),
+    ?assertEqual(Token, maps:get(incident_token, Operation)),
+    {ok, Device} = rpc_ok(Node1, ias_demo_store, get, [DeviceId]),
+    ?assertEqual(PeerId, maps:get(runtime_peer_id, Device)),
+    {ok, Authority} = rpc_ok(Node1, ias_vpn_authority, get, [DeviceId]),
+    ?assertEqual(maps:get(revision, Command), maps:get(revision, Authority)),
+    ?assertEqual(Command, maps:get(canonical_command, Authority)),
+    {ok, Resolved} = rpc_ok(Node1,
+                            ias_vpn_reconciliation,
+                            incident,
+                            [DeviceId]),
+    ?assertEqual(resolved, maps:get(status, Resolved)),
+    {ok, Again} = rpc_ok(Node1,
+                         ias_vpn_reconciliation,
+                         recover_orphan,
+                         [DeviceId, Token, <<"ct-admin">>, <<"retry">>]),
+    ?assertEqual(maps:get(operation_id, Result),
+                 maps:get(operation_id, Again)),
+    ok = install_reconciliation_snapshot(Node1, Snapshot),
+    {ok, Report} = rpc_ok(Node1, ias_vpn_reconciliation, report, []),
+    assert_reconciliation_synchronized(Report, DeviceId),
+    ok.
+
 incompatible_durable_schema_fails_closed(Config) ->
     Node = proplists:get_value(ias_node, Config),
     InvalidId = <<"stage4-invalid-schema">>,
@@ -628,6 +683,37 @@ stage6d_client_pem() ->
       "Iq0sBJ/RxQ+E19tAL+EarYX6zvA00gz9\n"
       "-----END CERTIFICATE-----\n">>.
 
+incompatible_vpn_orphan_recovery_schema_fails_closed(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    DeviceId = <<"stage7c-invalid-recovery-schema">>,
+    Invalid = #ias_vpn_orphan_recovery_operation{
+                 device_id = DeviceId,
+                 schema_version = 999},
+    ok = rpc_ok(Node, kvs, put, [Invalid]),
+
+    Config1 = restart_ias(Config,
+                          "ias-invalid-vpn-orphan-recovery-schema.log",
+                          failure),
+    Node1 = proplists:get_value(ias_node, Config1),
+    StartResult = rpc_ok(Node1,
+                         persistent_term,
+                         get,
+                         [?START_RESULT_KEY, pending]),
+    ?assertMatch({error, _}, StartResult),
+    ?assert(contains_term(StartResult,
+                          {unsupported_schema_version, 999})),
+    ?assertEqual(undefined, rpc_ok(Node1, erlang, whereis, [ias])),
+    ?assertEqual(undefined, rpc_ok(Node1, ets, info, [ias_demo_store])),
+    ?assertEqual(false,
+                 lists:keymember(ias,
+                                 1,
+                                 rpc_ok(Node1,
+                                        application,
+                                        which_applications,
+                                        []))),
+    ok = wait_for_tcp_closed(proplists:get_value(ias_port, Config1), 5000),
+    ok.
+
 complete_graph() ->
     DeviceId = <<"stage4-wizard-device">>,
     ServiceId = <<"stage4-wizard-service">>,
@@ -771,6 +857,81 @@ provisioning_command(DeviceId, PeerId) ->
                          certificate_fingerprint => fingerprint(),
                          enabled => true,
                          revoked => false}}.
+
+stage7c_recovery_command(DeviceId, PeerId, Manifest) ->
+    #{peer_id => PeerId,
+      revision => 5,
+      operation => upsert,
+      source => ias,
+      desired_state => #{device_id => DeviceId,
+                         profile_id => default_user,
+                         authorization_mode => policy,
+                         authorized => true,
+                         authorization_reason => stage7c_recovery_test,
+                         certificate_fingerprint => fingerprint(),
+                         enabled => true,
+                         revoked => false,
+                         recovery_manifest => Manifest}}.
+
+stage7c_orphan_snapshot(DeviceId, PeerId, Command) ->
+    Desired = maps:get(desired_state, Command),
+    Head = #{revision => maps:get(revision, Command),
+             digest => crypto:hash(
+                         sha256,
+                         term_to_binary(maps:remove(dynamic_device_id, Command),
+                                        [deterministic])),
+             phase => applied,
+             operation => maps:get(operation, Command),
+             source => ias,
+             lifecycle_state => active,
+             desired_state => Desired,
+             updated_at => 1782500100,
+             durable => true},
+    Registry = [#{id => PeerId,
+                  device_id => DeviceId,
+                  enabled => true,
+                  provisioning_source => ias,
+                  profile_id => default_user,
+                  authorization_mode => policy,
+                  authorized => true,
+                  authorization_reason => stage7c_recovery_test,
+                  certificate_fingerprint => fingerprint(),
+                  revision => maps:get(revision, Command),
+                  revoked => false,
+                  last_provisioning_operation => upsert,
+                  updated_at => 1782500100}],
+    #{heads => #{PeerId => Head}, registry => Registry}.
+
+stage7c_recovery_manifest(DeviceId) ->
+    CertificateId = <<DeviceId/binary, "-certificate">>,
+    ServiceId = <<DeviceId/binary, "-service">>,
+    Device = #{kind => device,
+               id => DeviceId,
+               name => <<"Recovered Stage 7C device">>},
+    Certificate = #{kind => certificate,
+                    id => CertificateId,
+                    fingerprint_sha256 => fingerprint()},
+    Service = #{kind => vpn_service,
+                id => ServiceId,
+                remote_host => <<"vpn.example.test">>,
+                remote_port => 1194,
+                protocol => udp},
+    #{schema_version => 1,
+      device => Device,
+      certificate => Certificate,
+      vpn_service => Service,
+      objects => [Device, Certificate, Service],
+      relationships =>
+          [#{relation_type => uses_certificate,
+             source_kind => device,
+             source_id => DeviceId,
+             target_kind => certificate,
+             target_id => CertificateId},
+           #{relation_type => uses_vpn_service,
+             source_kind => device,
+             source_id => DeviceId,
+             target_kind => vpn_service,
+             target_id => ServiceId}]}.
 
 reconciliation_snapshot(DeviceId, PeerId, Command) ->
     Desired = maps:get(desired_state, Command),

@@ -4,6 +4,7 @@
          get/1,
          all/0,
          prepare/2,
+         recover_in_transaction/3,
          ensure_minimum_revision/2,
          current_revision/1,
          last_command/1,
@@ -105,6 +106,55 @@ prepare(DeviceId0, Command0) when is_map(Command0) ->
     end;
 prepare(_DeviceId, _Command) ->
     {error, invalid_command}.
+
+%% Internal Stage 7C hook. The caller owns the wider KVS transaction that
+%% atomically restores the domain graph, authority and recovery ledger.
+recover_in_transaction(DeviceId0, Command, Binding0)
+  when is_map(Command), is_map(Binding0) ->
+    DeviceId = normalize_id(DeviceId0),
+    Revision = maps:get(revision, Command, undefined),
+    Desired = maps:get(desired_state, Command, #{}),
+    Binding = maps:with(binding_fields(), Binding0),
+    Valid = nonempty_binary(DeviceId)
+        andalso is_integer(Revision) andalso Revision > 0
+        andalso normalize_id(maps:get(device_id, Desired, undefined)) =:= DeviceId
+        andalso is_ias_source(maps:get(source, Command, undefined))
+        andalso valid_binding(Binding)
+        andalso safe_term(Command),
+    case Valid of
+        false -> ias_kvs_transaction:abort(invalid_recovered_vpn_authority);
+        true ->
+            Digest = command_digest(Command),
+            case kvs_get_record(DeviceId) of
+                not_found ->
+                    Record = #ias_vpn_device_state{
+                               device_id = DeviceId,
+                               revision = Revision,
+                               command_digest = Digest,
+                               canonical_command = Command,
+                               binding = Binding,
+                               lifecycle_state = command_lifecycle(Command, unbound),
+                               updated_at = now_seconds()},
+                    validate_record_or_abort(Record),
+                    kvs_put_or_abort(Record),
+                    {record_to_map(Record), changed};
+                {ok, #ias_vpn_device_state{} = Record0} ->
+                    validate_record_or_abort(Record0),
+                    Same = Record0#ias_vpn_device_state.revision =:= Revision
+                        andalso Record0#ias_vpn_device_state.command_digest =:= Digest
+                        andalso Record0#ias_vpn_device_state.canonical_command =:= Command
+                        andalso Record0#ias_vpn_device_state.binding =:= Binding,
+                    case Same of
+                        true -> {record_to_map(Record0), unchanged};
+                        false ->
+                            ias_kvs_transaction:abort(
+                              vpn_authority_recovery_conflict)
+                    end;
+                {error, Reason} -> ias_kvs_transaction:abort(Reason)
+            end
+    end;
+recover_in_transaction(_DeviceId, _Command, _Binding) ->
+    ias_kvs_transaction:abort(invalid_recovered_vpn_authority).
 
 ensure_minimum_revision(DeviceId0, Revision)
   when is_integer(Revision), Revision >= 0 ->
@@ -615,6 +665,11 @@ forbidden_key(runtime_config) -> true;
 forbidden_key(ovpn) -> true;
 forbidden_key(ovpn_body) -> true;
 forbidden_key(_) -> false.
+
+is_ias_source(ias) -> true;
+is_ias_source(<<"ias">>) -> true;
+is_ias_source("ias") -> true;
+is_ias_source(_) -> false.
 
 maybe_put(_Key, undefined, Map) -> Map;
 maybe_put(Key, Value, Map) -> Map#{Key => Value}.

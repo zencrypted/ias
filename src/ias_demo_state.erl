@@ -55,6 +55,7 @@ clear() ->
     ok = ias_vpn_provisioning_delivery:reset(),
     ok = ias_csr_enrollment_state:clear(),
     ok = ias_vpn_orphan_resolution_store:reset(),
+    ok = ias_vpn_orphan_recovery_store:reset(),
     ias_certificate_material:clear().
 
 export() ->
@@ -138,6 +139,7 @@ restore_snapshot(Snapshot) ->
     ias_vpn_provisioning_delivery:reset(),
     ias_csr_enrollment_state:clear(),
     ias_vpn_orphan_resolution_store:reset(),
+    ias_vpn_orphan_recovery_store:reset(),
     ias_certificate_material:clear(),
     ImportedObjects = restore_objects(ValidObjects),
     UniqueRelationships = unique_relationships(ValidRelationships),

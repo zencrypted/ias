@@ -68,6 +68,20 @@ event({decommission_vpn_orphan, DeviceId, Token, ActorId, NoteId}) ->
                                                          Actor,
                                                          Note),
     update_reconciliation_ui(Result);
+event({confirm_recover_vpn_orphan,
+       DeviceId, Token, ActorId, NoteId}) ->
+    nitro:wire(#confirm{
+        text = orphan_recovery_confirm_text(DeviceId),
+        postback = {recover_vpn_orphan,
+                    DeviceId, Token, ActorId, NoteId}});
+event({recover_vpn_orphan, DeviceId, Token, ActorId, NoteId}) ->
+    Actor = field_value(nitro:q(ActorId), <<"ias-ui-admin">>),
+    Note = field_value(nitro:q(NoteId), <<>>),
+    Result = ias_vpn_reconciliation:recover_orphan(DeviceId,
+                                                    Token,
+                                                    Actor,
+                                                    Note),
+    update_reconciliation_ui(Result);
 event(create_vpn_service) ->
     Name = field_value(nitro:q(vpn_service_name), <<"OpenVPN">>),
     Host = field_value(nitro:q(vpn_remote_host), <<>>),
@@ -604,6 +618,12 @@ incident_actions(Incident, DeviceId, Token, open, ActorId, NoteId, Suffix) ->
               body = ias_html:text("Resolve after verification"),
               source = [ActorId, NoteId],
               postback = {resolve_vpn_incident, DeviceId, Token, ActorId, NoteId}},
+        orphan_recovery_control(Incident,
+                                DeviceId,
+                                Token,
+                                ActorId,
+                                NoteId,
+                                Suffix),
         orphan_decommission_control(Incident,
                                     DeviceId,
                                     Token,
@@ -624,6 +644,12 @@ incident_actions(Incident,
               body = ias_html:text("Resolve after verification"),
               source = [ActorId, NoteId],
               postback = {resolve_vpn_incident, DeviceId, Token, ActorId, NoteId}},
+        orphan_recovery_control(Incident,
+                                DeviceId,
+                                Token,
+                                ActorId,
+                                NoteId,
+                                Suffix),
         orphan_decommission_control(Incident,
                                     DeviceId,
                                     Token,
@@ -649,6 +675,29 @@ incident_actions(_Incident,
                  _Suffix) ->
     #span{body = ias_html:text("Unavailable")}.
 
+orphan_recovery_control(
+  #{kind := orphan,
+    snapshot := #{recoverable := true,
+                  recovery := #{recoverable := true}}},
+  DeviceId,
+  Token,
+  ActorId,
+  NoteId,
+  Suffix) ->
+    #link{id = <<"vpn_incident_recover_", Suffix/binary>>,
+          class = [button, sgreen],
+          body = ias_html:text("Recover into IAS"),
+          source = [ActorId, NoteId],
+          postback = {confirm_recover_vpn_orphan,
+                      DeviceId, Token, ActorId, NoteId}};
+orphan_recovery_control(_Incident,
+                        _DeviceId,
+                        _Token,
+                        _ActorId,
+                        _NoteId,
+                        _Suffix) ->
+    [].
+
 orphan_decommission_control(
   #{kind := orphan,
     snapshot := #{decommission := #{eligible := true}}},
@@ -671,6 +720,11 @@ orphan_decommission_control(_Incident,
                             _NoteId,
                             _Suffix) ->
     [].
+
+orphan_recovery_confirm_text(DeviceId) ->
+    ias_html:join(["Recover orphan VPN state for Device ",
+                   DeviceId,
+                   " into IAS? IAS will revalidate the VPN head digest and current peer snapshot, create only missing metadata, reuse only compatible objects, restore durable VPN authority and resolve the incident. VPN runtime state is not changed."]).
 
 orphan_decommission_confirm_text(DeviceId) ->
     ias_html:join(["Permanently decommission orphan VPN state for Device ",
@@ -756,6 +810,14 @@ reconciliation_action_result(
                    ias_html:join(["VPN orphan decommission completed for ",
                                   maps:get(device_id, Result, <<"device">>),
                                   ". The durable incident was resolved after a fresh reconciliation check."]));
+reconciliation_action_result(
+  {ok, #{requested_action := recover_orphan} = Result}) ->
+    action_message(ok,
+                   ias_html:join(["VPN orphan recovery completed for ",
+                                  maps:get(device_id, Result, <<"device">>),
+                                  " in ",
+                                  maps:get(recovery_mode, Result, metadata_only),
+                                  " mode. The IAS graph and VPN authority were committed and the incident was resolved."]));
 reconciliation_action_result({ok, Result}) when is_map(Result) ->
     Outcome = first_action_value(Result),
     action_message(ok, ias_html:join(["Action completed: ", Outcome]));
@@ -794,6 +856,18 @@ reconciliation_error_message({vpn_orphan_decommission_not_absent,
                               _Status,
                               _Reason}) ->
     "VPN accepted the decommission request, but a fresh reconciliation snapshot still contains the orphan. The durable operation can be retried safely.";
+reconciliation_error_message({vpn_orphan_recovery_object_conflict, Kind, Id}) ->
+    ias_html:join(["Recovery was blocked because IAS already contains a conflicting ",
+                   Kind, " object with ID ", Id, ". No object was overwritten."]);
+reconciliation_error_message(recovery_command_digest_mismatch) ->
+    "Recovery was blocked because the durable VPN command digest did not match the recovered command.";
+reconciliation_error_message({vpn_orphan_recovery_unavailable, Reason}) ->
+    ias_html:join(["This orphan cannot be recovered safely: ",
+                   term_text(Reason), "."]);
+reconciliation_error_message({vpn_orphan_recovery_not_synchronized,
+                              _Status,
+                              _Reason}) ->
+    "IAS committed the recovery metadata, but a fresh reconciliation check is not synchronized. The durable recovery operation can be retried safely.";
 reconciliation_error_message({vpn_safe_replay_failed, Result}) when is_map(Result) ->
     ias_html:join(["Safe replay completed with failures: ", maps:get(replayed_records, Result, 0),
                    " replayed and ", maps:get(failed_records, Result, 0), " failed."]);

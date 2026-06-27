@@ -327,6 +327,199 @@ orphan_decommission_snapshot_conflict_is_fail_closed_test_() ->
          end
      end}.
 
+recoverable_orphan_is_adopted_atomically_and_idempotently_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-recovery-device">>,
+             PeerId = <<"vpn-recovery-peer">>,
+             Manifest = recovery_manifest(DeviceId),
+             Command0 = command(DeviceId, PeerId, upsert, true),
+             Desired0 = maps:get(desired_state, Command0),
+             Command = Command0#{revision => 6,
+                                 desired_state => Desired0#{recovery_manifest =>
+                                                               Manifest}},
+             set_snapshot(#{PeerId => head(Command, applied)},
+                          [registry_entry(DeviceId, PeerId, Command)]),
+             {ok, _Scan} = ias_vpn_reconciliation:scan_incidents(),
+             {ok, Incident} = ias_vpn_reconciliation:incident(DeviceId),
+             Token = maps:get(token, Incident),
+             {ok, Result} = ias_vpn_reconciliation:recover_orphan(
+                              DeviceId, Token, <<"admin">>, <<"adopt">>),
+             ?assertEqual(completed, maps:get(status, Result)),
+             ?assertEqual(metadata_only, maps:get(recovery_mode, Result)),
+             {ok, Device} = ias_demo_store:get(DeviceId),
+             ?assertEqual(device, maps:get(kind, Device)),
+             {ok, Authority} = ias_vpn_authority:get(DeviceId),
+             ?assertEqual(6, maps:get(revision, Authority)),
+             ?assertEqual(Command, maps:get(canonical_command, Authority)),
+             Binding = maps:get(binding, Authority),
+             ?assertEqual(PeerId, maps:get(runtime_peer_id, Binding)),
+             ?assertEqual(recovered, maps:get(vpn_allocation_state, Binding)),
+             {ok, Operation} = ias_vpn_orphan_recovery_store:get(DeviceId),
+             ?assertEqual(completed, maps:get(status, Operation)),
+             {ok, Resolved} = ias_vpn_reconciliation:incident(DeviceId),
+             ?assertEqual(resolved, maps:get(status, Resolved)),
+             {ok, Again} = ias_vpn_reconciliation:recover_orphan(
+                             DeviceId, Token, <<"admin">>, <<"retry">>),
+             ?assertEqual(maps:get(operation_id, Result),
+                          maps:get(operation_id, Again)),
+             {ok, Entry} = ias_vpn_reconciliation:device(DeviceId),
+             ?assertEqual(synchronized, maps:get(status, Entry))
+         end
+     end}.
+
+vpn_digest_mismatch_blocks_orphan_recovery_before_commit_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-recovery-digest-device">>,
+             PeerId = <<"vpn-recovery-digest-peer">>,
+             Manifest = recovery_manifest(DeviceId),
+             Command0 = command(DeviceId, PeerId, upsert, true),
+             Desired0 = maps:get(desired_state, Command0),
+             Command = Command0#{revision => 9,
+                                 desired_state => Desired0#{recovery_manifest =>
+                                                               Manifest}},
+             InvalidHead = (head(Command, applied))#{digest => <<0:256>>},
+             set_snapshot(#{PeerId => InvalidHead},
+                          [registry_entry(DeviceId, PeerId, Command)]),
+             {ok, _Scan} = ias_vpn_reconciliation:scan_incidents(),
+             {ok, Incident} = ias_vpn_reconciliation:incident(DeviceId),
+             ?assertEqual(
+                {error, recovery_command_digest_mismatch},
+                ias_vpn_reconciliation:recover_orphan(
+                  DeviceId, maps:get(token, Incident),
+                  <<"admin">>, <<"digest mismatch">>)),
+             ?assertEqual(not_found, ias_demo_store:get(DeviceId)),
+             ?assertEqual(not_found, ias_vpn_authority:get(DeviceId)),
+             ?assertEqual(not_found,
+                          ias_vpn_orphan_recovery_store:get(DeviceId))
+         end
+     end}.
+
+recovery_transaction_rolls_back_graph_and_authority_on_late_conflict_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-recovery-rollback-device">>,
+             PeerId = <<"vpn-recovery-rollback-peer">>,
+             Manifest = recovery_manifest(DeviceId),
+             Command0 = command(DeviceId, PeerId, upsert, true),
+             Desired0 = maps:get(desired_state, Command0),
+             Command = Command0#{revision => 4,
+                                 desired_state => Desired0#{recovery_manifest =>
+                                                               Manifest}},
+             set_snapshot(#{PeerId => head(Command, applied)},
+                          [registry_entry(DeviceId, PeerId, Command)]),
+             {ok, _Scan} = ias_vpn_reconciliation:scan_incidents(),
+             {ok, Incident} = ias_vpn_reconciliation:incident(DeviceId),
+             Token = maps:get(token, Incident),
+             {ok, Report} = ias_vpn_reconciliation:report(),
+             [Entry] = [Candidate || Candidate <- maps:get(entries, Report),
+                                     maps:get(device_id, Candidate) =:= DeviceId],
+             {ok, Plan} = ias_vpn_orphan_recovery:plan(Entry),
+             {ok, _Operation} =
+                 ias_vpn_orphan_recovery_store:start_or_resume(
+                   DeviceId, Token, Plan, <<"admin">>, <<"rollback test">>),
+             CertificateId = <<DeviceId/binary, "-certificate">>,
+             {ok, _ConflictingRecord, changed} =
+                 ias_domain_store:put(
+                   #{kind => certificate,
+                     id => CertificateId,
+                     fingerprint_sha256 => <<"conflicting-fingerprint">>}),
+             ?assertMatch(
+                {error,
+                 {vpn_orphan_recovery_commit_failed,
+                  {vpn_orphan_recovery_object_conflict,
+                   certificate,
+                   _}}},
+                ias_vpn_orphan_recovery:commit(DeviceId, Token, Plan)),
+             ?assertEqual(not_found, ias_demo_store:get(DeviceId)),
+             ?assertEqual(not_found, ias_vpn_authority:get(DeviceId)),
+             {ok, Operation} = ias_vpn_orphan_recovery_store:get(DeviceId),
+             ?assertEqual(planned, maps:get(status, Operation))
+         end
+     end}.
+
+changed_vpn_snapshot_blocks_planned_recovery_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-recovery-stale-device">>,
+             PeerId = <<"vpn-recovery-stale-peer">>,
+             Manifest = recovery_manifest(DeviceId),
+             Command0 = command(DeviceId, PeerId, upsert, true),
+             Desired0 = maps:get(desired_state, Command0),
+             Command = Command0#{revision => 2,
+                                 desired_state => Desired0#{recovery_manifest =>
+                                                               Manifest}},
+             Registry = registry_entry(DeviceId, PeerId, Command),
+             set_snapshot(#{PeerId => head(Command, applied)}, [Registry]),
+             {ok, _Scan} = ias_vpn_reconciliation:scan_incidents(),
+             {ok, Incident} = ias_vpn_reconciliation:incident(DeviceId),
+             Token = maps:get(token, Incident),
+             {ok, Report} = ias_vpn_reconciliation:report(),
+             [Entry] = [Candidate || Candidate <- maps:get(entries, Report),
+                                     maps:get(device_id, Candidate) =:= DeviceId],
+             {ok, Plan} = ias_vpn_orphan_recovery:plan(Entry),
+             {ok, _Operation} =
+                 ias_vpn_orphan_recovery_store:start_or_resume(
+                   DeviceId, Token, Plan, <<"admin">>, <<"stale snapshot">>),
+             ChangedRegistry = Registry#{enabled => false},
+             set_snapshot(#{PeerId => head(Command, applied)},
+                          [ChangedRegistry]),
+             ?assertEqual(
+                {error, orphan_snapshot_conflict},
+                ias_vpn_reconciliation:recover_orphan(
+                  DeviceId, Token, <<"admin">>, <<"retry">>)),
+             ?assertEqual(not_found, ias_demo_store:get(DeviceId)),
+             ?assertEqual(not_found, ias_vpn_authority:get(DeviceId)),
+             {ok, Operation} = ias_vpn_orphan_recovery_store:get(DeviceId),
+             ?assertEqual(planned, maps:get(status, Operation)),
+             ?assertEqual(1, maps:get(attempts, Operation))
+         end
+     end}.
+
+conflicting_ias_object_blocks_orphan_recovery_without_authority_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-recovery-conflict-device">>,
+             PeerId = <<"vpn-recovery-conflict-peer">>,
+             _ = ias_demo_store:put_runtime_object(
+                   #{kind => device, id => DeviceId,
+                     name => <<"Conflicting device">>,
+                     source => manual_device}),
+             Manifest = recovery_manifest(DeviceId),
+             Command0 = command(DeviceId, PeerId, upsert, true),
+             Desired0 = maps:get(desired_state, Command0),
+             Command = Command0#{revision => 3,
+                                 desired_state => Desired0#{recovery_manifest =>
+                                                               Manifest}},
+             set_snapshot(#{PeerId => head(Command, applied)},
+                          [registry_entry(DeviceId, PeerId, Command)]),
+             {ok, _Scan} = ias_vpn_reconciliation:scan_incidents(),
+             {ok, Incident} = ias_vpn_reconciliation:incident(DeviceId),
+             ?assertMatch(
+                {error, {vpn_orphan_recovery_object_conflict, device, _}},
+                ias_vpn_reconciliation:recover_orphan(
+                  DeviceId, maps:get(token, Incident),
+                  <<"admin">>, <<"must not overwrite">>)),
+             ?assertEqual(not_found, ias_vpn_authority:get(DeviceId))
+         end
+     end}.
+
 reconciliation_fixture(TestFun) ->
     {setup,
      fun setup/0,
@@ -350,6 +543,7 @@ setup() ->
     ok = ias_demo_store:clear(),
     ok = ias_vpn_provisioning_delivery:reset(),
     ok = ias_vpn_orphan_resolution_store:reset(),
+    ok = ias_vpn_orphan_recovery_store:reset(),
     application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
     Previous.
 
@@ -357,6 +551,7 @@ cleanup(Previous) ->
     ok = ias_demo_store:clear(),
     ok = ias_vpn_provisioning_delivery:reset(),
     ok = ias_vpn_orphan_resolution_store:reset(),
+    ok = ias_vpn_orphan_recovery_store:reset(),
     restore_env(vpn_provisioning_transport, maps:get(transport, Previous)),
     restore_env(vpn_provisioning_rpc_fun, maps:get(rpc_fun, Previous)).
 
@@ -507,6 +702,7 @@ command(DeviceId, PeerId, Operation, Enabled) ->
                          authorization_mode => policy,
                          authorized => Enabled,
                          authorization_reason => reconciliation_test,
+                         certificate_fingerprint => <<"fingerprint">>,
                          enabled => Enabled,
                          revoked => Operation =:= revoke}}.
 

@@ -16,6 +16,7 @@
     projection_health/0,
     commit_graph/2,
     project_committed_records/1,
+    project_committed_records/2,
     put_runtime_object/1,
     delete_runtime_object/2,
     clear/0,
@@ -170,15 +171,25 @@ commit_graph(_Objects, _Relationships) ->
     {error, invalid_domain_graph}.
 
 %% Project records that have already committed in a wider durable transaction.
-%% This function never performs a second durable write.
-project_committed_records(Records) when is_list(Records) ->
+%% Callers that already committed VPN authority can disable the legacy
+%% authority-sync side effect and update ETS only.
+project_committed_records(Records) ->
+    project_committed_records(Records, #{persist_device_authority => true}).
+
+project_committed_records(Records, Options)
+  when is_list(Records), is_map(Options) ->
     ensure(),
     {RelationshipRecords, ObjectRecords} =
         lists:partition(
           fun(Record) -> maps:get(kind, Record, undefined) =:= relationship end,
           Records),
-    project_graph(ObjectRecords, RelationshipRecords);
-project_committed_records(_Records) ->
+    case maps:get(persist_device_authority, Options, true) of
+        true -> project_graph(ObjectRecords, RelationshipRecords);
+        false -> project_graph_without_authority(ObjectRecords,
+                                                  RelationshipRecords);
+        _ -> {error, invalid_committed_projection_options}
+    end;
+project_committed_records(_Records, _Options) ->
     {error, invalid_committed_domain_records}.
 
 put_runtime_object(#{kind := _Kind, id := _Id} = Object) ->
@@ -631,6 +642,20 @@ project_graph(ObjectRecords, RelationshipRecords) ->
         {error, Reason} ->
             {error, {device_authority_write_failed, Reason}}
     end.
+
+
+project_graph_without_authority(ObjectRecords, RelationshipRecords) ->
+    ObjectProjections = [maps:get(payload, Record) || Record <- ObjectRecords],
+    RelationshipProjections = [maps:get(payload, Record)
+                               || Record <- RelationshipRecords],
+    StoredObjects = [durable_overlay(Object) || Object <- ObjectProjections],
+    StoredRelationships = [durable_overlay(Relationship)
+                           || Relationship <- RelationshipProjections],
+    Entries = [{runtime_key(Object), Object}
+               || Object <- StoredObjects ++ StoredRelationships],
+    ok = insert_graph_entries(Entries),
+    {ok, #{objects => StoredObjects,
+           relationships => StoredRelationships}}.
 
 insert_graph_entries([]) ->
     ok;
