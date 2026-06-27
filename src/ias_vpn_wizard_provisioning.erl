@@ -45,7 +45,10 @@ deliver_with_runtime_allocation(Draft, Transaction, DeviceId) ->
     case bind_runtime_peer(DeviceId, Draft) of
         {ok, RuntimePeerId} ->
             ok = synchronize_runtime_revision(DeviceId, RuntimePeerId),
-            case ias_vpn_provisioning_delivery:build_and_deliver(DeviceId, upsert) of
+            AuditContext = #{provisioning_transaction_id =>
+                                 maps:get(id, Transaction, undefined)},
+            case ias_vpn_provisioning_delivery:build_and_deliver(
+                   DeviceId, upsert, AuditContext) of
                 {ok, DeliveryResult} ->
                     {ok, #{wizard_id => maps:get(id, Draft),
                            user_id => maps:get(user_id, Draft, undefined),

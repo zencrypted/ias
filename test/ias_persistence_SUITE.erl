@@ -12,6 +12,7 @@
          domain_graph_survives_ias_restart/1,
          repeated_restart_is_idempotent/1,
          wizard_completion_survives_ias_restart/1,
+         vpn_delivery_audit_survives_ias_restart/1,
          incompatible_durable_schema_fails_closed/1,
          reconciliation_rpc/5]).
 
@@ -25,6 +26,7 @@ all() ->
     [domain_graph_survives_ias_restart,
      repeated_restart_is_idempotent,
      wizard_completion_survives_ias_restart,
+     vpn_delivery_audit_survives_ias_restart,
      incompatible_durable_schema_fails_closed].
 
 init_per_suite(Config) ->
@@ -251,6 +253,58 @@ wizard_completion_survives_ias_restart(Config) ->
                         [WizardId])),
     Health = rpc_ok(Node1, ias_demo_store, projection_health, []),
     assert_synchronized_hashes(Health),
+    ok.
+
+vpn_delivery_audit_survives_ias_restart(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    DeviceId = <<"stage6-delivery-audit-device">>,
+    Command = #{peer_id => DeviceId,
+                revision => 1,
+                operation => disable,
+                source => ias,
+                desired_state => #{device_id => DeviceId,
+                                   enabled => false,
+                                   authorized => false,
+                                   authorization_mode => policy,
+                                   authorization_reason => test}},
+    {ok, First} = rpc_ok(Node,
+                         ias_vpn_provisioning_delivery,
+                         deliver,
+                         [Command]),
+    DeliveryId = maps:get(delivery_id, First),
+    ?assertEqual(1, maps:get(attempt, First)),
+    ?assertEqual(1,
+                 rpc_ok(Node,
+                        ias_vpn_provisioning_delivery,
+                        projection_count,
+                        [])),
+
+    Config1 = restart_ias(Config, "ias-stage6-delivery-audit.log", success),
+    Node1 = proplists:get_value(ias_node, Config1),
+    [Restored] = rpc_ok(Node1,
+                        ias_vpn_provisioning_delivery,
+                        history,
+                        [DeviceId]),
+    ?assertEqual(DeliveryId, maps:get(delivery_id, Restored)),
+    ?assertEqual(1, maps:get(attempt, Restored)),
+    ?assertEqual(disabled, maps:get(delivery_status, Restored)),
+    ?assertEqual(1,
+                 rpc_ok(Node1,
+                        ias_vpn_provisioning_delivery,
+                        projection_count,
+                        [])),
+
+    {ok, Second} = rpc_ok(Node1,
+                          ias_vpn_provisioning_delivery,
+                          deliver,
+                          [Command]),
+    ?assertEqual(2, maps:get(attempt, Second)),
+    [Latest, Earlier] = rpc_ok(Node1,
+                               ias_vpn_provisioning_delivery,
+                               history,
+                               [DeviceId]),
+    ?assertEqual(maps:get(delivery_id, Second), maps:get(delivery_id, Latest)),
+    ?assertEqual(DeliveryId, maps:get(delivery_id, Earlier)),
     ok.
 
 incompatible_durable_schema_fails_closed(Config) ->

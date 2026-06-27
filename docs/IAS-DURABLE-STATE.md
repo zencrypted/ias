@@ -581,12 +581,35 @@ tracked by TD-014.
 
 ### Stage 6 — Audit and material stores
 
-Design separately:
+**Stage 6A and 6B status:** Implemented.
 
-- append-only provisioning delivery audit;
-- certificate/CA public material storage;
-- resumable CSR/enrollment state;
-- retention, encryption and access-control policy.
+Stage 6A records the persistence policy explicitly in
+`ias_persistence_policy`. Demo State now distinguishes durable KVS authorities,
+ETS projections, intentionally volatile stores, and their current counts. Domain
+objects, wizard drafts, and VPN delivery audit entries are durable. Certificate
+material, CSR enrollment workflow state, event bridge state, and Nitro/WebSocket
+state remain explicitly volatile.
+
+Stage 6B adds the append-only `ias_vpn_provisioning_delivery_audit` KVS table.
+Every delivery attempt receives a unique delivery ID and per-Device attempt
+number, and stores only operation/revision/status metadata plus a sanitized VPN
+result. An optional provisioning transaction ID links wizard-triggered delivery
+to its durable `ovpn_provisioning` object. Private keys, PEM/CSR/OVPN bodies,
+passwords, and other secret-bearing fields are rejected recursively.
+
+The delivery façade writes KVS first and publishes to ETS only after commit.
+Startup validates and rehydrates the complete audit projection before Cowboy
+starts. Common Test verifies that audit history and attempt numbering survive a
+complete IAS VM restart with the same durable directory.
+
+`reset/0` remains an explicit destructive development/test operation used by
+Clear Demo State; normal delivery history has no individual update/delete API.
+
+**Still pending:**
+
+- Stage 6C — resumable CSR/enrollment state with expiry and retry policy;
+- Stage 6D — secure certificate/CA public-material storage, retention,
+  encryption, and access-control policy.
 
 ### Stage 7 — Orphan disposition workflow
 

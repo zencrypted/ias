@@ -1,8 +1,12 @@
 -module(ias_vpn_provisioning_delivery).
--export([deliver/1,
+-export([ensure/0,
+         deliver/1,
          build_and_deliver/2,
+         build_and_deliver/3,
          status/1,
          history/1,
+         rehydrate/0,
+         projection_count/0,
          reset/0]).
 
 -define(TABLE, ias_vpn_provisioning_delivery_history).
@@ -11,7 +15,7 @@
 -define(DEFAULT_DYNAMIC_TIMEOUT, 30000).
 
 deliver(Command) when is_map(Command) ->
-    case deliver_with_runtime(Command) of
+    case deliver_with_runtime(Command, #{}) of
         {ok, Record, _DynamicPair} -> {ok, Record};
         {error, _Reason} = Error -> Error
     end;
@@ -19,9 +23,12 @@ deliver(_Command) ->
     {error, invalid_command}.
 
 build_and_deliver(DeviceId, Operation) ->
+    build_and_deliver(DeviceId, Operation, #{}).
+
+build_and_deliver(DeviceId, Operation, AuditContext) when is_map(AuditContext) ->
     case ias_vpn_provisioning_command:build(DeviceId, Operation) of
         {ok, Command} ->
-            case deliver_with_runtime(Command) of
+            case deliver_with_runtime(Command, AuditContext) of
                 {ok, Delivery, DynamicPair} ->
                     Result0 = #{command => Command, delivery => Delivery},
                     {ok, maybe_put(dynamic_pair, DynamicPair, Result0)};
@@ -30,13 +37,14 @@ build_and_deliver(DeviceId, Operation) ->
             end;
         Error ->
             Error
-    end.
+    end;
+build_and_deliver(_DeviceId, _Operation, _AuditContext) ->
+    {error, invalid_delivery_audit_context}.
 
 maybe_put(_Key, undefined, Map) -> Map;
 maybe_put(Key, Value, Map) -> Map#{Key => Value}.
 
 status(DeviceId) ->
-    ensure(),
     DeviceKey = normalize_id(DeviceId),
     Attempts = history(DeviceKey),
     case Attempts of
@@ -59,40 +67,90 @@ status(DeviceId) ->
     end.
 
 history(DeviceId) ->
-    ensure(),
-    DeviceKey = normalize_id(DeviceId),
-    case ets:lookup(?TABLE, DeviceKey) of
-        [{DeviceKey, Records}] -> Records;
-        [] -> []
+    case ensure() of
+        ok ->
+            DeviceKey = normalize_id(DeviceId),
+            case ets:lookup(?TABLE, DeviceKey) of
+                [{DeviceKey, Records}] -> Records;
+                [] -> []
+            end;
+        {error, Reason} ->
+            erlang:error({vpn_delivery_audit_unavailable, Reason})
     end.
 
-reset() ->
-    ensure(),
-    ets:delete_all_objects(?TABLE),
-    ok.
+rehydrate() ->
+    case ias_vpn_provisioning_delivery_store:ensure() of
+        ok ->
+            ensure_projection(),
+            case ias_vpn_provisioning_delivery_store:all() of
+                {ok, Records} ->
+                    ets:delete_all_objects(?TABLE),
+                    lists:foreach(fun project_record/1,
+                                  lists:reverse(Records)),
+                    {ok, length(Records)};
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
+    end.
 
-deliver_with_runtime(Command) ->
-    ensure(),
-    Summary = ias_vpn_provisioning_command:summary(Command),
-    case delivery_route(Command) of
-        {dynamic, DeviceId} ->
-            case deliver_dynamic_command(DeviceId, Command) of
-                {ok, Delivery, DynamicPair} ->
-                    Record = delivery_record(Summary, Delivery),
-                    store(Record),
-                    {ok, Record, DynamicPair};
-                {error, Reason, Delivery} ->
-                    Record = delivery_record(Summary, Delivery),
-                    store(Record),
+projection_count() ->
+    ensure_projection(),
+    lists:sum([length(Records)
+               || {_DeviceId, Records} <- ets:tab2list(?TABLE)]).
+
+reset() ->
+    case ias_vpn_provisioning_delivery_store:reset() of
+        ok ->
+            ensure_projection(),
+            ets:delete_all_objects(?TABLE),
+            ok;
+        {error, _} = Error -> Error
+    end.
+
+deliver_with_runtime(Command, AuditContext) ->
+    case ensure() of
+        ok ->
+            Summary = ias_vpn_provisioning_command:summary(Command),
+            case delivery_route(Command) of
+                {dynamic, DeviceId} ->
+                    case deliver_dynamic_command(DeviceId, Command) of
+                        {ok, Delivery, DynamicPair} ->
+                            case persist_delivery(Summary,
+                                                  Delivery,
+                                                  AuditContext) of
+                                {ok, Record} ->
+                                    {ok, Record, DynamicPair};
+                                {error, Reason} ->
+                                    {error,
+                                     {delivery_audit_persistence_failed,
+                                      Reason}}
+                            end;
+                        {error, DeliveryReason, Delivery} ->
+                            case persist_delivery(Summary,
+                                                  Delivery,
+                                                  AuditContext) of
+                                {ok, _Record} ->
+                                    {error, DeliveryReason};
+                                {error, AuditReason} ->
+                                    {error,
+                                     {delivery_failed_without_durable_audit,
+                                      DeliveryReason,
+                                      AuditReason}}
+                            end
+                    end;
+                static ->
+                    Delivery = deliver_command(Command),
+                    case persist_delivery(Summary, Delivery, AuditContext) of
+                        {ok, Record} -> {ok, Record, undefined};
+                        {error, Reason} ->
+                            {error,
+                             {delivery_audit_persistence_failed, Reason}}
+                    end;
+                {error, Reason} ->
                     {error, Reason}
             end;
-        static ->
-            Delivery = deliver_command(Command),
-            Record = delivery_record(Summary, Delivery),
-            store(Record),
-            {ok, Record, undefined};
         {error, Reason} ->
-            {error, Reason}
+            {error, {delivery_audit_unavailable, Reason}}
     end.
 
 delivery_route(#{operation := upsert, desired_state := Desired}) when is_map(Desired) ->
@@ -251,16 +309,36 @@ normalize_rpc_result(Result) ->
     #{delivery_status => unexpected_result,
       vpn_result => sanitize_vpn_result(Result)}.
 
-delivery_record(Summary, Delivery) ->
-    Summary#{
+persist_delivery(Summary, Delivery, AuditContext) ->
+    Record = delivery_record(Summary, Delivery, AuditContext),
+    store(Record).
+
+delivery_record(Summary, Delivery, AuditContext) ->
+    Record0 = Summary#{
         delivery_status => maps:get(delivery_status, Delivery),
         vpn_result => maps:get(vpn_result, Delivery),
         delivered_at => delivered_at()
-    }.
+    },
+    maybe_put(provisioning_transaction_id,
+              maps:get(provisioning_transaction_id,
+                       AuditContext,
+                       undefined),
+              Record0).
 
 store(Record) ->
+    case ias_vpn_provisioning_delivery_store:append(Record) of
+        {ok, StoredRecord} ->
+            project_record(StoredRecord),
+            {ok, StoredRecord};
+        {error, _} = Error -> Error
+    end.
+
+project_record(Record) ->
     DeviceKey = normalize_id(maps:get(device_id, Record, undefined)),
-    Existing = history(DeviceKey),
+    Existing = case ets:lookup(?TABLE, DeviceKey) of
+                   [{DeviceKey, Records}] -> Records;
+                   [] -> []
+               end,
     true = ets:insert(?TABLE, {DeviceKey, [Record | Existing]}),
     ok.
 
@@ -354,6 +432,12 @@ sanitize_scalar(_Value) ->
     undefined.
 
 ensure() ->
+    case ias_vpn_provisioning_delivery_store:ensure() of
+        ok -> ensure_projection();
+        {error, _} = Error -> Error
+    end.
+
+ensure_projection() ->
     case ets:info(?TABLE) of
         undefined -> ensure_owner();
         _ -> ok

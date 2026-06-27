@@ -170,8 +170,10 @@ transport-level failures.
 - delivery failure does not advance the IAS revision;
 - a genuinely changed desired projection or operation receives a newer revision
   only through `ias_vpn_provisioning_command:build/2`;
-- the current implementation is demo-runtime only and keeps history in volatile
-  ETS;
+- delivery history is written first to the append-only KVS audit store and then
+  projected into ETS for runtime reads;
+- the durable audit is validated and rehydrated before Cowboy starts, so history
+  survives a complete IAS restart;
 - no private keys, PEM bodies, OVPN bodies, session keys, ECDH material, replay
   state, or raw VPN process state are stored in IAS delivery history.
 

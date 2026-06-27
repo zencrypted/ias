@@ -24,7 +24,7 @@ event(_) ->
 content() ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Demo State")},
-        #p{body = ias_html:text("Supported public domain metadata and provisioning wizard drafts are durable through KVS and projected into ETS. Certificate material remains a separate volatile store. Manual export/import remains development tooling.")},
+        #p{body = ias_html:text("Domain metadata, wizard drafts, and sanitized VPN delivery audit entries are durable through KVS. ETS remains the runtime projection, while certificate material, enrollment workflow state, event bridge state, and browser sessions remain explicitly volatile.")},
         #panel{id = state_summary, body = state_summary_content()},
         export_panel(),
         import_panel(),
@@ -36,6 +36,7 @@ state_summary_content() ->
     Summary = ias_demo_state:summary(),
     #panel{id = state_summary_content, body = [
         runtime_summary(Summary),
+        persistence_policy_summary(Summary),
         projection_health_summary(Summary)
     ]}.
 
@@ -49,6 +50,53 @@ runtime_summary(Summary) ->
             {"Total Runtime Records", maps:get(total_records, Summary, 0)}
         ])
     ]}.
+
+persistence_policy_summary(Summary) ->
+    Stores = maps:get(persistence_stores, Summary, []),
+    #panel{class = <<"ias-status-card">>, body = [
+        #h3{body = ias_html:text("Persistence Store Policy")},
+        #p{body = ias_html:text("Durable stores use KVS as their source of truth. Volatile stores are intentionally excluded until their lifecycle and secure-material policies are defined.")},
+        key_value_table([
+            {"Durable Domain Objects", health_value(maps:get(durable_objects,
+                                                               Summary,
+                                                               unavailable))},
+            {"Durable Relationships", health_value(maps:get(durable_relationships,
+                                                              Summary,
+                                                              unavailable))},
+            {"Durable Wizard Drafts", health_value(maps:get(durable_wizard_drafts,
+                                                              Summary,
+                                                              unavailable))},
+            {"Durable Delivery Audit Entries",
+             health_value(maps:get(durable_delivery_audit_entries,
+                                   Summary,
+                                   unavailable))},
+            {"ETS Delivery Audit Projection",
+             health_value(maps:get(ets_delivery_audit_entries,
+                                   Summary,
+                                   unavailable))},
+            {"Volatile Certificate Materials",
+             health_value(maps:get(volatile_certificate_materials,
+                                   Summary,
+                                   unavailable))},
+            {"Volatile CSR Enrollment States",
+             health_value(maps:get(volatile_csr_enrollment_states,
+                                   Summary,
+                                   unavailable))}
+        ]),
+        #h3{body = ias_html:text("Store Classification")},
+        key_value_table([{maps:get(label, Store, maps:get(store, Store, unknown)),
+                          persistence_store_value(Store)}
+                         || Store <- Stores])
+    ]}.
+
+persistence_store_value(Store) ->
+    ias_html:join([
+        ias_html:text(maps:get(mode, Store, unknown)),
+        <<" / ">>,
+        ias_html:text(maps:get(backend, Store, unknown)),
+        <<" / ">>,
+        ias_html:text(maps:get(policy, Store, <<"unspecified">>))
+    ]).
 
 projection_health_summary(Summary) ->
     Status = maps:get(projection_status, Summary, unavailable),
@@ -169,7 +217,7 @@ import_panel() ->
 clear_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Clear Demo State")},
-        #p{body = ias_html:text("Clears durable KVS domain objects, the ETS projection, VPN authority and incident state, certificate material, and provisioning wizard drafts. Built-in fixtures are not deleted.")},
+        #p{body = ias_html:text("Clears durable KVS domain objects, wizard drafts, VPN delivery audit entries, their ETS projections, VPN authority and incident state, and volatile certificate material. Built-in fixtures are not deleted.")},
         #link{class = [button, sgreen],
               body = ias_html:text("Clear Demo State"),
               postback = clear_demo_state}
@@ -223,7 +271,7 @@ clear_result() ->
     #panel{style = <<"margin-top:12px;padding:12px;border:1px solid rgba(22,163,74,0.25);border-radius:6px;background:#f0fdf4;">>,
            body = [
                #h3{body = ias_html:text("Demo state cleared")},
-               #p{body = ias_html:text("Durable demo domain state and its ETS projection were cleared.")}
+               #p{body = ias_html:text("Durable demo domain state, wizard drafts, VPN delivery audit history, and their ETS projections were cleared.")}
            ]}.
 
 key_value_table(Rows) ->

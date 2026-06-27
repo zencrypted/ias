@@ -385,6 +385,29 @@ administrator_profile() ->
     Profile.
 
 
+persistence_summary_classifies_delivery_audit_and_volatile_stores_test() ->
+    ias_demo_state:clear(),
+    Summary = ias_demo_state:summary(),
+    ?assertEqual(0, maps:get(durable_delivery_audit_entries, Summary)),
+    ?assertEqual(0, maps:get(ets_delivery_audit_entries, Summary)),
+    ?assertEqual(0, maps:get(volatile_certificate_materials, Summary)),
+    ?assertEqual(0, maps:get(volatile_csr_enrollment_states, Summary)),
+    Stores = maps:get(persistence_stores, Summary),
+    ?assert(lists:any(
+              fun(#{store := ias_vpn_provisioning_delivery_store,
+                    mode := durable_append_only,
+                    backend := kvs}) -> true;
+                 (_) -> false
+              end,
+              Stores)),
+    ?assert(lists:any(
+              fun(#{store := ias_certificate_material,
+                    mode := volatile,
+                    backend := ets}) -> true;
+                 (_) -> false
+              end,
+              Stores)).
+
 projection_summary_includes_durable_health_test() ->
     ias_demo_state:clear(),
     DeviceId = <<"state_projection_health_device">>,

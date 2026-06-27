@@ -7,6 +7,7 @@
 -include("ias_vpn_reconciliation_incident.hrl").
 -include("ias_domain_object.hrl").
 -include("ias_provisioning_wizard_draft.hrl").
+-include("ias_vpn_provisioning_delivery_audit.hrl").
 -include_lib("kvs/include/metainfo.hrl").
 -include_lib("form/include/meta.hrl").
 
@@ -33,6 +34,11 @@ ias() ->
         #table{name = ias_provisioning_wizard_draft,
                fields = record_info(fields, ias_provisioning_wizard_draft),
                instance = #ias_provisioning_wizard_draft{},
+               type = set,
+               copy_type = disc_copies},
+        #table{name = ias_vpn_provisioning_delivery_audit,
+               fields = record_info(fields, ias_vpn_provisioning_delivery_audit),
+               instance = #ias_vpn_provisioning_delivery_audit{},
                type = set,
                copy_type = disc_copies}
     ].

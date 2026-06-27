@@ -1,7 +1,7 @@
 -module(ias_certificate_material).
 -compile({no_auto_import, [get/1]}).
 -export([put/4, validate_public/2, get/1, status/1, delete/1, clear/0,
-         stage_cmp/2, attach_staged/2]).
+         count/0, stage_cmp/2, attach_staged/2]).
 
 -define(TABLE, ias_certificate_material).
 -define(OWNER, ias_certificate_material_owner).
@@ -91,6 +91,10 @@ clear() ->
     ensure_table(),
     ets:delete_all_objects(?TABLE),
     ok.
+
+count() ->
+    ensure_table(),
+    ets:info(?TABLE, size).
 
 validate(MaterialType, Pem0) when MaterialType =:= ca_certificate;
                                   MaterialType =:= client_certificate ->
