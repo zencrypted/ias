@@ -718,3 +718,10 @@ The first durable-state milestone is complete when:
 - startup fails on incompatible durable data instead of silently dropping it;
 - a restart CT verifies the complete path with the same Mnesia directory;
 - orphan VPN projections remain fail-closed by default and are changed only through explicit audited recovery or decommission workflows.
+
+## Legacy FIN schema removal
+
+The banking records inherited from the original `erpuno/fin` fork are no longer
+part of `ias_kvs`. Existing Mnesia directories are not modified destructively at
+startup. See [`IAS-LEGACY-FIN-CLEANUP.md`](IAS-LEGACY-FIN-CLEANUP.md) for the
+optional operator cleanup procedure.
