@@ -183,7 +183,6 @@ clear_vpn_allocation_for_device(DeviceId0) ->
                        normalize_id(maps:get(device_id, Draft, undefined)) =:= DeviceId],
     lists:foreach(
       fun(Draft) ->
-          Id = maps:get(id, Draft),
           Updated = (maps:merge(Draft, clear_vpn_allocation_updates()))#{
               updated_at => created_at()
           },

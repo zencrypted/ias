@@ -4,7 +4,7 @@
 -include("ias_provisioning_wizard_draft.hrl").
 
 wizard_draft_persistence_test_() ->
-    {setup,
+    {foreach,
      fun setup/0,
      fun cleanup/1,
      [fun draft_is_written_and_rehydrated/0,
