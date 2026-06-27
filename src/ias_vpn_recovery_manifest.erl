@@ -202,8 +202,8 @@ kind_fields(device) ->
      hostname, service_name, transport, tunnel_device, profile_id,
      security_profile_id, security_policy_id, certificate_status,
      device_status, status, serial, manufacturer, model, peer_id,
-     public_key_fingerprint, runtime_peer_id, vpn_peer, vpn_allocation_id,
-     vpn_allocator_instance_id, vpn_client_peer_id, vpn_gateway_peer_id,
+     public_key_fingerprint, vpn_allocation_id, vpn_allocator_instance_id,
+     vpn_client_peer_id, vpn_gateway_peer_id,
      vpn_allocation_slot, vpn_allocation_generation];
 kind_fields(certificate) ->
     [user, user_id, user_name, profile_id, subject, subject_cn, issuer,

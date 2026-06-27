@@ -49,6 +49,26 @@ canonical_command_retains_context_manifest_test_() ->
           ?_assertEqual(<<"wizard_manifest_2">>, maps:get(wizard_id, Manifest))]
      end}.
 
+runtime_binding_does_not_change_recovery_manifest_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(#{device_id := DeviceId}) ->
+         Context = #{provisioning_transaction_id =>
+                         <<"ovpn_provisioning_manifest_runtime">>,
+                     wizard_id => <<"wizard_manifest_runtime">>},
+         {ok, Manifest1} = ias_vpn_recovery_manifest:build(DeviceId, Context),
+         {ok, Device0} = ias_demo_store:get(DeviceId),
+         _ = ias_demo_store:put_runtime_object(
+               Device0#{runtime_peer_id => <<"runtime-peer">>,
+                        vpn_peer => <<"runtime-peer">>}),
+         {ok, Manifest2} = ias_vpn_recovery_manifest:build(DeviceId, Context),
+         ManifestDevice = maps:get(device, Manifest2),
+         [?_assertEqual(Manifest1, Manifest2),
+          ?_assertEqual(false, maps:is_key(runtime_peer_id, ManifestDevice)),
+          ?_assertEqual(false, maps:is_key(vpn_peer, ManifestDevice))]
+     end}.
+
 secret_material_is_rejected_test() ->
     Manifest = (base_manifest())#{ovpn_body => <<"client\n<key>secret</key>">>},
     ?assertEqual({error, invalid_recovery_manifest},
