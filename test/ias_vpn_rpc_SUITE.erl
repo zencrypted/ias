@@ -231,7 +231,7 @@ provisioning_lifecycle(Config) ->
     History = ias_vpn_provisioning_delivery:history(DeviceId),
     ?assertEqual(6, length(History)),
     ?assertEqual(false, history_contains(History, <<"private_key">>)),
-    ?assertEqual(false, history_contains(History, <<"ovpn">>)),
+    ?assertEqual(false, history_contains_ovpn_material(History)),
     ?assertEqual(false, history_contains(History, <<"session_key">>)),
     ?assertEqual(false, history_contains(History, <<"ecdh">>)),
 
@@ -1991,6 +1991,8 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
     ?assertEqual(upsert, maps:get(operation, InitialDelivery)),
     ?assertEqual(applied, maps:get(delivery_status, InitialDelivery)),
     ?assertEqual(1, maps:get(revision, InitialDelivery)),
+    ?assertEqual(maps:get(id, Transaction),
+                 maps:get(provisioning_transaction_id, InitialDelivery)),
 
     {ok, RevokeResult} = ias_vpn_access_lifecycle:revoke(DeviceId),
     ?assertEqual(RuntimePeerId, maps:get(runtime_peer_id, RevokeResult)),
@@ -2057,7 +2059,8 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
                  maps:get(last_delivery_status, LifecycleStatus)),
     ?assertEqual(false,
                  history_contains(LifecycleHistory, <<"private_key">>)),
-    ?assertEqual(false, history_contains(LifecycleHistory, <<"ovpn">>)),
+    ?assertEqual(false,
+                 history_contains_ovpn_material(LifecycleHistory)),
     ?assertEqual(false,
                  history_contains(LifecycleHistory, <<"session_key">>)),
 
@@ -2183,7 +2186,8 @@ wizard_provisions_device_into_vpn_runtime(Config) ->
     ?assertEqual(4, length(FinalHistory)),
     ?assertEqual(false,
                  history_contains(FinalHistory, <<"private_key">>)),
-    ?assertEqual(false, history_contains(FinalHistory, <<"ovpn">>)),
+    ?assertEqual(false,
+                 history_contains_ovpn_material(FinalHistory)),
     ?assertEqual(false,
                  history_contains(FinalHistory, <<"session_key">>)),
     ok.
@@ -2671,6 +2675,19 @@ command_revision(Result) ->
 history_contains(History, Needle) ->
     Binary = iolist_to_binary(io_lib:format("~p", [History])),
     binary:match(Binary, Needle) =/= nomatch.
+
+history_contains_ovpn_material(History) ->
+    Needles = [<<"ovpn_body">>,
+               <<"ovpn_profile">>,
+               <<"artifact_body">>,
+               <<"<ca>">>,
+               <<"<cert>">>,
+               <<"<key>">>,
+               <<"<tls-auth>">>,
+               <<"<tls-crypt>">>,
+               <<"-----BEGIN CERTIFICATE-----">>,
+               <<"-----BEGIN PRIVATE KEY-----">>],
+    lists:any(fun(Needle) -> history_contains(History, Needle) end, Needles).
 
 unique_id(Prefix) ->
     Suffix = integer_to_binary(erlang:unique_integer([positive, monotonic])),
