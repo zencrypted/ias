@@ -634,10 +634,12 @@ lineage state to resume safely after process or node failure.
 
 Stage 5B now atomically commits the final OVPN provisioning domain object and the
 durable wizard transition to `completed`, with optimistic conflict detection and
-post-commit ETS projection. The broader CMP enrollment path still spans public
-certificate material, Device key-reference updates and draft metadata, so this
-item remains open until that separate material workflow gains an equivalent
-recovery boundary.
+post-commit ETS projection. Stage 5C moved that boundary behind the configurable
+`ias_kvs_transaction` provider, so domain orchestration no longer depends on
+Mnesia directly. The broader CMP enrollment path still spans public certificate
+material, Device key-reference updates and draft metadata, so this item remains
+open until that separate material workflow gains an equivalent recovery
+boundary.
 
 ### Priority
 
@@ -949,12 +951,14 @@ idempotent repeated restart, and confirms that an incompatible schema leaves the
 HTTP port closed.
 
 Stage 5A added durable active/completed/abandoned wizard drafts, secret-material
-rejection and fail-closed startup rehydration. Stage 5B added a single
-`mnesia:sync_transaction/1` boundary for the prepared OVPN provisioning domain
-object and the wizard transition to `completed`; stale or invalid draft writes
-roll back the domain record, and both ETS projections are applied only after
-commit. The restart suite now verifies that the paired completion survives a
-full IAS VM restart.
+rejection and fail-closed startup rehydration. Stage 5B added a single atomic
+boundary for the prepared OVPN provisioning domain object and the wizard
+transition to `completed`; stale or invalid draft writes roll back the domain
+record, and both ETS projections are applied only after commit. Stage 5C moved
+both tables under the KVS schema and delegates the transaction boundary through
+`ias_kvs_transaction`, leaving Mnesia knowledge only in the current provider.
+The restart suite verifies that the paired completion survives a full IAS VM
+restart.
 
 ### Remaining Direction
 

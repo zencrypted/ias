@@ -2,7 +2,7 @@
 
 ## Status
 
-Stages 1 and 2A implemented; Stages 2B–7 remain planned.
+Stages 1–5C implemented; Stages 6–7 remain planned.
 
 This document defines how IAS should make its domain object graph survive an IAS
 node restart without changing the authority boundary between IAS and VPN.
@@ -11,8 +11,8 @@ node restart without changing the authority boundary between IAS and VPN.
 
 The live IAS UI currently exposes two different classes of state:
 
-- `ias_demo_store` and `ias_provisioning_wizard_store` keep domain objects,
-  relationships and wizard drafts in node-local ETS;
+- `ias_demo_store` and `ias_provisioning_wizard_store` expose domain objects,
+  relationships and wizard drafts through node-local ETS projections;
 - `ias_vpn_authority` and `ias_vpn_reconciliation_incidents` keep a narrow VPN
   control-plane projection in Mnesia `disc_copies`.
 
@@ -78,7 +78,6 @@ The first release does not:
 The following stores are currently recreated empty with the Erlang VM:
 
 - `ias_demo_store`;
-- `ias_provisioning_wizard_store`;
 - `ias_certificate_material`;
 - other workflow-local or session-local state.
 
@@ -101,14 +100,19 @@ become operator-editable later, they must move behind the same durable contract.
 
 ### Existing durable state
 
-IAS already persists two narrow stores on the KVS/Mnesia stack:
+IAS persists the supported domain graph and wizard drafts through KVS, while two
+narrow VPN control-plane stores also use the KVS/Mnesia stack:
 
+- `ias_domain_object`, owned by `ias_domain_store`;
+- `ias_provisioning_wizard_draft`, owned by
+  `ias_provisioning_wizard_draft_store`;
 - `ias_vpn_device_state`, owned by `ias_vpn_authority`;
 - `ias_vpn_reconciliation_incident`, owned by
   `ias_vpn_reconciliation_incidents`.
 
-These tables remain separate. The VPN authority table is not a complete Device,
-Certificate, Service or Relationship store and must not be treated as one.
+These tables remain logically separate. The VPN authority table is not a
+complete Device, Certificate, Service or Relationship store and must not be
+treated as one.
 
 ## Persistence Classification
 
@@ -116,7 +120,7 @@ Certificate, Service or Relationship store and must not be treated as one.
 |---|---:|---:|---:|
 | Domain object metadata | yes | | |
 | Relationship edges | yes | | |
-| Wizard drafts | | yes | |
+| Wizard drafts | yes | | |
 | Provisioning delivery audit | | yes | |
 | Certificate public metadata/fingerprints | yes | | |
 | Certificate/CA PEM bodies | | secure material design | |
@@ -450,10 +454,12 @@ Service records. Provisioning-wizard relationship application prepares all new
 edges first and commits the complete relationship set in one graph operation;
 the previous create-and-compensate loop has been removed.
 
-The wizard draft itself remains volatile and is updated after the durable graph
-commit. Enrollment completion that also spans certificate material, Device key
-references and wizard draft state remains tracked by `TD-014`; those external
-stores cannot be made atomic merely by extending the KVS domain graph boundary.
+At Stage 2B the wizard draft was still volatile and was updated after the durable
+graph commit. Stage 5A later moved wizard drafts behind KVS, and Stage 5C moved
+the cross-store completion boundary behind a configurable KVS transaction
+provider. Enrollment completion that also spans certificate material and Device
+key references remains tracked by `TD-014`; those external stores cannot be made
+atomic merely by extending the KVS domain graph boundary.
 
 ### Stage 3A — Rehydration engine
 
@@ -546,24 +552,32 @@ rebar3 ct --suite test/ias_persistence_SUITE
 
 **Status:** Implemented in Stage 5A and Stage 5B.
 
-Stage 5A added the `ias_provisioning_wizard_draft` Mnesia `disc_copies` table.
-The existing wizard store remains the compatibility façade and ETS read model,
-while active, completed and abandoned drafts are written durable-first and
-rehydrated before Cowboy starts. Draft validation rejects private keys, PEM/CSR
-bodies, passwords, secrets and browser/session values.
+Stage 5A added `ias_provisioning_wizard_draft` as a durable `disc_copies`
+record set. The existing wizard store remains the compatibility façade and ETS
+read model, while active, completed and abandoned drafts are written
+durable-first and rehydrated before Cowboy starts. Draft validation rejects
+private keys, PEM/CSR bodies, passwords, secrets and browser/session values.
 
 Stage 5B added one durable completion boundary for the final device-bound OVPN
 provisioning action. The prepared `ovpn_provisioning` domain object and the
-wizard transition to `completed` are written in one `mnesia:sync_transaction/1`
-across the Mnesia-backed `ias_domain_object` and
-`ias_provisioning_wizard_draft` tables. Both ETS projections are updated only
-after commit. A rejected or stale draft aborts the complete transaction, so no
-orphan provisioning object remains and retries stay idempotent.
+wizard transition to `completed` are committed together. Both ETS projections
+are updated only after commit. A rejected or stale draft aborts the complete
+transaction, so no orphan provisioning object remains and retries stay
+idempotent.
 
-The cross-store transaction hooks are intentionally internal: normal domain
-writes continue through the public KVS façade. This stage covers final wizard
-provisioning completion; CMP enrollment completion still crosses the separate
-certificate-material store and remains tracked by TD-014.
+Stage 5C registered the wizard draft table in `ias_kvs` and removed direct
+Mnesia calls from the domain store, draft store and completion coordinator. The
+new `ias_kvs_transaction` façade delegates the durable boundary to a configured
+provider. The current `ias_kvs_transaction_mnesia` provider opens the outer
+Mnesia transaction, while all application records inside it are still accessed
+through `kvs:get/2`, `kvs:put/1` and `kvs:delete/2`. A non-Mnesia backend must
+supply its own provider; otherwise IAS fails closed with
+`kvs_transactions_not_supported`.
+
+The cross-store transaction hooks are intentionally internal and backend
+neutral. This stage covers final wizard provisioning completion; CMP enrollment
+completion still crosses the separate certificate-material store and remains
+tracked by TD-014.
 
 ### Stage 6 — Audit and material stores
 

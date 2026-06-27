@@ -11,6 +11,7 @@
          reset/0]).
 
 -include("ias_provisioning_wizard_draft.hrl").
+-include_lib("kvs/include/metainfo.hrl").
 
 -define(TABLE, ias_provisioning_wizard_draft).
 -define(SCHEMA_VERSION, 1).
@@ -18,7 +19,11 @@
 
 ensure() ->
     case ensure_storage() of
-        ok -> validate_all();
+        ok ->
+            case ias_kvs_transaction:ensure() of
+                ok -> validate_all();
+                {error, _} = Error -> Error
+            end;
         {error, _} = Error -> Error
     end.
 
@@ -27,39 +32,36 @@ put(Draft) when is_map(Draft) ->
         ok -> write(Draft);
         {error, _} = Error -> Error
     end;
-put(_) -> {error, invalid_wizard_draft}.
+put(_) ->
+    {error, invalid_wizard_draft}.
 
 get(Id0) ->
     Id = normalize_id(Id0),
-    case transaction(fun() -> mnesia:read(?TABLE, Id, read) end) of
-        {ok, []} -> not_found;
-        {ok, [Record]} ->
-            case validate_record(Record) of
-                ok -> {ok, Record#ias_provisioning_wizard_draft.payload};
-                {error, _} = Error -> Error
-            end;
+    case ensure_storage() of
+        ok -> read_payload(Id);
         {error, _} = Error -> Error
     end.
 
 delete(Id0) ->
     Id = normalize_id(Id0),
-    case transaction(fun() -> mnesia:delete({?TABLE, Id}) end) of
-        {ok, ok} -> ok;
-        {error, _} = Error -> Error
-    end.
-
-all() ->
-    case transaction(fun() -> mnesia:match_object(#ias_provisioning_wizard_draft{_ = '_'}) end) of
-        {ok, Records} ->
-            case validate_records(Records) of
-                ok -> {ok, [R#ias_provisioning_wizard_draft.payload || R <- lists:sort(fun compare/2, Records)]};
+    case ensure_storage() of
+        ok ->
+            case ias_kvs_transaction:run(
+                   fun() -> delete_in_transaction(Id) end) of
+                {ok, ok} -> ok;
                 {error, _} = Error -> Error
             end;
         {error, _} = Error -> Error
     end.
 
+all() ->
+    case ensure_storage() of
+        ok -> read_all();
+        {error, _} = Error -> Error
+    end.
+
 validate_all() ->
-    case all() of
+    case read_all() of
         {ok, _} -> ok;
         {error, _} = Error -> Error
     end.
@@ -67,64 +69,70 @@ validate_all() ->
 reset() ->
     case ensure_storage() of
         ok ->
-            case mnesia:clear_table(?TABLE) of
-                {atomic, ok} -> ok;
-                {aborted, Reason} -> {error, {wizard_draft_reset_failed, Reason}}
+            case ias_kvs_transaction:run(fun reset_in_transaction/0) of
+                {ok, ok} -> ok;
+                {error, _} = Error -> Error
             end;
         {error, _} = Error -> Error
     end.
 
 write(Draft) ->
-    case transaction(fun() -> put_in_transaction(Draft) end) of
-        {ok, {Record, Change}} ->
-            {ok, Record#ias_provisioning_wizard_draft.payload, Change};
-        {error, _} = Error ->
-            Error
+    case ensure_storage() of
+        ok ->
+            case ias_kvs_transaction:run(
+                   fun() -> put_in_transaction(Draft) end) of
+                {ok, {Record, Change}} ->
+                    {ok, Record#ias_provisioning_wizard_draft.payload, Change};
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
     end.
 
-%% Internal cross-store transaction hooks. The caller owns the surrounding
-%% Mnesia transaction and projects ETS only after commit.
+%% Internal cross-store transaction hooks. The configured transaction provider
+%% owns the durable boundary; all record access still goes through KVS.
 put_in_transaction(Draft) when is_map(Draft) ->
-    validate_payload_in_transaction(Draft),
+    validate_payload_or_abort(Draft),
     Id = normalize_id(maps:get(id, Draft)),
-    case mnesia:read(?TABLE, Id, write) of
-        [] -> write_record_in_transaction(Draft, undefined);
-        [#ias_provisioning_wizard_draft{} = Old] ->
+    case kvs_get_record(Id) of
+        not_found -> write_record_in_transaction(Draft, undefined);
+        {ok, #ias_provisioning_wizard_draft{} = Old} ->
             validate_record_or_abort(Old),
             write_record_in_transaction(Draft, Old);
-        Records ->
-            mnesia:abort({invalid_wizard_draft_record_set, Id, Records})
+        {error, Reason} ->
+            ias_kvs_transaction:abort(Reason)
     end;
 put_in_transaction(_Draft) ->
-    mnesia:abort(invalid_wizard_draft).
+    ias_kvs_transaction:abort(invalid_wizard_draft).
 
 replace_in_transaction(Expected, Draft)
   when is_map(Expected), is_map(Draft) ->
-    validate_payload_in_transaction(Expected),
-    validate_payload_in_transaction(Draft),
+    validate_payload_or_abort(Expected),
+    validate_payload_or_abort(Draft),
     ExpectedId = normalize_id(maps:get(id, Expected)),
     DraftId = normalize_id(maps:get(id, Draft)),
     case ExpectedId =:= DraftId of
         false ->
-            mnesia:abort({wizard_draft_identity_mismatch,
-                          ExpectedId, DraftId});
+            ias_kvs_transaction:abort(
+              {wizard_draft_identity_mismatch, ExpectedId, DraftId});
         true ->
-            case mnesia:read(?TABLE, DraftId, write) of
-                [#ias_provisioning_wizard_draft{} = Old] ->
+            case kvs_get_record(DraftId) of
+                {ok, #ias_provisioning_wizard_draft{} = Old} ->
                     validate_record_or_abort(Old),
                     case Old#ias_provisioning_wizard_draft.payload =:= Expected of
                         true -> write_record_in_transaction(Draft, Old);
-                        false -> mnesia:abort({wizard_draft_conflict, DraftId})
+                        false ->
+                            ias_kvs_transaction:abort(
+                              {wizard_draft_conflict, DraftId})
                     end;
-                [] ->
-                    mnesia:abort({wizard_draft_not_found, DraftId});
-                Records ->
-                    mnesia:abort({invalid_wizard_draft_record_set,
-                                  DraftId, Records})
+                not_found ->
+                    ias_kvs_transaction:abort(
+                      {wizard_draft_not_found, DraftId});
+                {error, Reason} ->
+                    ias_kvs_transaction:abort(Reason)
             end
     end;
 replace_in_transaction(_Expected, _Draft) ->
-    mnesia:abort(invalid_wizard_draft).
+    ias_kvs_transaction:abort(invalid_wizard_draft).
 
 write_record_in_transaction(Draft, undefined) ->
     Id = normalize_id(maps:get(id, Draft)),
@@ -138,7 +146,7 @@ write_record_in_transaction(Draft, undefined) ->
                 completed_at = maps:get(completed_at, Draft, undefined),
                 abandoned_at = maps:get(abandoned_at, Draft, undefined)},
     validate_record_or_abort(Record),
-    mnesia:write(Record),
+    kvs_put_or_abort(Record),
     {Record, changed};
 write_record_in_transaction(Draft,
                             #ias_provisioning_wizard_draft{} = Old) ->
@@ -154,84 +162,184 @@ write_record_in_transaction(Draft,
                        completed_at = maps:get(completed_at, Draft, undefined),
                        abandoned_at = maps:get(abandoned_at, Draft, undefined)},
             validate_record_or_abort(Record),
-            mnesia:write(Record),
+            kvs_put_or_abort(Record),
             {Record, changed}
     end.
 
-validate_payload_in_transaction(Draft) ->
+read_payload(Id) ->
+    case kvs_get_record(Id) of
+        not_found -> not_found;
+        {ok, Record} ->
+            case validate_record(Record) of
+                ok -> {ok, Record#ias_provisioning_wizard_draft.payload};
+                {error, _} = Error -> Error
+            end;
+        {error, _} = Error -> Error
+    end.
+
+read_all() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) ->
+            case validate_records(Records) of
+                ok ->
+                    Sorted = lists:sort(fun compare/2, Records),
+                    {ok, [R#ias_provisioning_wizard_draft.payload
+                          || R <- Sorted]};
+                {error, _} = Error -> Error
+            end;
+        {error, Reason} ->
+            {error, {wizard_draft_kvs_read_failed, Reason}};
+        {'EXIT', Reason} ->
+            {error, {wizard_draft_kvs_read_failed, Reason}};
+        Other ->
+            {error, {wizard_draft_kvs_unexpected_result, Other}}
+    end.
+
+kvs_get_record(Id) ->
+    case catch kvs:get(?TABLE, Id) of
+        {ok, #ias_provisioning_wizard_draft{} = Record} -> {ok, Record};
+        {error, not_found} -> not_found;
+        {error, Reason} -> {error, {wizard_draft_kvs_read_failed, Reason}};
+        {'EXIT', Reason} -> {error, {wizard_draft_kvs_read_failed, Reason}};
+        Other -> {error, {wizard_draft_kvs_unexpected_result, Other}}
+    end.
+
+kvs_put_or_abort(Record) ->
+    case catch kvs:put(Record) of
+        ok -> ok;
+        {error, Reason} ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_kvs_write_failed, Reason});
+        {'EXIT', Reason} ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_kvs_write_failed, Reason});
+        Other ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_kvs_write_failed, Other})
+    end.
+
+delete_in_transaction(Id) ->
+    case catch kvs:delete(?TABLE, Id) of
+        ok -> ok;
+        {error, not_found} -> ok;
+        {error, Reason} ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_kvs_delete_failed, Reason});
+        {'EXIT', Reason} ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_kvs_delete_failed, Reason});
+        Other ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_kvs_delete_failed, Other})
+    end.
+
+reset_in_transaction() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) ->
+            lists:foreach(
+              fun(#ias_provisioning_wizard_draft{draft_id = Id}) ->
+                      delete_in_transaction(Id);
+                 (Invalid) ->
+                      ias_kvs_transaction:abort(
+                        {wizard_draft_reset_invalid_record, Invalid})
+              end,
+              Records),
+            ok;
+        {error, Reason} ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_reset_failed, Reason});
+        {'EXIT', Reason} ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_reset_failed, Reason});
+        Other ->
+            ias_kvs_transaction:abort(
+              {wizard_draft_reset_failed, Other})
+    end.
+
+validate_payload_or_abort(Draft) ->
     case validate_payload(Draft) of
         ok -> ok;
-        {error, Reason} -> mnesia:abort(Reason)
+        {error, Reason} -> ias_kvs_transaction:abort(Reason)
+    end.
+
+validate_record_or_abort(Record) ->
+    case validate_record(Record) of
+        ok -> ok;
+        {error, Reason} -> ias_kvs_transaction:abort(Reason)
     end.
 
 ensure_storage() ->
-    case catch mnesia:system_info(is_running) of
-        yes -> ensure_disc_schema_and_table();
-        _ ->
-            case mnesia:create_schema([node()]) of
-                ok -> ok;
-                {error, Reason0} ->
-                    case contains_already_exists(Reason0) of
-                        true -> ok;
-                        false -> throw({wizard_draft_schema_create_failed, Reason0})
-                    end
-            end,
-            case application:ensure_all_started(mnesia) of
-                {ok, _} -> ensure_disc_schema_and_table();
-                {error, Reason1} -> {error, {wizard_draft_mnesia_start_failed, Reason1}}
-            end
-    end.
-
-ensure_disc_schema_and_table() ->
-    case catch mnesia:table_info(schema, storage_type) of
-        disc_copies -> ensure_table();
-        ram_copies ->
-            case mnesia:change_table_copy_type(schema, node(), disc_copies) of
-                {atomic, ok} -> ensure_table();
-                {aborted, Reason} ->
-                    case contains_already_exists(Reason) of
-                        true -> ensure_table();
-                        false -> {error, {wizard_draft_schema_persistence_failed, Reason}}
-                    end
+    case application:ensure_all_started(kvs) of
+        {ok, _Started} ->
+            ok = ensure_kvs_schema_modules(),
+            case validate_kvs_metadata() of
+                ok -> ensure_kvs_table();
+                {error, _} = Error -> Error
             end;
-        {'EXIT', Reason} -> {error, {wizard_draft_schema_unavailable, Reason}};
-        Storage -> {error, {wizard_draft_invalid_schema_storage, Storage}}
+        {error, Reason} ->
+            {error, {wizard_draft_kvs_start_failed, Reason}}
     end.
 
-ensure_table() ->
-    Attrs = record_info(fields, ias_provisioning_wizard_draft),
-    case mnesia:create_table(?TABLE, [{attributes, Attrs}, {record_name, ?TABLE},
-                                      {type, set}, {disc_copies, [node()]}]) of
-        {atomic, ok} -> wait_table();
-        {aborted, Reason} ->
-            case contains_already_exists(Reason) of
-                true -> wait_table();
-                false -> {error, {wizard_draft_table_create_failed, Reason}}
+ensure_kvs_schema_modules() ->
+    Existing = application:get_env(kvs, schema, []),
+    Required = [kvs, kvs_stream, ias_kvs],
+    application:set_env(kvs, schema, lists:usort(Existing ++ Required)).
+
+validate_kvs_metadata() ->
+    ExpectedFields = record_info(fields, ias_provisioning_wizard_draft),
+    case kvs:table(?TABLE) of
+        #table{fields = ExpectedFields,
+               type = set,
+               copy_type = disc_copies} ->
+            ok;
+        false ->
+            {error, {wizard_draft_kvs_schema_missing, ?TABLE}};
+        #table{} = Table ->
+            {error,
+             {invalid_wizard_draft_kvs_metadata,
+              #{fields => Table#table.fields,
+                type => Table#table.type,
+                copy_type => Table#table.copy_type}}}
+    end.
+
+ensure_kvs_table() ->
+    case validate_kvs_access() of
+        ok -> ok;
+        {error, _} ->
+            case catch kvs:join() of
+                {'EXIT', Reason} ->
+                    {error, {wizard_draft_kvs_join_failed, Reason}};
+                _ -> wait_for_kvs_table(?WAIT_TIMEOUT)
             end
     end.
 
-wait_table() ->
-    case mnesia:wait_for_tables([?TABLE], ?WAIT_TIMEOUT) of
-        ok -> validate_table();
-        {timeout, Tables} -> {error, {wizard_draft_table_timeout, Tables}};
-        {error, Reason} -> {error, {wizard_draft_table_unavailable, Reason}}
+wait_for_kvs_table(Timeout) ->
+    wait_for_kvs_table(Timeout, erlang:monotonic_time(millisecond)).
+
+wait_for_kvs_table(Timeout, StartedAt) ->
+    case validate_kvs_access() of
+        ok -> ok;
+        {error, _} ->
+            Elapsed = erlang:monotonic_time(millisecond) - StartedAt,
+            case Elapsed >= Timeout of
+                true ->
+                    {error,
+                     {wizard_draft_kvs_table_unavailable, ?TABLE}};
+                false ->
+                    timer:sleep(10),
+                    wait_for_kvs_table(Timeout, StartedAt)
+            end
     end.
 
-validate_table() ->
-    Expected = record_info(fields, ias_provisioning_wizard_draft),
-    case {mnesia:table_info(?TABLE, attributes),
-          mnesia:table_info(?TABLE, storage_type),
-          mnesia:table_info(?TABLE, type)} of
-        {Expected, disc_copies, set} -> ok;
-        {Attributes, Storage, Type} ->
-            {error, {invalid_wizard_draft_table,
-                     #{attributes => Attributes, storage_type => Storage, type => Type}}}
-    end.
-
-transaction(Fun) ->
-    case mnesia:transaction(Fun) of
-        {atomic, Value} -> {ok, Value};
-        {aborted, Reason} -> {error, normalize_abort(Reason)}
+validate_kvs_access() ->
+    case catch kvs:all(?TABLE) of
+        Records when is_list(Records) -> ok;
+        {error, Reason} ->
+            {error, {wizard_draft_kvs_unavailable, Reason}};
+        {'EXIT', Reason} ->
+            {error, {wizard_draft_kvs_unavailable, Reason}};
+        Other ->
+            {error, {wizard_draft_kvs_unexpected_result, Other}}
     end.
 
 validate_records([]) -> ok;
@@ -249,9 +357,6 @@ validate_record(#ias_provisioning_wizard_draft{schema_version = ?SCHEMA_VERSION,
 validate_record(#ias_provisioning_wizard_draft{schema_version = Version}) ->
     {error, {unsupported_wizard_draft_schema_version, Version}};
 validate_record(_) -> {error, invalid_wizard_draft_record}.
-
-validate_record_or_abort(Record) ->
-    case validate_record(Record) of ok -> ok; {error, Reason} -> mnesia:abort(Reason) end.
 
 validate_payload(#{id := Id} = Draft) ->
     case usable_id(normalize_id(Id)) of
@@ -301,19 +406,8 @@ lifecycle_status(Draft) ->
     end.
 
 compare(A, B) -> A#ias_provisioning_wizard_draft.draft_id =< B#ias_provisioning_wizard_draft.draft_id.
-normalize_abort({aborted, Reason}) -> Reason;
-normalize_abort(Reason) -> Reason.
 normalize_id(Id) when is_binary(Id) -> Id;
 normalize_id(Id) when is_list(Id) -> unicode:characters_to_binary(Id);
 normalize_id(Id) when is_atom(Id) -> atom_to_binary(Id, utf8);
 normalize_id(Id) -> ias_html:text(Id).
 usable_id(Id) -> is_binary(Id) andalso byte_size(Id) > 0.
-
-contains_already_exists(already_exists) -> true;
-contains_already_exists({already_exists, _}) -> true;
-contains_already_exists({_, {already_exists, _}}) -> true;
-contains_already_exists(Tuple) when is_tuple(Tuple) ->
-    lists:any(fun contains_already_exists/1, tuple_to_list(Tuple));
-contains_already_exists(List) when is_list(List) ->
-    lists:any(fun contains_already_exists/1, List);
-contains_already_exists(_) -> false.

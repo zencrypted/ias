@@ -24,7 +24,7 @@ event(_) ->
 content() ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Demo State")},
-        #p{body = ias_html:text("Supported public domain metadata is durable through KVS and projected into ETS. Provisioning wizard drafts and certificate material remain separate runtime stores. Manual export/import remains development tooling.")},
+        #p{body = ias_html:text("Supported public domain metadata and provisioning wizard drafts are durable through KVS and projected into ETS. Certificate material remains a separate volatile store. Manual export/import remains development tooling.")},
         #panel{id = state_summary, body = state_summary_content()},
         export_panel(),
         import_panel(),

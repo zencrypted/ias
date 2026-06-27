@@ -2,12 +2,14 @@
 
 -include_lib("eunit/include/eunit.hrl").
 -include("ias_provisioning_wizard_draft.hrl").
+-include_lib("kvs/include/metainfo.hrl").
 
 wizard_draft_persistence_test_() ->
     {foreach,
      fun setup/0,
      fun cleanup/1,
-     [fun draft_is_written_and_rehydrated/0,
+     [fun table_is_registered_in_kvs_schema/0,
+      fun draft_is_written_and_rehydrated/0,
       fun repeated_rehydration_is_idempotent/0,
       fun completed_and_abandoned_lifecycle_is_durable/0,
       fun secret_material_is_rejected/0,
@@ -20,6 +22,15 @@ setup() ->
 
 cleanup(_) ->
     ok = ias_provisioning_wizard_store:clear().
+
+
+table_is_registered_in_kvs_schema() ->
+    #table{fields = Fields, copy_type = CopyType, type = Type} =
+        kvs:table(ias_provisioning_wizard_draft),
+    ?assertEqual(record_info(fields, ias_provisioning_wizard_draft), Fields),
+    ?assertEqual(disc_copies, CopyType),
+    ?assertEqual(set, Type),
+    ?assert(lists:member({table, ias_provisioning_wizard_draft}, kvs:dir())).
 
 draft_is_written_and_rehydrated() ->
     {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
@@ -74,9 +85,7 @@ incompatible_schema_fails_closed() ->
     Record = #ias_provisioning_wizard_draft{
                 draft_id = <<"bad-schema">>, schema_version = 999,
                 payload = #{id => <<"bad-schema">>}},
-    {atomic, ok} = mnesia:transaction(fun() -> mnesia:write(Record) end),
+    ok = kvs:put(Record),
     ?assertEqual({error, {unsupported_wizard_draft_schema_version, 999}},
                  ias_provisioning_wizard_draft_store:ensure()),
-    {atomic, ok} = mnesia:transaction(
-                     fun() -> mnesia:delete({ias_provisioning_wizard_draft,
-                                             <<"bad-schema">>}) end).
+    ok = kvs:delete(ias_provisioning_wizard_draft, <<"bad-schema">>).

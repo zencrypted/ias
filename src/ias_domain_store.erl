@@ -39,18 +39,18 @@ put(Object) when is_map(Object) ->
 put(_Object) ->
     {error, invalid_domain_object}.
 
-%% Internal cross-store transaction hook. The caller must already be inside a
-%% Mnesia transaction that owns the ias_domain_object table lock boundary.
+%% Internal cross-store transaction hook. The configured transaction provider
+%% owns the durable boundary; all record access still goes through KVS.
 %% No ETS projection is performed here.
 put_in_transaction(Object) when is_map(Object) ->
     case persistent_projection(Object) of
         {ok, Projection} ->
             write_projection_in_transaction(Projection);
         {error, Reason} ->
-            mnesia:abort(Reason)
+            ias_kvs_transaction:abort(Reason)
     end;
 put_in_transaction(_Object) ->
-    mnesia:abort(invalid_domain_object).
+    ias_kvs_transaction:abort(invalid_domain_object).
 
 get(Kind0, ObjectId0) ->
     case normalize_identity(Kind0, ObjectId0) of
@@ -119,45 +119,51 @@ validate_all() ->
 
 reset() ->
     case ensure_storage() of
-        ok -> reset_kvs_records();
+        ok ->
+            case ias_kvs_transaction:run(fun reset_kvs_records/0) of
+                {ok, ok} -> ok;
+                {error, _} = Error -> Error
+            end;
         {error, _} = Error -> Error
     end.
 
 outer_transaction(Fun) ->
     case ensure_storage() of
         ok ->
-            case load_kvs_record_map() of
-                {ok, Original} ->
-                    erlang:put(?TRANSACTION_CONTEXT,
-                               #{original => Original, current => Original}),
-                    try
-                        Result = Fun(),
-                        case Result of
-                            {error, AbortReason} ->
-                                {error, AbortReason};
-                            _ ->
-                                Current = current_record_map(),
-                                ok = validate_record_set_or_abort(maps:values(Current)),
-                                case commit_kvs_changes(Original, Current) of
-                                    ok -> {ok, Result};
-                                    {error, _} = Error -> Error
-                                end
-                        end
-                    catch
-                        throw:{domain_store_abort, Reason} ->
-                            {error, Reason};
-                        Class:Reason:Stacktrace ->
-                            {error,
-                             {domain_store_transaction_failed,
-                              {Class, Reason, Stacktrace}}}
-                    after
-                        erlang:erase(?TRANSACTION_CONTEXT)
-                    end;
-                {error, _} = Error ->
-                    Error
-            end;
+            ias_kvs_transaction:run(
+              fun() -> outer_transaction_body(Fun) end);
         {error, _} = Error ->
             Error
+    end.
+
+outer_transaction_body(Fun) ->
+    case load_kvs_record_map() of
+        {ok, Original} ->
+            erlang:put(?TRANSACTION_CONTEXT,
+                       #{original => Original, current => Original}),
+            try
+                Result = Fun(),
+                case Result of
+                    {error, AbortReason} ->
+                        abort(AbortReason);
+                    _ ->
+                        Current = current_record_map(),
+                        ok = validate_record_set_or_abort(maps:values(Current)),
+                        commit_kvs_changes_or_abort(Original, Current),
+                        Result
+                end
+            catch
+                throw:{domain_store_abort, Reason} ->
+                    ias_kvs_transaction:abort(Reason);
+                Class:Reason:Stacktrace ->
+                    ias_kvs_transaction:abort(
+                      {domain_store_transaction_failed,
+                       {Class, Reason, Stacktrace}})
+            after
+                erlang:erase(?TRANSACTION_CONTEXT)
+            end;
+        {error, Reason} ->
+            ias_kvs_transaction:abort(Reason)
     end.
 
 write_projection(Projection) ->
@@ -200,8 +206,8 @@ write_projection_in_transaction(Projection) ->
     Key = {Kind, ObjectId},
     ok = validate_relationship_projection_in_transaction(Projection),
     Now = now_seconds(),
-    case mnesia:read(?TABLE, Key, write) of
-        [] ->
+    case kvs_get_record(Key) of
+        not_found ->
             Record = #ias_domain_object{key = Key,
                                         kind = Kind,
                                         object_id = ObjectId,
@@ -210,9 +216,9 @@ write_projection_in_transaction(Projection) ->
                                         created_at = Now,
                                         updated_at = Now},
             ok = validate_record_in_transaction(Record),
-            mnesia:write(Record),
+            kvs_put_record_in_transaction(Record),
             {record_to_map(Record), changed};
-        [#ias_domain_object{} = Record0] ->
+        {ok, #ias_domain_object{} = Record0} ->
             ok = validate_record_in_transaction(Record0),
             case Record0#ias_domain_object.payload =:= Projection of
                 true ->
@@ -223,11 +229,11 @@ write_projection_in_transaction(Projection) ->
                                revision = Record0#ias_domain_object.revision + 1,
                                updated_at = Now},
                     ok = validate_record_in_transaction(Record),
-                    mnesia:write(Record),
+                    kvs_put_record_in_transaction(Record),
                     {record_to_map(Record), changed}
             end;
-        Records ->
-            mnesia:abort({invalid_domain_record_set, Key, Records})
+        {error, Reason} ->
+            ias_kvs_transaction:abort(Reason)
     end.
 
 validate_relationship_projection_in_transaction(
@@ -246,20 +252,28 @@ validate_reference_in_transaction(Kind, ObjectId) ->
             ok;
         false ->
             Key = {Kind, normalize_id(ObjectId)},
-            case mnesia:read(?TABLE, Key, read) of
-                [#ias_domain_object{} = Record] ->
+            case kvs_get_record(Key) of
+                {ok, #ias_domain_object{} = Record} ->
                     validate_record_in_transaction(Record);
-                [] ->
-                    mnesia:abort({missing_domain_reference, Kind, ObjectId});
-                Records ->
-                    mnesia:abort({invalid_domain_record_set, Key, Records})
+                not_found ->
+                    ias_kvs_transaction:abort(
+                      {missing_domain_reference, Kind, ObjectId});
+                {error, Reason} ->
+                    ias_kvs_transaction:abort(Reason)
             end
     end.
 
 validate_record_in_transaction(Record) ->
     case validate_record(Record) of
         ok -> ok;
-        {error, Reason} -> mnesia:abort(Reason)
+        {error, Reason} -> ias_kvs_transaction:abort(Reason)
+    end.
+
+kvs_put_record_in_transaction(Record) ->
+    case normalize_kvs_write_result(kvs:put(Record),
+                                    domain_store_kvs_write_failed) of
+        ok -> ok;
+        {error, Reason} -> ias_kvs_transaction:abort(Reason)
     end.
 
 persistent_projection(#{kind := Kind0, id := ObjectId0} = Object) ->
@@ -448,7 +462,11 @@ ensure_storage() ->
         ok ->
             ok = ensure_kvs_schema_modules(),
             case validate_kvs_metadata() of
-                ok -> ensure_kvs_table();
+                ok ->
+                    case ensure_kvs_table() of
+                        ok -> ias_kvs_transaction:ensure();
+                        {error, _} = Error -> Error
+                    end;
                 {error, _} = Error -> Error
             end;
         {error, _} = Error ->
@@ -601,7 +619,7 @@ validate_record_set_or_abort(Records) ->
     lists:foreach(fun validate_relationship_references_or_abort/1, Records),
     ok.
 
-commit_kvs_changes(Original, Current) ->
+commit_kvs_changes_or_abort(Original, Current) ->
     Puts = [Record
             || {Key, Record} <- maps:to_list(Current),
                maps:get(Key, Original, undefined) =/= Record],
@@ -612,16 +630,17 @@ commit_kvs_changes(Original, Current) ->
         ok ->
             case kvs_delete_keys(Deletes) of
                 ok -> ok;
-                {error, _} = Error -> rollback_after_commit_error(Original, Current, Error)
+                {error, Reason} -> abort(Reason)
             end;
-        {error, _} = Error ->
-            Error
+        {error, Reason} ->
+            abort(Reason)
     end.
 
 kvs_put_records([]) ->
     ok;
 kvs_put_records(Records) ->
-    normalize_kvs_write_result(kvs:put(Records), domain_store_kvs_write_failed).
+    normalize_kvs_write_result(kvs:put(Records),
+                               domain_store_kvs_write_failed).
 
 kvs_delete_keys([]) ->
     ok;
@@ -644,35 +663,19 @@ normalize_kvs_write_result({error, Reason}, Tag) ->
 normalize_kvs_write_result(Other, Tag) ->
     {error, {Tag, Other}}.
 
-rollback_after_commit_error(Original, Current, CommitError) ->
-    Affected = lists:usort(maps:keys(Original) ++ maps:keys(Current)),
-    RollbackResults = [restore_kvs_key(Key, Original) || Key <- Affected],
-    case lists:all(fun(Result) -> Result =:= ok end, RollbackResults) of
-        true -> CommitError;
-        false -> {error, {domain_store_kvs_commit_and_rollback_failed,
-                          CommitError, RollbackResults}}
-    end.
-
-restore_kvs_key(Key, Original) ->
-    case maps:find(Key, Original) of
-        {ok, Record} ->
-            normalize_kvs_write_result(kvs:put(Record),
-                                       domain_store_kvs_rollback_write_failed);
-        error ->
-            normalize_kvs_write_result(kvs:delete(?TABLE, Key),
-                                       domain_store_kvs_rollback_delete_failed)
-    end.
-
 reset_kvs_records() ->
     case catch kvs:all(?TABLE) of
         Records when is_list(Records) ->
             reset_kvs_records(Records);
         {error, Reason} ->
-            {error, {domain_store_reset_failed, Reason}};
+            ias_kvs_transaction:abort(
+              {domain_store_reset_failed, Reason});
         {'EXIT', Reason} ->
-            {error, {domain_store_reset_failed, Reason}};
+            ias_kvs_transaction:abort(
+              {domain_store_reset_failed, Reason});
         Other ->
-            {error, {domain_store_reset_failed, Other}}
+            ias_kvs_transaction:abort(
+              {domain_store_reset_failed, Other})
     end.
 
 reset_kvs_records([]) ->
@@ -680,11 +683,16 @@ reset_kvs_records([]) ->
 reset_kvs_records([#ias_domain_object{key = Key} | Rest]) ->
     case kvs:delete(?TABLE, Key) of
         ok -> reset_kvs_records(Rest);
-        {error, Reason} -> {error, {domain_store_reset_failed, Reason}};
-        Other -> {error, {domain_store_reset_failed, Other}}
+        {error, Reason} ->
+            ias_kvs_transaction:abort(
+              {domain_store_reset_failed, Reason});
+        Other ->
+            ias_kvs_transaction:abort(
+              {domain_store_reset_failed, Other})
     end;
 reset_kvs_records([Invalid | _Rest]) ->
-    {error, {domain_store_reset_failed, {invalid_domain_record, Invalid}}}.
+    ias_kvs_transaction:abort(
+      {domain_store_reset_failed, {invalid_domain_record, Invalid}}).
 
 abort(Reason) ->
     throw({domain_store_abort, Reason}).

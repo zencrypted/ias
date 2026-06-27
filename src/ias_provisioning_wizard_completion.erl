@@ -38,14 +38,14 @@ commit_transaction(ExpectedDraft, CompletedDraft, Transaction) ->
               ExpectedDraft, CompletedDraft),
         {DomainRecord, DomainChange, DraftRecord, DraftChange}
     end,
-    case mnesia:sync_transaction(Fun) of
-        {atomic, {DomainRecord, DomainChange, DraftRecord, DraftChange}} ->
+    case ias_kvs_transaction:run(Fun) of
+        {ok, {DomainRecord, DomainChange, DraftRecord, DraftChange}} ->
             project_after_commit(DomainRecord,
                                  DomainChange,
                                  DraftRecord,
                                  DraftChange);
-        {aborted, Reason} ->
-            {error, normalize_abort(Reason)}
+        {error, _} = Error ->
+            Error
     end.
 
 project_after_commit(DomainRecord, DomainChange, DraftRecord, DraftChange) ->
@@ -110,9 +110,6 @@ completion_references_match(Draft, Transaction) ->
 
 same_reference(Left, Right) ->
     normalize_id(Left) =:= normalize_id(Right).
-
-normalize_abort({aborted, Reason}) -> Reason;
-normalize_abort(Reason) -> Reason.
 
 normalize_id(undefined) -> <<>>;
 normalize_id(Id) when is_binary(Id) -> Id;
