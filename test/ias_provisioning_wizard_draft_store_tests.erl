@@ -56,12 +56,19 @@ completed_and_abandoned_lifecycle_is_durable() ->
     ?assertEqual(true, maps:get(abandoned, RestoredAbandoned)).
 
 secret_material_is_rejected() ->
-    Draft = #{id => <<"secret-draft">>, scenario => device_bound,
-              current_step => user, private_key => <<"secret">>},
+    PrivateKeyDraft = #{id => <<"secret-draft">>, scenario => device_bound,
+                        current_step => user, private_key => <<"secret">>},
     ?assertEqual({error, {forbidden_wizard_draft_material, [private_key]}},
-                 ias_provisioning_wizard_draft_store:put(Draft)),
+                 ias_provisioning_wizard_draft_store:put(PrivateKeyDraft)),
+    CertificateDraft = #{id => <<"certificate-draft">>, scenario => device_bound,
+                         current_step => user,
+                         certificate_pem => <<"certificate-body">>},
+    ?assertEqual({error, {forbidden_wizard_draft_material, [certificate_pem]}},
+                 ias_provisioning_wizard_draft_store:put(CertificateDraft)),
     ?assertEqual(not_found,
-                 ias_provisioning_wizard_draft_store:get(<<"secret-draft">>)).
+                 ias_provisioning_wizard_draft_store:get(<<"secret-draft">>)),
+    ?assertEqual(not_found,
+                 ias_provisioning_wizard_draft_store:get(<<"certificate-draft">>)).
 
 incompatible_schema_fails_closed() ->
     Record = #ias_provisioning_wizard_draft{

@@ -226,8 +226,9 @@ forbidden_key(Key) ->
     case string:find(Text, "reference") =/= nomatch orelse string:find(Text, "_ref") =/= nomatch of
         true -> false;
         false -> lists:any(fun(Fragment) -> string:find(Text, Fragment) =/= nomatch end,
-              ["private_key", "privatekey", "pem_body", "certificate_body",
-               "csr_body", "secret", "password", "passphrase"])
+              ["private_key", "privatekey", "key_pem", "pem_body",
+               "certificate_body", "certificate_pem", "cert_pem", "ca_pem",
+               "csr_body", "csr_pem", "secret", "password", "passphrase"])
     end.
 
 lifecycle_status(Draft) ->

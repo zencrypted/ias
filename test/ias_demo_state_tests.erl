@@ -256,11 +256,18 @@ wizard_draft_export_is_sanitized_test() ->
     ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
     {ok, Draft0} = ias_provisioning_wizard_store:new(device_bound),
+    DraftId = maps:get(id, Draft0),
+    ?assertEqual(
+       {error, {forbidden_wizard_draft_material, [certificate_pem]}},
+       ias_provisioning_wizard_store:update(
+         DraftId, #{certificate_pem => <<"WIZARD-CERTIFICATE-PEM">>})),
+    ?assertEqual(
+       {error, {forbidden_wizard_draft_material, [private_key_pem]}},
+       ias_provisioning_wizard_store:update(
+         DraftId, #{private_key_pem => <<"WIZARD-PRIVATE-KEY">>})),
     {ok, _Draft} = ias_provisioning_wizard_store:update(
-        maps:get(id, Draft0), #{current_step => vpn_service,
-                               certificate_pem => <<"WIZARD-CERTIFICATE-PEM">>,
-                               private_key_pem => <<"WIZARD-PRIVATE-KEY">>,
-                               form_error => <<"temporary UI error">>}),
+        DraftId, #{current_step => vpn_service,
+                   form_error => <<"temporary UI error">>}),
 
     Snapshot = decode_snapshot(ias_demo_state:export()),
     [ExportedDraft] = maps:get(wizard_drafts, Snapshot),
