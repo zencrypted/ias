@@ -28,12 +28,12 @@ stores() ->
        backend => ets,
        runtime_projection => none,
        policy => <<"secure material boundary">>},
-     #{store => ias_csr_enrollment_state,
+     #{store => ias_csr_enrollment_store,
        label => <<"CSR Enrollment States">>,
-       mode => volatile,
-       backend => ets,
-       runtime_projection => none,
-       policy => <<"workflow policy pending">>},
+       mode => durable,
+       backend => kvs,
+       runtime_projection => ets,
+       policy => <<"resumable enrollment metadata">>},
      #{store => ias_vpn_event_bridge,
        label => <<"VPN Event Bridge State">>,
        mode => volatile,
@@ -52,10 +52,11 @@ diagnostics() ->
       durable_delivery_audit_entries => durable_delivery_audit_count(),
       ets_delivery_audit_entries =>
           safe_count(fun ias_vpn_provisioning_delivery:projection_count/0),
+      durable_csr_enrollment_states => durable_csr_enrollment_count(),
+      ets_csr_enrollment_states =>
+          safe_count(fun ias_csr_enrollment_state:projection_count/0),
       volatile_certificate_materials =>
           safe_count(fun ias_certificate_material:count/0),
-      volatile_csr_enrollment_states =>
-          safe_count(fun() -> length(ias_csr_enrollment_state:all()) end),
       persistence_stores => stores()}.
 
 durable_wizard_draft_count() ->
@@ -66,6 +67,12 @@ durable_wizard_draft_count() ->
 
 durable_delivery_audit_count() ->
     case safe_call(fun ias_vpn_provisioning_delivery_store:count/0) of
+        {ok, Count} when is_integer(Count) -> Count;
+        _ -> unavailable
+    end.
+
+durable_csr_enrollment_count() ->
+    case safe_call(fun ias_csr_enrollment_store:count/0) of
         {ok, Count} when is_integer(Count) -> Count;
         _ -> unavailable
     end.

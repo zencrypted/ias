@@ -2,7 +2,7 @@
 
 ## Status
 
-Stages 1–5C implemented; Stages 6–7 remain planned.
+Stages 1–6C implemented; Stages 6D–7 remain planned.
 
 This document defines how IAS should make its domain object graph survive an IAS
 node restart without changing the authority boundary between IAS and VPN.
@@ -106,6 +106,9 @@ narrow VPN control-plane stores also use the KVS/Mnesia stack:
 - `ias_domain_object`, owned by `ias_domain_store`;
 - `ias_provisioning_wizard_draft`, owned by
   `ias_provisioning_wizard_draft_store`;
+- `ias_vpn_provisioning_delivery_audit`, owned by
+  `ias_vpn_provisioning_delivery_store`;
+- `ias_csr_enrollment_record`, owned by `ias_csr_enrollment_store`;
 - `ias_vpn_device_state`, owned by `ias_vpn_authority`;
 - `ias_vpn_reconciliation_incident`, owned by
   `ias_vpn_reconciliation_incidents`.
@@ -121,10 +124,11 @@ treated as one.
 | Domain object metadata | yes | | |
 | Relationship edges | yes | | |
 | Wizard drafts | yes | | |
-| Provisioning delivery audit | | yes | |
+| Provisioning delivery audit | yes | | |
 | Certificate public metadata/fingerprints | yes | | |
 | Certificate/CA PEM bodies | | secure material design | |
-| CSR body | | resumable workflow design | |
+| CSR enrollment metadata | yes | | |
+| CSR body | | | yes |
 | Private key or private-key body | | | yes |
 | TLS auth/crypt body or shared secret | | | yes |
 | OVPN profile/artifact body | | | yes |
@@ -581,14 +585,14 @@ tracked by TD-014.
 
 ### Stage 6 — Audit and material stores
 
-**Stage 6A and 6B status:** Implemented.
+**Stage 6A, 6B and 6C status:** Implemented.
 
 Stage 6A records the persistence policy explicitly in
 `ias_persistence_policy`. Demo State now distinguishes durable KVS authorities,
 ETS projections, intentionally volatile stores, and their current counts. Domain
-objects, wizard drafts, and VPN delivery audit entries are durable. Certificate
-material, CSR enrollment workflow state, event bridge state, and Nitro/WebSocket
-state remain explicitly volatile.
+objects, wizard drafts, VPN delivery audit entries, and CSR enrollment metadata
+are durable. Certificate material, event bridge state, and Nitro/WebSocket state
+remain explicitly volatile.
 
 Stage 6B adds the append-only `ias_vpn_provisioning_delivery_audit` KVS table.
 Every delivery attempt receives a unique delivery ID and per-Device attempt
@@ -605,9 +609,19 @@ complete IAS VM restart with the same durable directory.
 `reset/0` remains an explicit destructive development/test operation used by
 Clear Demo State; normal delivery history has no individual update/delete API.
 
+Stage 6C adds the `ias_csr_enrollment_record` KVS table and keeps
+`ias_csr_enrollment_state` as the compatibility façade and ETS read projection.
+Submitted, issued, retryable-failure, and non-retryable-failure metadata survive a
+full IAS restart. Consequently duplicate-CSR and same-Device public-key reuse
+guards remain effective after recovery. Raw CSR/CMP bodies, certificate PEM,
+private keys, passwords, passphrases, and secret-bearing fields are rejected;
+validated private-key references remain allowed. Startup validates and rehydrates
+this projection before Cowboy starts, and unsupported schema versions fail
+closed. No automatic expiry policy is applied in Stage 6C; records remain until
+an explicit development/test reset or a future retention policy is introduced.
+
 **Still pending:**
 
-- Stage 6C — resumable CSR/enrollment state with expiry and retry policy;
 - Stage 6D — secure certificate/CA public-material storage, retention,
   encryption, and access-control policy.
 

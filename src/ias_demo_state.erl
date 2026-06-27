@@ -53,6 +53,7 @@ clear() ->
     ok = ias_demo_store:clear(),
     ok = ias_provisioning_wizard_store:clear(),
     ok = ias_vpn_provisioning_delivery:reset(),
+    ok = ias_csr_enrollment_state:clear(),
     ias_certificate_material:clear().
 
 export() ->
@@ -134,6 +135,7 @@ restore_snapshot(Snapshot) ->
     ias_demo_store:clear(),
     ias_provisioning_wizard_store:clear(),
     ias_vpn_provisioning_delivery:reset(),
+    ias_csr_enrollment_state:clear(),
     ias_certificate_material:clear(),
     ImportedObjects = restore_objects(ValidObjects),
     UniqueRelationships = unique_relationships(ValidRelationships),

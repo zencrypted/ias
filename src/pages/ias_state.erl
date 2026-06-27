@@ -24,7 +24,7 @@ event(_) ->
 content() ->
     #panel{class = <<"ias-placeholder">>, body = [
         #h2{body = ias_html:text("Demo State")},
-        #p{body = ias_html:text("Domain metadata, wizard drafts, and sanitized VPN delivery audit entries are durable through KVS. ETS remains the runtime projection, while certificate material, enrollment workflow state, event bridge state, and browser sessions remain explicitly volatile.")},
+        #p{body = ias_html:text("Domain metadata, wizard drafts, sanitized VPN delivery audit entries, and CSR enrollment metadata are durable through KVS. ETS remains the runtime projection, while certificate material, event bridge state, and browser sessions remain explicitly volatile.")},
         #panel{id = state_summary, body = state_summary_content()},
         export_panel(),
         import_panel(),
@@ -74,12 +74,16 @@ persistence_policy_summary(Summary) ->
              health_value(maps:get(ets_delivery_audit_entries,
                                    Summary,
                                    unavailable))},
-            {"Volatile Certificate Materials",
-             health_value(maps:get(volatile_certificate_materials,
+            {"Durable CSR Enrollment States",
+             health_value(maps:get(durable_csr_enrollment_states,
                                    Summary,
                                    unavailable))},
-            {"Volatile CSR Enrollment States",
-             health_value(maps:get(volatile_csr_enrollment_states,
+            {"ETS CSR Enrollment Projection",
+             health_value(maps:get(ets_csr_enrollment_states,
+                                   Summary,
+                                   unavailable))},
+            {"Volatile Certificate Materials",
+             health_value(maps:get(volatile_certificate_materials,
                                    Summary,
                                    unavailable))}
         ]),
@@ -217,7 +221,7 @@ import_panel() ->
 clear_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
         #h3{body = ias_html:text("Clear Demo State")},
-        #p{body = ias_html:text("Clears durable KVS domain objects, wizard drafts, VPN delivery audit entries, their ETS projections, VPN authority and incident state, and volatile certificate material. Built-in fixtures are not deleted.")},
+        #p{body = ias_html:text("Clears durable KVS domain objects, wizard drafts, VPN delivery audit entries, CSR enrollment states, their ETS projections, VPN authority and incident state, and volatile certificate material. Built-in fixtures are not deleted.")},
         #link{class = [button, sgreen],
               body = ias_html:text("Clear Demo State"),
               postback = clear_demo_state}

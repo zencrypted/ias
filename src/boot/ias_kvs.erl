@@ -8,6 +8,7 @@
 -include("ias_domain_object.hrl").
 -include("ias_provisioning_wizard_draft.hrl").
 -include("ias_vpn_provisioning_delivery_audit.hrl").
+-include("ias_csr_enrollment_record.hrl").
 -include_lib("kvs/include/metainfo.hrl").
 -include_lib("form/include/meta.hrl").
 
@@ -39,6 +40,11 @@ ias() ->
         #table{name = ias_vpn_provisioning_delivery_audit,
                fields = record_info(fields, ias_vpn_provisioning_delivery_audit),
                instance = #ias_vpn_provisioning_delivery_audit{},
+               type = set,
+               copy_type = disc_copies},
+        #table{name = ias_csr_enrollment_record,
+               fields = record_info(fields, ias_csr_enrollment_record),
+               instance = #ias_csr_enrollment_record{},
                type = set,
                copy_type = disc_copies}
     ].

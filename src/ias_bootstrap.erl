@@ -9,11 +9,14 @@ prepare() ->
         {wizard_draft_store, fun ias_provisioning_wizard_draft_store:ensure/0},
         {vpn_delivery_audit_store,
          fun ias_vpn_provisioning_delivery_store:ensure/0},
+        {csr_enrollment_store, fun ias_csr_enrollment_store:ensure/0},
         {vpn_authority, fun ias_vpn_authority:ensure/0},
         {vpn_incidents, fun ias_vpn_reconciliation_incidents:ensure/0},
         {wizard_draft_rehydration, fun ias_provisioning_wizard_store:rehydrate/0},
         {vpn_delivery_audit_rehydration,
          fun ias_vpn_provisioning_delivery:rehydrate/0},
+        {csr_enrollment_rehydration,
+         fun ias_csr_enrollment_state:rehydrate/0},
         {rehydration, fun ias_demo_store:rehydrate/0}
     ],
     run_steps(Steps, undefined).

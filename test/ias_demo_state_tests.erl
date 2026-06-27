@@ -385,18 +385,27 @@ administrator_profile() ->
     Profile.
 
 
-persistence_summary_classifies_delivery_audit_and_volatile_stores_test() ->
+persistence_summary_classifies_durable_and_volatile_stores_test() ->
     ias_demo_state:clear(),
     Summary = ias_demo_state:summary(),
     ?assertEqual(0, maps:get(durable_delivery_audit_entries, Summary)),
     ?assertEqual(0, maps:get(ets_delivery_audit_entries, Summary)),
+    ?assertEqual(0, maps:get(durable_csr_enrollment_states, Summary)),
+    ?assertEqual(0, maps:get(ets_csr_enrollment_states, Summary)),
     ?assertEqual(0, maps:get(volatile_certificate_materials, Summary)),
-    ?assertEqual(0, maps:get(volatile_csr_enrollment_states, Summary)),
     Stores = maps:get(persistence_stores, Summary),
     ?assert(lists:any(
               fun(#{store := ias_vpn_provisioning_delivery_store,
                     mode := durable_append_only,
                     backend := kvs}) -> true;
+                 (_) -> false
+              end,
+              Stores)),
+    ?assert(lists:any(
+              fun(#{store := ias_csr_enrollment_store,
+                    mode := durable,
+                    backend := kvs,
+                    runtime_projection := ets}) -> true;
                  (_) -> false
               end,
               Stores)),
@@ -407,6 +416,20 @@ persistence_summary_classifies_delivery_audit_and_volatile_stores_test() ->
                  (_) -> false
               end,
               Stores)).
+
+clear_demo_state_clears_csr_enrollment_states_test() ->
+    ias_demo_state:clear(),
+    {ok, _} = ias_csr_enrollment_state:mark_submitted(
+                <<"demo-state-csr">>,
+                #{device_id => <<"demo-state-csr-device">>}),
+    ?assertMatch({ok, _},
+                 ias_csr_enrollment_state:get(<<"demo-state-csr">>)),
+    ok = ias_demo_state:clear(),
+    ?assertEqual(not_found,
+                 ias_csr_enrollment_state:get(<<"demo-state-csr">>)),
+    Summary = ias_demo_state:summary(),
+    ?assertEqual(0, maps:get(durable_csr_enrollment_states, Summary)),
+    ?assertEqual(0, maps:get(ets_csr_enrollment_states, Summary)).
 
 projection_summary_includes_durable_health_test() ->
     ias_demo_state:clear(),

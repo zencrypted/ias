@@ -3,6 +3,7 @@
 -include_lib("common_test/include/ct.hrl").
 -include_lib("stdlib/include/assert.hrl").
 -include("ias_domain_object.hrl").
+-include("ias_csr_enrollment_record.hrl").
 
 -export([all/0,
          init_per_suite/1,
@@ -13,7 +14,9 @@
          repeated_restart_is_idempotent/1,
          wizard_completion_survives_ias_restart/1,
          vpn_delivery_audit_survives_ias_restart/1,
+         csr_enrollment_state_survives_ias_restart/1,
          incompatible_durable_schema_fails_closed/1,
+         incompatible_csr_enrollment_schema_fails_closed/1,
          reconciliation_rpc/5]).
 
 -define(COOKIE, ias_persistence_ct_cookie).
@@ -27,7 +30,9 @@ all() ->
      repeated_restart_is_idempotent,
      wizard_completion_survives_ias_restart,
      vpn_delivery_audit_survives_ias_restart,
-     incompatible_durable_schema_fails_closed].
+     csr_enrollment_state_survives_ias_restart,
+     incompatible_durable_schema_fails_closed,
+     incompatible_csr_enrollment_schema_fails_closed].
 
 init_per_suite(Config) ->
     ok = ensure_distributed_controller(),
@@ -307,6 +312,84 @@ vpn_delivery_audit_survives_ias_restart(Config) ->
     ?assertEqual(DeliveryId, maps:get(delivery_id, Earlier)),
     ok.
 
+csr_enrollment_state_survives_ias_restart(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    IssuedFingerprint = <<"stage6c-issued-csr">>,
+    RetryableFingerprint = <<"stage6c-retryable-csr">>,
+    NonRetryableFingerprint = <<"stage6c-non-retryable-csr">>,
+    DeviceId = <<"stage6c-csr-device">>,
+    PublicKeyFingerprint = <<"stage6c-public-key">>,
+    {ok, Issued} = rpc_ok(
+                     Node,
+                     ias_csr_enrollment_state,
+                     mark_issued,
+                     [IssuedFingerprint,
+                      #{device_id => DeviceId,
+                        wizard_id => <<"stage6c-wizard">>,
+                        public_key_fingerprint => PublicKeyFingerprint,
+                        private_key_reference => <<"keys/stage6c-device.key">>,
+                        certificate_id => <<"stage6c-certificate">>}]),
+    {ok, Retryable} = rpc_ok(
+                        Node,
+                        ias_csr_enrollment_state,
+                        mark_failed,
+                        [RetryableFingerprint, cmp_timeout, true]),
+    {ok, NonRetryable} = rpc_ok(
+                           Node,
+                           ias_csr_enrollment_state,
+                           mark_failed,
+                           [NonRetryableFingerprint,
+                            cmp_unexpected_certificate_response,
+                            false]),
+    ?assertEqual(issued, maps:get(status, Issued)),
+    ?assertEqual(true, maps:get(retryable, Retryable)),
+    ?assertEqual(false, maps:get(retryable, NonRetryable)),
+    ?assertEqual(3,
+                 rpc_ok(Node,
+                        ias_csr_enrollment_state,
+                        projection_count,
+                        [])),
+
+    Config1 = restart_ias(Config, "ias-stage6c-csr-enrollment.log", success),
+    Node1 = proplists:get_value(ias_node, Config1),
+    ?assertMatch({ok, #{status := issued,
+                        device_id := DeviceId,
+                        public_key_fingerprint := PublicKeyFingerprint,
+                        certificate_id := <<"stage6c-certificate">>}},
+                 rpc_ok(Node1,
+                        ias_csr_enrollment_state,
+                        get,
+                        [IssuedFingerprint])),
+    ?assertMatch({error, {duplicate_csr, _}},
+                 rpc_ok(Node1,
+                        ias_csr_enrollment_state,
+                        submitted,
+                        [IssuedFingerprint])),
+    ?assertMatch({error, {reused_public_key, _}},
+                 rpc_ok(Node1,
+                        ias_csr_enrollment_state,
+                        public_key_available,
+                        [DeviceId, PublicKeyFingerprint])),
+    ?assertEqual(ok,
+                 rpc_ok(Node1,
+                        ias_csr_enrollment_state,
+                        submitted,
+                        [RetryableFingerprint])),
+    ?assertMatch({error, {duplicate_csr, _}},
+                 rpc_ok(Node1,
+                        ias_csr_enrollment_state,
+                        submitted,
+                        [NonRetryableFingerprint])),
+    ?assertEqual(3,
+                 rpc_ok(Node1,
+                        ias_csr_enrollment_state,
+                        projection_count,
+                        [])),
+    Diagnostics = rpc_ok(Node1, ias_persistence_policy, diagnostics, []),
+    ?assertEqual(3, maps:get(durable_csr_enrollment_states, Diagnostics)),
+    ?assertEqual(3, maps:get(ets_csr_enrollment_states, Diagnostics)),
+    ok.
+
 incompatible_durable_schema_fails_closed(Config) ->
     Node = proplists:get_value(ias_node, Config),
     InvalidId = <<"stage4-invalid-schema">>,
@@ -333,6 +416,45 @@ incompatible_durable_schema_fails_closed(Config) ->
     ?assertEqual(undefined, rpc_ok(Node1, erlang, whereis, [ias])),
     ?assertEqual(undefined,
                  rpc_ok(Node1, ets, info, [ias_demo_store])),
+    ?assertEqual(false,
+                 lists:keymember(ias,
+                                 1,
+                                 rpc_ok(Node1,
+                                        application,
+                                        which_applications,
+                                        []))),
+    Port = proplists:get_value(ias_port, Config1),
+    ok = wait_for_tcp_closed(Port, 5000),
+    ok.
+
+incompatible_csr_enrollment_schema_fails_closed(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    Fingerprint = <<"stage6c-invalid-csr-schema">>,
+    Payload = #{csr_fingerprint => Fingerprint,
+                status => submitted,
+                retryable => false},
+    Invalid = #ias_csr_enrollment_record{
+                 csr_fingerprint = Fingerprint,
+                 schema_version = 999,
+                 status = submitted,
+                 retryable = false,
+                 payload = Payload,
+                 revision = 1,
+                 created_at = 1,
+                 updated_at = 1},
+    ok = rpc_ok(Node, kvs, put, [Invalid]),
+
+    Config1 = restart_ias(Config, "ias-invalid-csr-schema.log", failure),
+    Node1 = proplists:get_value(ias_node, Config1),
+    StartResult = rpc_ok(Node1,
+                         persistent_term,
+                         get,
+                         [?START_RESULT_KEY, pending]),
+    ?assertMatch({error, _}, StartResult),
+    ?assert(contains_term(
+              StartResult,
+              {unsupported_csr_enrollment_schema_version, 999})),
+    ?assertEqual(undefined, rpc_ok(Node1, erlang, whereis, [ias])),
     ?assertEqual(false,
                  lists:keymember(ias,
                                  1,

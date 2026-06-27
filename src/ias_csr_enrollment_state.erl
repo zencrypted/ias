@@ -1,6 +1,8 @@
 -module(ias_csr_enrollment_state).
 -compile({no_auto_import, [get/1]}).
 -export([ensure/0,
+         rehydrate/0,
+         projection_count/0,
          get/1,
          all/0,
          submitted/1,
@@ -21,6 +23,23 @@ ensure() ->
             ok
     end.
 
+rehydrate() ->
+    ensure(),
+    case ias_csr_enrollment_store:all() of
+        {ok, Records} ->
+            true = ets:delete_all_objects(?TABLE),
+            true = ets:insert(?TABLE,
+                              [{maps:get(csr_fingerprint, Record), Record}
+                               || Record <- Records]),
+            {ok, length(Records)};
+        {error, _} = Error ->
+            Error
+    end.
+
+projection_count() ->
+    ensure(),
+    ets:info(?TABLE, size).
+
 get(Fingerprint0) ->
     ensure(),
     Fingerprint = ias_html:text(Fingerprint0),
@@ -31,7 +50,8 @@ get(Fingerprint0) ->
 
 all() ->
     ensure(),
-    [Record || {_Fingerprint, Record} <- ets:tab2list(?TABLE)].
+    Records = [Record || {_Fingerprint, Record} <- ets:tab2list(?TABLE)],
+    lists:sort(fun compare_records/2, Records).
 
 submitted(Fingerprint0) ->
     Fingerprint = ias_html:text(Fingerprint0),
@@ -56,22 +76,27 @@ public_key_available(DeviceId0, PublicKeyFingerprint0) ->
     end.
 
 mark_submitted(Fingerprint0, Metadata0) ->
-    ensure(),
     Fingerprint = ias_html:text(Fingerprint0),
     Now = created_at(),
-    Existing = case get(Fingerprint) of
-        {ok, ExistingRecord} -> maps:without([status, retryable, updated_at], ExistingRecord);
-        not_found -> #{created_at => Now}
-    end,
-    Metadata = safe_metadata(Metadata0),
-    NewRecord = maps:merge(Existing, Metadata#{
-        csr_fingerprint => Fingerprint,
-        status => submitted,
-        retryable => false,
-        updated_at => Now
-    }),
-    true = ets:insert(?TABLE, {Fingerprint, NewRecord}),
-    {ok, NewRecord}.
+    case durable_existing(Fingerprint) of
+        {ok, Existing0} ->
+            Existing = maps:without([status, retryable, updated_at], Existing0),
+            persist(maps:merge(Existing,
+                               (metadata(Metadata0))#{
+                                 csr_fingerprint => Fingerprint,
+                                 status => submitted,
+                                 retryable => false,
+                                 updated_at => Now}));
+        not_found ->
+            persist((metadata(Metadata0))#{
+                      csr_fingerprint => Fingerprint,
+                      status => submitted,
+                      retryable => false,
+                      created_at => Now,
+                      updated_at => Now});
+        {error, _} = Error ->
+            Error
+    end.
 
 mark_issued(Fingerprint0, Metadata0) ->
     update(Fingerprint0, issued, false, Metadata0).
@@ -82,34 +107,58 @@ mark_failed(Fingerprint0, Reason, Retryable) ->
 
 clear() ->
     ensure(),
-    ets:delete_all_objects(?TABLE),
-    ok.
+    case ias_csr_enrollment_store:reset() of
+        ok ->
+            true = ets:delete_all_objects(?TABLE),
+            ok;
+        {error, _} = Error -> Error
+    end.
 
 update(Fingerprint0, Status, Retryable, Metadata0) ->
-    ensure(),
     Fingerprint = ias_html:text(Fingerprint0),
     Now = created_at(),
-    Existing = case get(Fingerprint) of
-        {ok, ExistingRecord} -> ExistingRecord;
-        not_found -> #{csr_fingerprint => Fingerprint, created_at => Now}
-    end,
-    Metadata = safe_metadata(Metadata0),
-    NewRecord = maps:merge(Existing, Metadata#{
-        status => Status,
-        retryable => Retryable,
-        updated_at => Now
-    }),
-    true = ets:insert(?TABLE, {Fingerprint, NewRecord}),
-    {ok, NewRecord}.
+    case durable_existing(Fingerprint) of
+        {ok, Existing} ->
+            persist(maps:merge(Existing,
+                               (metadata(Metadata0))#{
+                                 csr_fingerprint => Fingerprint,
+                                 status => Status,
+                                 retryable => Retryable,
+                                 updated_at => Now}));
+        not_found ->
+            persist((metadata(Metadata0))#{
+                      csr_fingerprint => Fingerprint,
+                      status => Status,
+                      retryable => Retryable,
+                      created_at => Now,
+                      updated_at => Now});
+        {error, _} = Error ->
+            Error
+    end.
 
-safe_metadata(Metadata) when is_map(Metadata) ->
-    maps:without([csr_pem, csr_body, private_key, private_key_pem,
-                  private_key_body, key_pem], Metadata);
-safe_metadata(_Metadata) ->
-    #{}.
+persist(State) ->
+    case ias_csr_enrollment_store:put(State) of
+        {ok, Stored, _Change} ->
+            ensure(),
+            Fingerprint = maps:get(csr_fingerprint, Stored),
+            true = ets:insert(?TABLE, {Fingerprint, Stored}),
+            {ok, Stored};
+        {error, _} = Error ->
+            Error
+    end.
+
+durable_existing(Fingerprint) ->
+    ias_csr_enrollment_store:get(Fingerprint).
+
+metadata(Metadata) when is_map(Metadata) -> Metadata;
+metadata(_Metadata) -> #{}.
 
 reusable_public_key_record(#{status := failed, retryable := true}) -> true;
 reusable_public_key_record(_) -> false.
+
+compare_records(A, B) ->
+    maps:get(csr_fingerprint, A, <<>>) =<
+        maps:get(csr_fingerprint, B, <<>>).
 
 created_at() ->
     iolist_to_binary(calendar:system_time_to_rfc3339(erlang:system_time(second),

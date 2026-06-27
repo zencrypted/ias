@@ -11,6 +11,7 @@ confidentiality boundary, and recovery semantics are defined.
 | `ias_domain_store` | durable | ETS projection through `ias_demo_store` | source of truth for supported domain objects and relationships |
 | `ias_provisioning_wizard_draft_store` | durable | ETS wizard projection | resumable active/completed/abandoned lifecycle |
 | `ias_vpn_provisioning_delivery_store` | durable append-only | ETS delivery-history projection | sanitized delivery audit metadata |
+| `ias_csr_enrollment_store` | durable | ETS CSR enrollment projection | resumable enrollment metadata and duplicate/reuse protection |
 
 Durable application code accesses records through KVS. Cross-record atomicity is
 provided through `ias_kvs_transaction` and its configured backend provider.
@@ -20,9 +21,22 @@ provided through `ias_kvs_transaction` and its configured backend provider.
 | Store | Mode | Reason |
 |---|---|---|
 | `ias_certificate_material` | volatile ETS | secure public-material storage policy is a separate stage; private keys are forbidden |
-| `ias_csr_enrollment_state` | volatile ETS | resumability, expiry, and retry lifecycle are not yet finalized |
 | `ias_vpn_event_bridge` | process memory | wake-up/subscription state is reconstructed at runtime |
 | Nitro/WebSocket state | process memory | browser-session state is never a durable domain authority |
+
+## CSR enrollment metadata
+
+CSR enrollment state is stored as `ias_csr_enrollment_record` records in KVS.
+The durable payload contains only workflow metadata such as CSR and public-key
+fingerprints, device and wizard identifiers, lifecycle status, retryability,
+failure labels, certificate identifiers, timestamps, and safe private-key
+references. Raw CSR/CMP bodies, certificate PEM, private keys, passwords, and
+shared secrets are rejected recursively before persistence.
+
+At startup IAS validates every durable CSR enrollment record and rehydrates the
+ETS read projection before Cowboy starts. This preserves duplicate-CSR and
+public-key reuse protection across a full IAS restart. Unsupported schema
+versions fail startup closed.
 
 ## VPN provisioning delivery audit
 
@@ -61,7 +75,7 @@ The Demo State page reports both classification and current counts:
 - durable delivery audit entries;
 - ETS delivery audit projection entries;
 - volatile certificate materials;
-- volatile CSR enrollment states.
+- durable CSR enrollment states and their ETS projection.
 
 A durable count and its ETS projection count are shown separately so a failed or
 incomplete rehydration is visible rather than silently masked.

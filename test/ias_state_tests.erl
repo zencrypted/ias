@@ -16,6 +16,8 @@ synchronized_projection_health_is_rendered_test() ->
         ?assertMatch({_, _}, binary:match(Html, <<"ETS Projection Hash">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"Persistence Store Policy">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"Durable Delivery Audit Entries">>)),
+        ?assertMatch({_, _}, binary:match(Html, <<"Durable CSR Enrollment States">>)),
+        ?assertMatch({_, _}, binary:match(Html, <<"ETS CSR Enrollment Projection">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"Volatile Certificate Materials">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"VPN Provisioning Delivery Audit">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"durable_append_only / kvs">>))
@@ -41,6 +43,8 @@ setup() ->
     ok = ias_vpn_authority:ensure(),
     ok = ias_vpn_reconciliation_incidents:ensure(),
     ok = ias_vpn_provisioning_delivery_store:ensure(),
+    ok = ias_csr_enrollment_store:ensure(),
+    ok = ias_csr_enrollment_state:clear(),
     ok = ias_demo_store:clear().
 
 device(Id) ->
