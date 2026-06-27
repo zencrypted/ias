@@ -5,6 +5,7 @@
 -include("ent.hrl").
 -include("ias_vpn_authority.hrl").
 -include("ias_vpn_reconciliation_incident.hrl").
+-include("ias_vpn_orphan_resolution_operation.hrl").
 -include("ias_domain_object.hrl").
 -include("ias_provisioning_wizard_draft.hrl").
 -include("ias_vpn_provisioning_delivery_audit.hrl").
@@ -32,6 +33,11 @@ ias() ->
         #table{name = ias_vpn_reconciliation_incident,
                fields = record_info(fields, ias_vpn_reconciliation_incident),
                instance = #ias_vpn_reconciliation_incident{},
+               type = set,
+               copy_type = disc_copies},
+        #table{name = ias_vpn_orphan_resolution_operation,
+               fields = record_info(fields, ias_vpn_orphan_resolution_operation),
+               instance = #ias_vpn_orphan_resolution_operation{},
                type = set,
                copy_type = disc_copies},
         #table{name = ias_domain_object,

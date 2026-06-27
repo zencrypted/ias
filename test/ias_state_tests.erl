@@ -19,6 +19,9 @@ synchronized_projection_health_is_rendered_test() ->
         ?assertMatch({_, _}, binary:match(Html, <<"Durable CSR Enrollment States">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"ETS CSR Enrollment Projection">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"Durable Certificate Materials">>)),
+        ?assertMatch({_, _},
+                     binary:match(Html,
+                                  <<"Durable VPN Orphan Resolution Operations">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"VPN Provisioning Delivery Audit">>)),
         ?assertMatch({_, _}, binary:match(Html, <<"durable_append_only / kvs">>))
     after
@@ -42,6 +45,7 @@ setup() ->
     ok = ias_domain_store:ensure(),
     ok = ias_vpn_authority:ensure(),
     ok = ias_vpn_reconciliation_incidents:ensure(),
+    ok = ias_vpn_orphan_resolution_store:ensure(),
     ok = ias_vpn_provisioning_delivery_store:ensure(),
     ok = ias_csr_enrollment_store:ensure(),
     ok = ias_certificate_material_store:ensure(),

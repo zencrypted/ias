@@ -34,6 +34,12 @@ stores() ->
        backend => kvs,
        runtime_projection => ets,
        policy => <<"resumable enrollment metadata">>},
+     #{store => ias_vpn_orphan_resolution_store,
+       label => <<"VPN Orphan Resolution Operations">>,
+       mode => durable,
+       backend => kvs,
+       runtime_projection => none,
+       policy => <<"idempotent distributed decommission saga">>},
      #{store => ias_vpn_event_bridge,
        label => <<"VPN Event Bridge State">>,
        mode => volatile,
@@ -56,6 +62,8 @@ diagnostics() ->
       ets_csr_enrollment_states =>
           safe_count(fun ias_csr_enrollment_state:projection_count/0),
       durable_certificate_materials => durable_certificate_material_count(),
+      durable_vpn_orphan_resolution_operations =>
+          durable_vpn_orphan_resolution_count(),
       ets_certificate_materials =>
           safe_count(fun ias_certificate_material:projection_count/0),
       certificate_material_protection =>
@@ -77,6 +85,12 @@ durable_delivery_audit_count() ->
 durable_csr_enrollment_count() ->
     case safe_call(fun ias_csr_enrollment_store:count/0) of
         {ok, Count} when is_integer(Count) -> Count;
+        _ -> unavailable
+    end.
+
+durable_vpn_orphan_resolution_count() ->
+    case safe_call(fun ias_vpn_orphan_resolution_store:all/0) of
+        {ok, Operations} when is_list(Operations) -> length(Operations);
         _ -> unavailable
     end.
 

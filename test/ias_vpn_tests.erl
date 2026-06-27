@@ -200,6 +200,39 @@ vpn_reconciliation_separates_read_only_state_from_incident_editors_test() ->
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_incident_actor_">>)),
     ?assertMatch({_, _}, binary:match(Html, <<"vpn_incident_resolve_">>)).
 
+vpn_orphan_incident_renders_confirmed_decommission_action_test() ->
+    DeviceId = <<"decommission-ui-device">>,
+    Token = <<12:256>>,
+    Report = #{state => drift_detected,
+               counts => #{synchronized => 0,
+                           vpn_behind => 0,
+                           missing_in_vpn => 0,
+                           divergence => 0,
+                           orphan => 1,
+                           authority_only => 0},
+               entries => [#{device_id => DeviceId,
+                              status => orphan,
+                              reason => vpn_device_without_ias_authority,
+                              read_only => true,
+                              decommission => #{eligible => true},
+                              vpn => #{heads => [], registry => []}}]},
+    Incidents = [#{device_id => DeviceId,
+                   kind => orphan,
+                   reason => vpn_device_without_ias_authority,
+                   token => Token,
+                   status => open,
+                   snapshot => #{decommission => #{eligible => true}},
+                   occurrences => 1,
+                   last_seen => 1782340000}],
+    Html = iolist_to_binary(
+             nitro:render(ias_vpn:content({error, unavailable},
+                                          {ok, Report},
+                                          {ok, Incidents}))),
+    ?assertMatch({_, _}, binary:match(Html, <<"Decommission from VPN">>)),
+    ?assertMatch({_, _},
+                 binary:match(Html, <<"vpn_incident_decommission_">>)),
+    ?assertEqual(nomatch, binary:match(Html, <<"Adopt orphan">>)).
+
 vpn_reconciliation_refresh_failure_notice_is_specific_test() ->
     Notice = ias_vpn:reconciliation_stale_notice(
                {reconciliation_refresh_failed, reconnected}),

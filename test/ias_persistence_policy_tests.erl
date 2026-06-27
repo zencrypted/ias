@@ -16,6 +16,9 @@ persistence_policy_classifies_durable_and_volatile_stores_test() ->
     ?assertMatch(#{mode := durable, backend := kvs,
                    runtime_projection := ets},
                  store(ias_csr_enrollment_store, Stores)),
+    ?assertMatch(#{mode := durable, backend := kvs,
+                   runtime_projection := none},
+                 store(ias_vpn_orphan_resolution_store, Stores)),
     ?assertMatch(#{mode := volatile, backend := process_memory},
                  store(ias_vpn_event_bridge, Stores)).
 

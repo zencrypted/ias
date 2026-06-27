@@ -54,6 +54,20 @@ event({resolve_vpn_incident, DeviceId, Token, ActorId, NoteId}) ->
                                                       Actor,
                                                       Note),
     update_reconciliation_ui(Result);
+event({confirm_decommission_vpn_orphan,
+       DeviceId, Token, ActorId, NoteId}) ->
+    nitro:wire(#confirm{
+        text = orphan_decommission_confirm_text(DeviceId),
+        postback = {decommission_vpn_orphan,
+                    DeviceId, Token, ActorId, NoteId}});
+event({decommission_vpn_orphan, DeviceId, Token, ActorId, NoteId}) ->
+    Actor = field_value(nitro:q(ActorId), <<"ias-ui-admin">>),
+    Note = field_value(nitro:q(NoteId), <<>>),
+    Result = ias_vpn_reconciliation:decommission_orphan(DeviceId,
+                                                         Token,
+                                                         Actor,
+                                                         Note),
+    update_reconciliation_ui(Result);
 event(create_vpn_service) ->
     Name = field_value(nitro:q(vpn_service_name), <<"OpenVPN">>),
     Host = field_value(nitro:q(vpn_remote_host), <<>>),
@@ -569,10 +583,16 @@ incident_editor(Incident, DeviceId, Token, Status) ->
             #label{for = NoteId, style = <<"font-size:11px;font-weight:600;">>, body = ias_html:text("Incident note")},
             #input{id = NoteId, type = <<"text">>, value = <<>>, placeholder = ias_html:text("Saved by Acknowledge or Resolve")}
         ]},
-        incident_actions(DeviceId, Token, Status, ActorId, NoteId, Suffix)
+        incident_actions(Incident,
+                         DeviceId,
+                         Token,
+                         Status,
+                         ActorId,
+                         NoteId,
+                         Suffix)
     ]}.
 
-incident_actions(DeviceId, Token, open, ActorId, NoteId, Suffix) ->
+incident_actions(Incident, DeviceId, Token, open, ActorId, NoteId, Suffix) ->
     #panel{style = <<"display:flex;gap:6px;flex-wrap:wrap;">>, body = [
         #link{id = <<"vpn_incident_acknowledge_", Suffix/binary>>,
               class = [button, sgreen],
@@ -583,19 +603,79 @@ incident_actions(DeviceId, Token, open, ActorId, NoteId, Suffix) ->
               class = [button, sgreen],
               body = ias_html:text("Resolve after verification"),
               source = [ActorId, NoteId],
-              postback = {resolve_vpn_incident, DeviceId, Token, ActorId, NoteId}}
+              postback = {resolve_vpn_incident, DeviceId, Token, ActorId, NoteId}},
+        orphan_decommission_control(Incident,
+                                    DeviceId,
+                                    Token,
+                                    ActorId,
+                                    NoteId,
+                                    Suffix)
     ]};
-incident_actions(DeviceId, Token, acknowledged, ActorId, NoteId, Suffix) ->
-    #link{id = <<"vpn_incident_resolve_", Suffix/binary>>,
-          class = [button, sgreen],
-          body = ias_html:text("Resolve after verification"),
-          source = [ActorId, NoteId],
-          postback = {resolve_vpn_incident, DeviceId, Token, ActorId, NoteId}};
-incident_actions(_DeviceId, _Token, resolved, _ActorId, _NoteId, _Suffix) ->
+incident_actions(Incident,
+                 DeviceId,
+                 Token,
+                 acknowledged,
+                 ActorId,
+                 NoteId,
+                 Suffix) ->
+    #panel{style = <<"display:flex;gap:6px;flex-wrap:wrap;">>, body = [
+        #link{id = <<"vpn_incident_resolve_", Suffix/binary>>,
+              class = [button, sgreen],
+              body = ias_html:text("Resolve after verification"),
+              source = [ActorId, NoteId],
+              postback = {resolve_vpn_incident, DeviceId, Token, ActorId, NoteId}},
+        orphan_decommission_control(Incident,
+                                    DeviceId,
+                                    Token,
+                                    ActorId,
+                                    NoteId,
+                                    Suffix)
+    ]};
+incident_actions(_Incident,
+                 _DeviceId,
+                 _Token,
+                 resolved,
+                 _ActorId,
+                 _NoteId,
+                 _Suffix) ->
     #span{style = <<"font-size:12px;color:#15803d;">>,
           body = ias_html:text("Verified resolved")};
-incident_actions(_DeviceId, _Token, _Status, _ActorId, _NoteId, _Suffix) ->
+incident_actions(_Incident,
+                 _DeviceId,
+                 _Token,
+                 _Status,
+                 _ActorId,
+                 _NoteId,
+                 _Suffix) ->
     #span{body = ias_html:text("Unavailable")}.
+
+orphan_decommission_control(
+  #{kind := orphan,
+    snapshot := #{decommission := #{eligible := true}}},
+  DeviceId,
+  Token,
+  ActorId,
+  NoteId,
+  Suffix) ->
+    #link{id = <<"vpn_incident_decommission_", Suffix/binary>>,
+          class = [button, more],
+          style = <<"background:#b91c1c;color:#fff;border-color:#991b1b;">>,
+          body = ias_html:text("Decommission from VPN"),
+          source = [ActorId, NoteId],
+          postback = {confirm_decommission_vpn_orphan,
+                      DeviceId, Token, ActorId, NoteId}};
+orphan_decommission_control(_Incident,
+                            _DeviceId,
+                            _Token,
+                            _ActorId,
+                            _NoteId,
+                            _Suffix) ->
+    [].
+
+orphan_decommission_confirm_text(DeviceId) ->
+    ias_html:join(["Permanently decommission orphan VPN state for Device ",
+                   DeviceId,
+                   "? VPN will compare the current revision, digest, peer set and allocation before removing runtime peers, registry entries, allocator state and the provisioning head. Local identity files are retained for explicit follow-up cleanup. This cannot be undone by IAS."]).
 
 incident_history(Incident) ->
     Acknowledged = audit_line("Acknowledged", maps:get(acknowledged_by, Incident, undefined),
@@ -670,6 +750,12 @@ reconciliation_action_result({ok, #{status := acknowledged} = Result}) ->
     action_message(ok, ias_html:join(["Incident acknowledged by ", maps:get(acknowledged_by, Result, <<"administrator">>), ". The problem remains active until it is repaired."]));
 reconciliation_action_result({ok, #{status := resolved} = Result}) ->
     action_message(ok, ias_html:join(["Incident resolved after verification by ", maps:get(resolved_by, Result, <<"administrator">>), "."]));
+reconciliation_action_result(
+  {ok, #{requested_action := decommission_orphan} = Result}) ->
+    action_message(ok,
+                   ias_html:join(["VPN orphan decommission completed for ",
+                                  maps:get(device_id, Result, <<"device">>),
+                                  ". The durable incident was resolved after a fresh reconciliation check."]));
 reconciliation_action_result({ok, Result}) when is_map(Result) ->
     Outcome = first_action_value(Result),
     action_message(ok, ias_html:join(["Action completed: ", Outcome]));
@@ -696,6 +782,18 @@ reconciliation_error_message(vpn_incident_snapshot_missing) ->
     "The incident is no longer present in the current reconciliation snapshot. Refresh reconciliation before retrying.";
 reconciliation_error_message(vpn_incident_not_found) ->
     "The durable incident record was not found.";
+reconciliation_error_message(orphan_snapshot_conflict) ->
+    "VPN state changed after this incident snapshot was created. Refresh reconciliation and scan incidents again before retrying.";
+reconciliation_error_message({vpn_orphan_decommission_failed,
+                              orphan_snapshot_conflict}) ->
+    "VPN state changed after this incident snapshot was created. Nothing was removed. Refresh reconciliation and scan incidents again.";
+reconciliation_error_message({vpn_orphan_decommission_unavailable, Reason}) ->
+    ias_html:join(["This orphan cannot be safely decommissioned: ",
+                   term_text(Reason), "."]);
+reconciliation_error_message({vpn_orphan_decommission_not_absent,
+                              _Status,
+                              _Reason}) ->
+    "VPN accepted the decommission request, but a fresh reconciliation snapshot still contains the orphan. The durable operation can be retried safely.";
 reconciliation_error_message({vpn_safe_replay_failed, Result}) when is_map(Result) ->
     ias_html:join(["Safe replay completed with failures: ", maps:get(replayed_records, Result, 0),
                    " replayed and ", maps:get(failed_records, Result, 0), " failed."]);

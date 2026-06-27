@@ -14,6 +14,8 @@ prepare() ->
          fun ias_certificate_material_store:ensure/0},
         {vpn_authority, fun ias_vpn_authority:ensure/0},
         {vpn_incidents, fun ias_vpn_reconciliation_incidents:ensure/0},
+        {vpn_orphan_resolution_operations,
+         fun ias_vpn_orphan_resolution_store:ensure/0},
         {wizard_draft_rehydration, fun ias_provisioning_wizard_store:rehydrate/0},
         {vpn_delivery_audit_rehydration,
          fun ias_vpn_provisioning_delivery:rehydrate/0},

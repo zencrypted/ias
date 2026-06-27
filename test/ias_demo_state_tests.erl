@@ -393,6 +393,8 @@ persistence_summary_classifies_durable_and_volatile_stores_test() ->
     ?assertEqual(0, maps:get(durable_csr_enrollment_states, Summary)),
     ?assertEqual(0, maps:get(ets_csr_enrollment_states, Summary)),
     ?assertEqual(0, maps:get(durable_certificate_materials, Summary)),
+    ?assertEqual(0,
+                 maps:get(durable_vpn_orphan_resolution_operations, Summary)),
     ?assertEqual(0, maps:get(ets_certificate_materials, Summary)),
     ?assertEqual(public_integrity_sha256,
                  maps:get(certificate_material_protection, Summary)),
@@ -409,6 +411,14 @@ persistence_summary_classifies_durable_and_volatile_stores_test() ->
                     mode := durable,
                     backend := kvs,
                     runtime_projection := ets}) -> true;
+                 (_) -> false
+              end,
+              Stores)),
+    ?assert(lists:any(
+              fun(#{store := ias_vpn_orphan_resolution_store,
+                    mode := durable,
+                    backend := kvs,
+                    runtime_projection := none}) -> true;
                  (_) -> false
               end,
               Stores)),

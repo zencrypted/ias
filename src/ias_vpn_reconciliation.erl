@@ -18,7 +18,8 @@
          incidents/0,
          incident/1,
          acknowledge_incident/4,
-         resolve_incident/4]).
+         resolve_incident/4,
+         decommission_orphan/4]).
 
 -define(DEFAULT_TIMEOUT, 5000).
 
@@ -148,6 +149,231 @@ resolve_incident(DeviceId0, Token, Actor, Note) ->
         not_found -> {error, vpn_incident_not_found};
         {error, _} = Error -> Error
     end.
+
+
+%% @doc Permanently remove a current IAS-owned orphan from VPN.
+%%
+%% The durable operation record makes the cross-node sequence resumable. A
+%% repeated call with the same incident token resumes the first incomplete
+%% phase; a changed token is rejected until the existing operation completes.
+-spec decommission_orphan(term(), binary(), term(), term()) ->
+          {ok, map()} | {error, term()}.
+decommission_orphan(DeviceId0, Token, Actor0, Note0) ->
+    DeviceId = normalize_id(DeviceId0),
+    Actor = normalize_action_text(Actor0, <<"ias-ui-admin">>),
+    Note = normalize_action_text(Note0, <<>>),
+    case valid_incident_token(Token) of
+        false -> {error, stale_or_invalid_incident_token};
+        true ->
+            case ias_vpn_orphan_resolution_store:get(DeviceId) of
+                {ok, Operation} ->
+                    case {maps:get(incident_token, Operation, undefined),
+                          maps:get(status, Operation, undefined)} of
+                        {Token, _Status} ->
+                            resume_orphan_decommission(Operation, Token);
+                        {_PreviousToken, completed} ->
+                            start_orphan_decommission(DeviceId,
+                                                      Token,
+                                                      Actor,
+                                                      Note);
+                        _ ->
+                            {error,
+                             vpn_orphan_resolution_operation_in_progress}
+                    end;
+                not_found ->
+                    start_orphan_decommission(DeviceId,
+                                              Token,
+                                              Actor,
+                                              Note);
+                {error, _} = Error -> Error
+            end
+    end.
+
+start_orphan_decommission(DeviceId, Token, Actor, Note) ->
+    case incident(DeviceId) of
+        {ok, Incident} ->
+            case valid_orphan_incident(Incident, Token) of
+                false -> {error, stale_or_invalid_incident_token};
+                true ->
+                    case current_report_entry(DeviceId) of
+                        {ok, #{status := orphan,
+                               decommission :=
+                                   #{eligible := true,
+                                     request := Request}}} ->
+                            case ias_vpn_orphan_resolution_store:start_or_resume(
+                                   DeviceId,
+                                   Token,
+                                   Request,
+                                   Actor,
+                                   Note) of
+                                {ok, Operation} ->
+                                    resume_orphan_decommission(Operation,
+                                                               Token);
+                                {error, _} = Error -> Error
+                            end;
+                        {ok, #{status := orphan,
+                               decommission := Decommission}} ->
+                            {error,
+                             {vpn_orphan_decommission_unavailable,
+                              maps:get(reason,
+                                       Decommission,
+                                       invalid_orphan_snapshot)}};
+                        {ok, Entry} ->
+                            {error,
+                             {vpn_orphan_decommission_blocked,
+                              maps:get(status, Entry, undefined),
+                              maps:get(reason, Entry, undefined)}};
+                        not_found -> {error, vpn_incident_snapshot_missing};
+                        {error, _} = Error -> Error
+                    end
+            end;
+        not_found -> {error, vpn_incident_not_found};
+        {error, _} = Error -> Error
+    end.
+
+resume_orphan_decommission(Operation, Token) ->
+    case maps:get(incident_token, Operation, undefined) =:= Token of
+        false -> {error, stale_or_invalid_incident_token};
+        true ->
+            case maps:get(status, Operation, undefined) of
+                pending -> orphan_decommission_vpn_phase(Operation);
+                vpn_confirmed -> orphan_decommission_reconciliation_phase(Operation);
+                reconciliation_confirmed ->
+                    orphan_decommission_incident_phase(Operation);
+                completed -> {ok, orphan_decommission_result(Operation)};
+                Status -> {error, {invalid_vpn_orphan_resolution_status, Status}}
+            end
+    end.
+
+orphan_decommission_vpn_phase(Operation) ->
+    DeviceId = maps:get(device_id, Operation),
+    Token = maps:get(incident_token, Operation),
+    Request = maps:get(request, Operation),
+    case call_rpc(vpn_provisioning, decommission_orphan, [Request]) of
+        {ok, VpnResult} when is_map(VpnResult) ->
+            case ias_vpn_orphan_resolution_store:mark_vpn_confirmed(
+                   DeviceId, Token, VpnResult) of
+                {ok, Updated} -> resume_orphan_decommission(Updated, Token);
+                {error, _} = Error -> Error
+            end;
+        {error, Reason} ->
+            orphan_decommission_failed(Operation,
+                                       {vpn_orphan_decommission_failed,
+                                        sanitize_reason(Reason)});
+        {badrpc, Reason} ->
+            orphan_decommission_failed(Operation,
+                                       {vpn_snapshot_rpc_failed,
+                                        sanitize_reason(Reason)});
+        Other ->
+            orphan_decommission_failed(
+              Operation,
+              {unexpected_vpn_orphan_decommission_result,
+               sanitize_reason(Other)})
+    end.
+
+orphan_decommission_reconciliation_phase(Operation) ->
+    DeviceId = maps:get(device_id, Operation),
+    Token = maps:get(incident_token, Operation),
+    case current_report_entry(DeviceId) of
+        not_found ->
+            Clearance = #{state => absent,
+                          snapshot => #{device_id => DeviceId,
+                                        status => absent}},
+            case ias_vpn_orphan_resolution_store:mark_reconciliation_confirmed(
+                   DeviceId, Token, Clearance) of
+                {ok, Updated} -> resume_orphan_decommission(Updated, Token);
+                {error, _} = Error -> Error
+            end;
+        {ok, Entry} ->
+            orphan_decommission_failed(
+              Operation,
+              {vpn_orphan_decommission_not_absent,
+               maps:get(status, Entry, undefined),
+               maps:get(reason, Entry, undefined)});
+        {error, Reason} ->
+            orphan_decommission_failed(
+              Operation,
+              {vpn_orphan_decommission_verification_failed,
+               sanitize_reason(Reason)})
+    end.
+
+orphan_decommission_incident_phase(Operation) ->
+    DeviceId = maps:get(device_id, Operation),
+    Token = maps:get(incident_token, Operation),
+    Actor = maps:get(actor, Operation, <<"ias-ui-admin">>),
+    Note = maps:get(note, Operation, <<>>),
+    Clearance = maps:get(clearance, Operation),
+    case incident(DeviceId) of
+        {ok, #{status := resolved, token := Token} = Resolved} ->
+            complete_orphan_decommission(Operation, Resolved);
+        {ok, _Incident} ->
+            case ias_vpn_reconciliation_incidents:resolve(DeviceId,
+                                                           Token,
+                                                           Actor,
+                                                           Note,
+                                                           Clearance) of
+                {ok, Resolved0} ->
+                    case verify_incident_resolution(DeviceId,
+                                                    Resolved0,
+                                                    Clearance) of
+                        {ok, Resolved} ->
+                            complete_orphan_decommission(Operation, Resolved);
+                        {error, Reason} ->
+                            orphan_decommission_failed(Operation, Reason)
+                    end;
+                {error, Reason} ->
+                    orphan_decommission_failed(Operation, Reason)
+            end;
+        not_found ->
+            orphan_decommission_failed(Operation, vpn_incident_not_found);
+        {error, Reason} ->
+            orphan_decommission_failed(Operation, Reason)
+    end.
+
+complete_orphan_decommission(Operation, ResolvedIncident) ->
+    DeviceId = maps:get(device_id, Operation),
+    Token = maps:get(incident_token, Operation),
+    case ias_vpn_orphan_resolution_store:mark_completed(DeviceId,
+                                                         Token,
+                                                         ResolvedIncident) of
+        {ok, Completed} -> {ok, orphan_decommission_result(Completed)};
+        {error, _} = Error -> Error
+    end.
+
+orphan_decommission_failed(Operation, Reason) ->
+    _ = ias_vpn_orphan_resolution_store:record_error(
+          maps:get(device_id, Operation),
+          maps:get(incident_token, Operation),
+          Reason),
+    {error, Reason}.
+
+orphan_decommission_result(Operation) ->
+    #{requested_action => decommission_orphan,
+      outcome => completed,
+      device_id => maps:get(device_id, Operation),
+      operation_id => maps:get(operation_id, Operation),
+      status => maps:get(status, Operation),
+      vpn_result => maps:get(vpn_result, Operation, undefined),
+      clearance => maps:get(clearance, Operation, undefined),
+      resolved_incident => maps:get(resolved_incident,
+                                    Operation,
+                                    undefined),
+      attempts => maps:get(attempts, Operation, 0),
+      completed_at => maps:get(completed_at, Operation, undefined)}.
+
+valid_orphan_incident(Incident, Token) ->
+    maps:get(kind, Incident, undefined) =:= orphan
+        andalso lists:member(maps:get(status, Incident, undefined),
+                             [open, acknowledged])
+        andalso maps:get(token, Incident, undefined) =:= Token.
+
+valid_incident_token(Token) when is_binary(Token) -> byte_size(Token) =:= 32;
+valid_incident_token(_) -> false.
+
+normalize_action_text(undefined, Default) -> Default;
+normalize_action_text(<<>>, Default) -> Default;
+normalize_action_text([], Default) -> Default;
+normalize_action_text(Value, _Default) -> ias_html:text(Value).
 
 %% @doc Replay every currently recoverable authority record.
 %%
@@ -676,12 +902,15 @@ add_orphan_registry(DeviceId, PeerId, Entry, Acc) ->
 
 orphan_entry(DeviceId, Candidate) ->
     RawHeads = lists:reverse(maps:get(heads, Candidate)),
+    RawRegistry = lists:reverse(maps:get(registry, Candidate)),
     Heads = [#{peer_id => PeerId, head => head_summary(Head)}
              || {PeerId, Head} <- RawHeads],
     Registry = [registry_summary(Entry)
-                || {_PeerId, Entry} <- lists:reverse(
-                                          maps:get(registry, Candidate))],
+                || {_PeerId, Entry} <- RawRegistry],
     {Recoverable, Recovery, Manifest} = orphan_recovery(DeviceId, RawHeads),
+    Decommission = orphan_decommission_preview(DeviceId,
+                                                RawHeads,
+                                                RawRegistry),
     #{device_id => DeviceId,
       status => orphan,
       reason => vpn_device_without_ias_authority,
@@ -690,11 +919,101 @@ orphan_entry(DeviceId, Candidate) ->
       replay_performed => false,
       recoverable => Recoverable,
       recovery => Recovery,
+      decommission => Decommission,
       ias => undefined,
       vpn => #{heads => Heads,
                registry => Registry,
                recovery_manifest => Manifest},
       digest_match => undefined}.
+
+
+orphan_decommission_preview(DeviceId, RawHeads, RawRegistry) ->
+    ExpectedHeads = sort_expected_orphan_heads(
+                      [#{peer_id => PeerId,
+                         revision => maps:get(revision, Head, undefined),
+                         digest => maps:get(digest, Head, undefined),
+                         phase => maps:get(phase, Head, applied),
+                         source => ias}
+                       || {PeerId, Head} <- RawHeads]),
+    PeerIds = sort_peer_ids(
+                lists:usort([PeerId || {PeerId, _Head} <- RawHeads] ++
+                            [PeerId || {PeerId, _Entry} <- RawRegistry])),
+    AllocationIds = lists:usort(
+                      [AllocationId
+                       || AllocationId <-
+                              orphan_allocation_ids(RawHeads, RawRegistry),
+                          AllocationId =/= undefined]),
+    ValidHeads = lists:all(fun valid_expected_orphan_head/1, ExpectedHeads),
+    case {ValidHeads, AllocationIds, ExpectedHeads =/= [] orelse PeerIds =/= []} of
+        {true, [], true} ->
+            Request = #{device_id => DeviceId,
+                        expected_heads => ExpectedHeads,
+                        expected_peer_ids => PeerIds,
+                        expected_source => ias,
+                        expected_allocation_id => undefined,
+                        remove_identity => false},
+            #{eligible => true,
+              expected_head_count => length(ExpectedHeads),
+              expected_peer_count => length(PeerIds),
+              request => Request};
+        {true, [AllocationId], true} ->
+            Request = #{device_id => DeviceId,
+                        expected_heads => ExpectedHeads,
+                        expected_peer_ids => PeerIds,
+                        expected_source => ias,
+                        expected_allocation_id => AllocationId,
+                        remove_identity => false},
+            #{eligible => true,
+              expected_head_count => length(ExpectedHeads),
+              expected_peer_count => length(PeerIds),
+              allocation_id => AllocationId,
+              request => Request};
+        {false, _Ids, _Present} ->
+            #{eligible => false, reason => invalid_orphan_head_snapshot};
+        {_Valid, _Ids, false} ->
+            #{eligible => false, reason => empty_orphan_snapshot};
+        {true, _Ids, true} ->
+            #{eligible => false, reason => conflicting_orphan_allocation_ids}
+    end.
+
+orphan_allocation_ids(RawHeads, RawRegistry) ->
+    HeadIds = [maps:get(allocation_id,
+                        maps:get(desired_state, Head, #{}),
+                        undefined)
+               || {_PeerId, Head} <- RawHeads],
+    RegistryIds = [maps:get(allocation_id, Entry, undefined)
+                   || {_PeerId, Entry} <- RawRegistry],
+    ManifestIds = [maps:get(vpn_allocation_id,
+                            maps:get(device, Manifest, #{}),
+                            undefined)
+                   || {_PeerId, Head} <- RawHeads,
+                      Manifest <- [maps:get(recovery_manifest,
+                                            maps:get(desired_state, Head, #{}),
+                                            undefined)],
+                      is_map(Manifest)],
+    HeadIds ++ RegistryIds ++ ManifestIds.
+
+valid_expected_orphan_head(#{peer_id := PeerId,
+                             revision := Revision,
+                             digest := Digest,
+                             phase := Phase,
+                             source := ias}) ->
+    valid_peer_id(PeerId)
+        andalso is_integer(Revision) andalso Revision >= 0
+        andalso is_binary(Digest) andalso byte_size(Digest) =:= 32
+        andalso lists:member(Phase, [pending, applied]);
+valid_expected_orphan_head(_Head) -> false.
+
+sort_expected_orphan_heads(Heads) ->
+    lists:sort(fun(A, B) ->
+                       term_to_binary(maps:get(peer_id, A)) =<
+                           term_to_binary(maps:get(peer_id, B))
+               end,
+               Heads).
+
+sort_peer_ids(PeerIds) ->
+    lists:sort(fun(A, B) -> term_to_binary(A) =< term_to_binary(B) end,
+               PeerIds).
 
 orphan_recovery(DeviceId, RawHeads) ->
     Manifests = lists:usort(

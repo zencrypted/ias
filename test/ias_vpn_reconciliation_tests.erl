@@ -248,6 +248,85 @@ transport_disabled_fails_without_vpn_calls_test_() ->
          end
      end}.
 
+
+orphan_decommission_saga_is_durable_and_idempotent_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-orphan-decommission-device">>,
+             PeerId = <<"vpn-orphan-decommission-peer">>,
+             Command = (command(DeviceId, PeerId, upsert, true))#{revision => 6},
+             Tracker = orphan_decommission_tracker(DeviceId,
+                                                    PeerId,
+                                                    Command,
+                                                    success),
+             {ok, _} = ias_vpn_reconciliation:scan_incidents(),
+             {ok, Incident0} = ias_vpn_reconciliation:incident(DeviceId),
+             Token = maps:get(token, Incident0),
+             ?assertEqual(orphan, maps:get(kind, Incident0)),
+
+             {ok, Result} = ias_vpn_reconciliation:decommission_orphan(
+                              DeviceId,
+                              Token,
+                              <<"admin">>,
+                              <<"remove orphan">>),
+             ?assertEqual(decommission_orphan,
+                          maps:get(requested_action, Result)),
+             ?assertEqual(completed, maps:get(status, Result)),
+             ?assertEqual(1, tracker_value(Tracker, decommission_count)),
+             {ok, Operation} = ias_vpn_orphan_resolution_store:get(DeviceId),
+             ?assertEqual(completed, maps:get(status, Operation)),
+             ?assertEqual(<<"admin">>, maps:get(actor, Operation)),
+             {ok, Incident1} = ias_vpn_reconciliation:incident(DeviceId),
+             ?assertEqual(resolved, maps:get(status, Incident1)),
+
+             {ok, Retry} = ias_vpn_reconciliation:decommission_orphan(
+                              DeviceId,
+                              Token,
+                              <<"admin">>,
+                              <<"retry">>),
+             ?assertEqual(completed, maps:get(status, Retry)),
+             ?assertEqual(1, tracker_value(Tracker, decommission_count)),
+             ets:delete(Tracker)
+         end
+     end}.
+
+orphan_decommission_snapshot_conflict_is_fail_closed_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(_Context) ->
+         fun() ->
+             DeviceId = <<"vpn-orphan-conflict-device">>,
+             PeerId = <<"vpn-orphan-conflict-peer">>,
+             Command = (command(DeviceId, PeerId, upsert, true))#{revision => 3},
+             Tracker = orphan_decommission_tracker(DeviceId,
+                                                    PeerId,
+                                                    Command,
+                                                    conflict),
+             {ok, _} = ias_vpn_reconciliation:scan_incidents(),
+             {ok, Incident} = ias_vpn_reconciliation:incident(DeviceId),
+             Token = maps:get(token, Incident),
+             ?assertEqual({error,
+                           {vpn_orphan_decommission_failed,
+                            orphan_snapshot_conflict}},
+                          ias_vpn_reconciliation:decommission_orphan(
+                            DeviceId,
+                            Token,
+                            <<"admin">>,
+                            <<"stale snapshot">>)),
+             {ok, Operation} = ias_vpn_orphan_resolution_store:get(DeviceId),
+             ?assertEqual(pending, maps:get(status, Operation)),
+             ?assertEqual(1, maps:get(attempts, Operation)),
+             {ok, StillOpen} = ias_vpn_reconciliation:incident(DeviceId),
+             ?assertEqual(open, maps:get(status, StillOpen)),
+             ?assertEqual(1, tracker_value(Tracker, decommission_count)),
+             ets:delete(Tracker)
+         end
+     end}.
+
 reconciliation_fixture(TestFun) ->
     {setup,
      fun setup/0,
@@ -270,12 +349,14 @@ setup() ->
                                                  vpn_provisioning_rpc_fun)},
     ok = ias_demo_store:clear(),
     ok = ias_vpn_provisioning_delivery:reset(),
+    ok = ias_vpn_orphan_resolution_store:reset(),
     application:set_env(ias, vpn_provisioning_transport, erlang_rpc),
     Previous.
 
 cleanup(Previous) ->
     ok = ias_demo_store:clear(),
     ok = ias_vpn_provisioning_delivery:reset(),
+    ok = ias_vpn_orphan_resolution_store:reset(),
     restore_env(vpn_provisioning_transport, maps:get(transport, Previous)),
     restore_env(vpn_provisioning_rpc_fun, maps:get(rpc_fun, Previous)).
 
@@ -334,6 +415,48 @@ replay_tracker(InitialState,
                                                 ReplayCommand)}};
              (_Node, Module, Function, Args, _Timeout) ->
                   erlang:error({unexpected_replay_rpc,
+                                Module,
+                                Function,
+                                Args})
+          end,
+    application:set_env(ias, vpn_provisioning_rpc_fun, Fun),
+    Tracker.
+
+
+orphan_decommission_tracker(DeviceId, PeerId, Command, Outcome) ->
+    Tracker = ets:new(ias_vpn_orphan_decommission_tracker,
+                      [set, private]),
+    true = ets:insert(Tracker,
+                      [{state, present},
+                       {decommission_count, 0}]),
+    Head = head(Command, applied),
+    Registry = registry_entry(DeviceId, PeerId, Command),
+    Fun = fun(_Node, vpn_provisioning, recovery_heads, [], _Timeout) ->
+                  case tracker_value(Tracker, state) of
+                      present -> {ok, #{PeerId => Head}};
+                      absent -> {ok, #{}}
+                  end;
+             (_Node, vpn_peer_registry, list, [], _Timeout) ->
+                  case tracker_value(Tracker, state) of
+                      present -> [Registry];
+                      absent -> []
+                  end;
+             (_Node, vpn_provisioning, decommission_orphan, [Request], _Timeout) ->
+                  ?assertEqual(DeviceId, maps:get(device_id, Request)),
+                  ?assertEqual(ias, maps:get(expected_source, Request)),
+                  ?assertEqual([PeerId], maps:get(expected_peer_ids, Request)),
+                  _ = ets:update_counter(Tracker, decommission_count, 1),
+                  case Outcome of
+                      success ->
+                          true = ets:insert(Tracker, {state, absent}),
+                          {ok, #{outcome => decommissioned,
+                                 device_id => DeviceId,
+                                 removed_peer_ids => [PeerId]}};
+                      conflict ->
+                          {error, orphan_snapshot_conflict}
+                  end;
+             (_Node, Module, Function, Args, _Timeout) ->
+                  erlang:error({unexpected_orphan_decommission_rpc,
                                 Module,
                                 Function,
                                 Args})

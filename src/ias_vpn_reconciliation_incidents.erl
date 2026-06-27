@@ -238,6 +238,7 @@ incident_snapshot(Entry) ->
       digest_match => maps:get(digest_match, Entry, undefined),
       recoverable => maps:get(recoverable, Entry, false),
       recovery => maps:get(recovery, Entry, undefined),
+      decommission => maps:get(decommission, Entry, undefined),
       ias => maps:get(ias, Entry, undefined),
       vpn => maps:get(vpn, Entry, undefined)}.
 
