@@ -630,6 +630,15 @@ Introduce an atomic orchestration boundary or compensating rollback/recovery for
 all enrollment-completion writes. Make retries idempotent and preserve enough
 lineage state to resume safely after process or node failure.
 
+### Progress
+
+Stage 5B now atomically commits the final OVPN provisioning domain object and the
+durable wizard transition to `completed`, with optimistic conflict detection and
+post-commit ETS projection. The broader CMP enrollment path still spans public
+certificate material, Device key-reference updates and draft metadata, so this
+item remains open until that separate material workflow gains an equivalent
+recovery boundary.
+
 ### Priority
 
 High
@@ -939,6 +948,14 @@ authority overlay, proves reconciliation does not create a false orphan, checks
 idempotent repeated restart, and confirms that an incompatible schema leaves the
 HTTP port closed.
 
+Stage 5A added durable active/completed/abandoned wizard drafts, secret-material
+rejection and fail-closed startup rehydration. Stage 5B added a single
+`mnesia:sync_transaction/1` boundary for the prepared OVPN provisioning domain
+object and the wizard transition to `completed`; stale or invalid draft writes
+roll back the domain record, and both ETS projections are applied only after
+commit. The restart suite now verifies that the paired completion survives a
+full IAS VM restart.
+
 ### Remaining Direction
 
 The supported public domain graph now uses the IAS-owned KVS store, backed by
@@ -946,11 +963,11 @@ Mnesia `disc_copies`, as its source of truth and rebuilds ETS before HTTP startu
 Writes are durable-first, graph commits are atomic within the KVS domain boundary,
 and incompatible schemas fail closed.
 
-Enrollment completion still crosses the certificate-material store, Device
-key-reference updates and volatile wizard draft state, so its wider recovery
-boundary remains coordinated with `TD-014`. Durable wizard drafts, public
-certificate material, audit retention and secret storage remain separate future
-stages. Private keys, TLS secrets, OVPN bodies, certificate bodies and
+CMP enrollment completion still crosses the certificate-material store and
+Device key-reference updates, so its wider recovery boundary remains coordinated
+with `TD-014`. Durable wizard drafts and final OVPN completion are now covered;
+public certificate material, audit retention and secret storage remain separate
+future stages. Private keys, TLS secrets, OVPN bodies, certificate bodies and
 browser/session state are outside this resolved domain-graph milestone.
 
 Implementation stages, persistence classification, schema proposal, failure

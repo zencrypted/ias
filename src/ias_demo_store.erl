@@ -15,6 +15,7 @@
     rehydrate/0,
     projection_health/0,
     commit_graph/2,
+    project_committed_records/1,
     put_runtime_object/1,
     delete_runtime_object/2,
     clear/0,
@@ -167,6 +168,18 @@ commit_graph(Objects0, Relationships0)
     end;
 commit_graph(_Objects, _Relationships) ->
     {error, invalid_domain_graph}.
+
+%% Project records that have already committed in a wider durable transaction.
+%% This function never performs a second durable write.
+project_committed_records(Records) when is_list(Records) ->
+    ensure(),
+    {RelationshipRecords, ObjectRecords} =
+        lists:partition(
+          fun(Record) -> maps:get(kind, Record, undefined) =:= relationship end,
+          Records),
+    project_graph(ObjectRecords, RelationshipRecords);
+project_committed_records(_Records) ->
+    {error, invalid_committed_domain_records}.
 
 put_runtime_object(#{kind := _Kind, id := _Id} = Object) ->
     ensure(),

@@ -1,6 +1,14 @@
 -module(ias_provisioning_wizard_draft_store).
 
--export([ensure/0, put/1, get/1, delete/1, all/0, validate_all/0, reset/0]).
+-export([ensure/0,
+         put/1,
+         put_in_transaction/1,
+         replace_in_transaction/2,
+         get/1,
+         delete/1,
+         all/0,
+         validate_all/0,
+         reset/0]).
 
 -include("ias_provisioning_wizard_draft.hrl").
 
@@ -67,38 +75,93 @@ reset() ->
     end.
 
 write(Draft) ->
+    case transaction(fun() -> put_in_transaction(Draft) end) of
+        {ok, {Record, Change}} ->
+            {ok, Record#ias_provisioning_wizard_draft.payload, Change};
+        {error, _} = Error ->
+            Error
+    end.
+
+%% Internal cross-store transaction hooks. The caller owns the surrounding
+%% Mnesia transaction and projects ETS only after commit.
+put_in_transaction(Draft) when is_map(Draft) ->
+    validate_payload_in_transaction(Draft),
+    Id = normalize_id(maps:get(id, Draft)),
+    case mnesia:read(?TABLE, Id, write) of
+        [] -> write_record_in_transaction(Draft, undefined);
+        [#ias_provisioning_wizard_draft{} = Old] ->
+            validate_record_or_abort(Old),
+            write_record_in_transaction(Draft, Old);
+        Records ->
+            mnesia:abort({invalid_wizard_draft_record_set, Id, Records})
+    end;
+put_in_transaction(_Draft) ->
+    mnesia:abort(invalid_wizard_draft).
+
+replace_in_transaction(Expected, Draft)
+  when is_map(Expected), is_map(Draft) ->
+    validate_payload_in_transaction(Expected),
+    validate_payload_in_transaction(Draft),
+    ExpectedId = normalize_id(maps:get(id, Expected)),
+    DraftId = normalize_id(maps:get(id, Draft)),
+    case ExpectedId =:= DraftId of
+        false ->
+            mnesia:abort({wizard_draft_identity_mismatch,
+                          ExpectedId, DraftId});
+        true ->
+            case mnesia:read(?TABLE, DraftId, write) of
+                [#ias_provisioning_wizard_draft{} = Old] ->
+                    validate_record_or_abort(Old),
+                    case Old#ias_provisioning_wizard_draft.payload =:= Expected of
+                        true -> write_record_in_transaction(Draft, Old);
+                        false -> mnesia:abort({wizard_draft_conflict, DraftId})
+                    end;
+                [] ->
+                    mnesia:abort({wizard_draft_not_found, DraftId});
+                Records ->
+                    mnesia:abort({invalid_wizard_draft_record_set,
+                                  DraftId, Records})
+            end
+    end;
+replace_in_transaction(_Expected, _Draft) ->
+    mnesia:abort(invalid_wizard_draft).
+
+write_record_in_transaction(Draft, undefined) ->
     Id = normalize_id(maps:get(id, Draft)),
     Now = erlang:system_time(second),
-    Status = lifecycle_status(Draft),
-    Fun = fun() ->
-        case mnesia:read(?TABLE, Id, write) of
-            [] ->
-                Record = #ias_provisioning_wizard_draft{
-                    draft_id = Id, status = Status, payload = Draft,
-                    created_at = Now, updated_at = Now,
-                    completed_at = maps:get(completed_at, Draft, undefined),
-                    abandoned_at = maps:get(abandoned_at, Draft, undefined)},
-                mnesia:write(Record),
-                {Record, changed};
-            [Old] ->
-                ok = validate_record_or_abort(Old),
-                case Old#ias_provisioning_wizard_draft.payload =:= Draft of
-                    true -> {Old, unchanged};
-                    false ->
-                        Record = Old#ias_provisioning_wizard_draft{
-                            status = Status, payload = Draft,
-                            revision = Old#ias_provisioning_wizard_draft.revision + 1,
-                            updated_at = Now,
-                            completed_at = maps:get(completed_at, Draft, undefined),
-                            abandoned_at = maps:get(abandoned_at, Draft, undefined)},
-                        mnesia:write(Record),
-                        {Record, changed}
-                end
-        end
-    end,
-    case transaction(Fun) of
-        {ok, {Record, Change}} -> {ok, Record#ias_provisioning_wizard_draft.payload, Change};
-        {error, _} = Error -> Error
+    Record = #ias_provisioning_wizard_draft{
+                draft_id = Id,
+                status = lifecycle_status(Draft),
+                payload = Draft,
+                created_at = Now,
+                updated_at = Now,
+                completed_at = maps:get(completed_at, Draft, undefined),
+                abandoned_at = maps:get(abandoned_at, Draft, undefined)},
+    validate_record_or_abort(Record),
+    mnesia:write(Record),
+    {Record, changed};
+write_record_in_transaction(Draft,
+                            #ias_provisioning_wizard_draft{} = Old) ->
+    case Old#ias_provisioning_wizard_draft.payload =:= Draft of
+        true ->
+            {Old, unchanged};
+        false ->
+            Record = Old#ias_provisioning_wizard_draft{
+                       status = lifecycle_status(Draft),
+                       payload = Draft,
+                       revision = Old#ias_provisioning_wizard_draft.revision + 1,
+                       updated_at = erlang:system_time(second),
+                       completed_at = maps:get(completed_at, Draft, undefined),
+                       abandoned_at = maps:get(abandoned_at, Draft, undefined)},
+            validate_record_or_abort(Record),
+            mnesia:write(Record),
+            {Record, changed}
+    end.
+
+validate_payload_in_transaction(Draft) ->
+    case validate_payload(Draft) of
+        ok -> ok;
+        {error, Reason} -> mnesia:abort(Reason)
     end.
 
 ensure_storage() ->

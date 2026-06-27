@@ -8,6 +8,7 @@
          delete/1,
          clear/0,
          rehydrate/0,
+         project_committed_draft/1,
          abandon/1,
          next/1,
          back/1,
@@ -163,6 +164,14 @@ rehydrate() ->
             {ok, length(Drafts)};
         {error, _} = Error -> Error
     end.
+
+%% Project a draft that has already committed together with domain records.
+project_committed_draft(#{id := Id} = Draft) ->
+    ensure(),
+    true = ets:insert(?TABLE, {normalize_id(Id), Draft}),
+    {ok, Draft};
+project_committed_draft(_Draft) ->
+    {error, invalid_wizard_draft}.
 
 abandon(Id) ->
     case get(Id) of
@@ -526,14 +535,11 @@ create_new_provisioning(Draft) ->
             {error, material_readiness_blocked};
         true ->
             DeviceId = maps:get(device_id, Draft, undefined),
-            case ias_ovpn_provisioning:create(device_bound, device, DeviceId) of
+            case ias_ovpn_provisioning:prepare(device_bound, device, DeviceId) of
                 {ok, Transaction} ->
                     case provisioning_matches_draft(Transaction, Draft) of
                         true -> persist_provisioning_result(Draft, Transaction);
-                        false ->
-                            ok = ias_demo_store:delete_runtime_object(
-                                   ovpn_provisioning, maps:get(id, Transaction)),
-                            {error, provisioning_reference_mismatch}
+                        false -> {error, provisioning_reference_mismatch}
                     end;
                 {error, Reason} ->
                     {error, Reason}
@@ -542,15 +548,18 @@ create_new_provisioning(Draft) ->
 
 persist_provisioning_result(Draft, Transaction) ->
     ProvisioningId = maps:get(id, Transaction),
-    Updates = #{provisioning_id => ProvisioningId,
-                completed => true,
-                completed_at => created_at(),
-                current_step => provisioning},
-    case update(maps:get(id, Draft), Updates) of
-        {ok, Updated} -> {ok, Updated, Transaction};
+    Now = created_at(),
+    Completed = (maps:merge(
+                   Draft,
+                   #{provisioning_id => ProvisioningId,
+                     completed => true,
+                     completed_at => Now,
+                     current_step => provisioning}))#{updated_at => Now},
+    case ias_provisioning_wizard_completion:commit(
+           Draft, Completed, Transaction) of
+        {ok, Updated, StoredTransaction, _Changes} ->
+            {ok, Updated, StoredTransaction};
         {error, Reason} ->
-            ok = ias_demo_store:delete_runtime_object(ovpn_provisioning,
-                                                       ProvisioningId),
             {error, Reason}
     end.
 

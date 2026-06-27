@@ -542,11 +542,28 @@ Run it with:
 rebar3 ct --suite test/ias_persistence_SUITE
 ```
 
-### Stage 5 — Durable wizard drafts
+### Stage 5 — Durable wizard drafts and atomic completion
 
-Add a separate durable draft table or a clearly separated draft record class.
-Support resume, completion and abandonment after restart without persisting form
-secrets or browser/session identifiers.
+**Status:** Implemented in Stage 5A and Stage 5B.
+
+Stage 5A added the `ias_provisioning_wizard_draft` Mnesia `disc_copies` table.
+The existing wizard store remains the compatibility façade and ETS read model,
+while active, completed and abandoned drafts are written durable-first and
+rehydrated before Cowboy starts. Draft validation rejects private keys, PEM/CSR
+bodies, passwords, secrets and browser/session values.
+
+Stage 5B added one durable completion boundary for the final device-bound OVPN
+provisioning action. The prepared `ovpn_provisioning` domain object and the
+wizard transition to `completed` are written in one `mnesia:sync_transaction/1`
+across the Mnesia-backed `ias_domain_object` and
+`ias_provisioning_wizard_draft` tables. Both ETS projections are updated only
+after commit. A rejected or stale draft aborts the complete transaction, so no
+orphan provisioning object remains and retries stay idempotent.
+
+The cross-store transaction hooks are intentionally internal: normal domain
+writes continue through the public KVS façade. This stage covers final wizard
+provisioning completion; CMP enrollment completion still crosses the separate
+certificate-material store and remains tracked by TD-014.
 
 ### Stage 6 — Audit and material stores
 

@@ -11,6 +11,7 @@
          end_per_suite/1,
          domain_graph_survives_ias_restart/1,
          repeated_restart_is_idempotent/1,
+         wizard_completion_survives_ias_restart/1,
          incompatible_durable_schema_fails_closed/1,
          reconciliation_rpc/5]).
 
@@ -23,6 +24,7 @@
 all() ->
     [domain_graph_survives_ias_restart,
      repeated_restart_is_idempotent,
+     wizard_completion_survives_ias_restart,
      incompatible_durable_schema_fails_closed].
 
 init_per_suite(Config) ->
@@ -191,6 +193,64 @@ repeated_restart_is_idempotent(Config) ->
                  rpc_ok(Node2, ias_demo_store, get, [DeviceId])),
     ?assertEqual(not_found,
                  rpc_ok(Node2, ias_demo_store, get, [DeletedId])),
+    ok.
+
+wizard_completion_survives_ias_restart(Config) ->
+    Node = proplists:get_value(ias_node, Config),
+    {ok, Draft} = rpc_ok(Node,
+                         ias_provisioning_wizard_store,
+                         new,
+                         [device_bound]),
+    WizardId = maps:get(id, Draft),
+    ProvisioningId = <<"stage5b-restart-provisioning">>,
+    Transaction = #{id => ProvisioningId,
+                    provisioning_id => ProvisioningId,
+                    kind => ovpn_provisioning,
+                    source => provisioning_wizard,
+                    mode => device_bound,
+                    subject_kind => device,
+                    subject_id => <<"stage5b-device">>,
+                    device_id => undefined,
+                    certificate_id => undefined,
+                    vpn_service_id => undefined,
+                    ca_certificate_id => undefined,
+                    authorization => allow,
+                    status => ready_for_delivery,
+                    private_key_stored => false,
+                    certificate_body_stored => false,
+                    ca_body_stored => false},
+    Completed = Draft#{provisioning_id => ProvisioningId,
+                       completed => true,
+                       completed_at => <<"2026-06-27T19:40:00Z">>,
+                       current_step => provisioning,
+                       updated_at => <<"2026-06-27T19:40:00Z">>},
+    {ok, Completed, StoredTransaction, _Changes} =
+        rpc_ok(Node,
+               ias_provisioning_wizard_completion,
+               commit,
+               [Draft, Completed, Transaction]),
+    ?assertEqual(ProvisioningId, maps:get(id, StoredTransaction)),
+
+    Config1 = restart_ias(Config, "ias-stage5b-restarted.log", success),
+    Node1 = proplists:get_value(ias_node, Config1),
+    ?assertMatch({ok, #{object_id := ProvisioningId,
+                         payload := #{id := ProvisioningId}}},
+                 rpc_ok(Node1,
+                        ias_domain_store,
+                        get,
+                        [ovpn_provisioning, ProvisioningId])),
+    ?assertMatch({ok, #{id := ProvisioningId}},
+                 rpc_ok(Node1,
+                        ias_ovpn_provisioning,
+                        get,
+                        [ProvisioningId])),
+    ?assertEqual({ok, Completed},
+                 rpc_ok(Node1,
+                        ias_provisioning_wizard_store,
+                        get,
+                        [WizardId])),
+    Health = rpc_ok(Node1, ias_demo_store, projection_health, []),
+    assert_synchronized_hashes(Health),
     ok.
 
 incompatible_durable_schema_fails_closed(Config) ->

@@ -6,6 +6,7 @@
          delete/2,
          all/0,
          transaction/1,
+         put_in_transaction/1,
          validate_all/0,
          reset/0]).
 
@@ -37,6 +38,19 @@ put(Object) when is_map(Object) ->
     end;
 put(_Object) ->
     {error, invalid_domain_object}.
+
+%% Internal cross-store transaction hook. The caller must already be inside a
+%% Mnesia transaction that owns the ias_domain_object table lock boundary.
+%% No ETS projection is performed here.
+put_in_transaction(Object) when is_map(Object) ->
+    case persistent_projection(Object) of
+        {ok, Projection} ->
+            write_projection_in_transaction(Projection);
+        {error, Reason} ->
+            mnesia:abort(Reason)
+    end;
+put_in_transaction(_Object) ->
+    mnesia:abort(invalid_domain_object).
 
 get(Kind0, ObjectId0) ->
     case normalize_identity(Kind0, ObjectId0) of
@@ -178,6 +192,74 @@ write_projection(Projection) ->
                     stage_record(Record),
                     {Record, changed}
             end
+    end.
+
+write_projection_in_transaction(Projection) ->
+    Kind = maps:get(kind, Projection),
+    ObjectId = normalize_id(maps:get(id, Projection)),
+    Key = {Kind, ObjectId},
+    ok = validate_relationship_projection_in_transaction(Projection),
+    Now = now_seconds(),
+    case mnesia:read(?TABLE, Key, write) of
+        [] ->
+            Record = #ias_domain_object{key = Key,
+                                        kind = Kind,
+                                        object_id = ObjectId,
+                                        payload = Projection,
+                                        revision = 1,
+                                        created_at = Now,
+                                        updated_at = Now},
+            ok = validate_record_in_transaction(Record),
+            mnesia:write(Record),
+            {record_to_map(Record), changed};
+        [#ias_domain_object{} = Record0] ->
+            ok = validate_record_in_transaction(Record0),
+            case Record0#ias_domain_object.payload =:= Projection of
+                true ->
+                    {record_to_map(Record0), unchanged};
+                false ->
+                    Record = Record0#ias_domain_object{
+                               payload = Projection,
+                               revision = Record0#ias_domain_object.revision + 1,
+                               updated_at = Now},
+                    ok = validate_record_in_transaction(Record),
+                    mnesia:write(Record),
+                    {record_to_map(Record), changed}
+            end;
+        Records ->
+            mnesia:abort({invalid_domain_record_set, Key, Records})
+    end.
+
+validate_relationship_projection_in_transaction(
+  #{kind := relationship} = Projection) ->
+    validate_reference_in_transaction(maps:get(source_kind, Projection),
+                                      maps:get(source_id, Projection)),
+    validate_reference_in_transaction(maps:get(target_kind, Projection),
+                                      maps:get(target_id, Projection)),
+    ok;
+validate_relationship_projection_in_transaction(_Projection) ->
+    ok.
+
+validate_reference_in_transaction(Kind, ObjectId) ->
+    case catalog_kind(Kind) of
+        true ->
+            ok;
+        false ->
+            Key = {Kind, normalize_id(ObjectId)},
+            case mnesia:read(?TABLE, Key, read) of
+                [#ias_domain_object{} = Record] ->
+                    validate_record_in_transaction(Record);
+                [] ->
+                    mnesia:abort({missing_domain_reference, Kind, ObjectId});
+                Records ->
+                    mnesia:abort({invalid_domain_record_set, Key, Records})
+            end
+    end.
+
+validate_record_in_transaction(Record) ->
+    case validate_record(Record) of
+        ok -> ok;
+        {error, Reason} -> mnesia:abort(Reason)
     end.
 
 persistent_projection(#{kind := Kind0, id := ObjectId0} = Object) ->

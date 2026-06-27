@@ -1,5 +1,6 @@
 -module(ias_ovpn_provisioning).
 -export([preview/3,
+         prepare/3,
          create/3,
          get/1,
          refresh/1,
@@ -28,28 +29,34 @@ preview(Mode, SubjectKind, SubjectId) ->
     blocked_plan(Mode, SubjectKind, SubjectId,
                  <<"unsupported OVPN provisioning mode or subject">>).
 
-create(Mode, SubjectKind, SubjectId) ->
+prepare(Mode, SubjectKind, SubjectId) ->
     Plan = preview(Mode, SubjectKind, SubjectId),
     case maps:get(authorization, Plan, deny) of
         allow ->
             Now = erlang:system_time(second),
             Id = provisioning_id(),
-            Transaction = Plan#{
-                id => Id,
-                provisioning_id => Id,
-                kind => ovpn_provisioning,
-                source => ovpn_provisioning_demo,
-                created_at => timestamp(Now),
-                expires_at => timestamp(Now + ?TTL_SECONDS),
-                downloaded => false,
-                private_key_stored => false,
-                certificate_body_stored => false,
-                ca_body_stored => false
-            },
-            {ok, ias_demo_store:put_runtime_object(Transaction)};
+            {ok,
+             Plan#{id => Id,
+                   provisioning_id => Id,
+                   kind => ovpn_provisioning,
+                   source => ovpn_provisioning_demo,
+                   created_at => timestamp(Now),
+                   expires_at => timestamp(Now + ?TTL_SECONDS),
+                   downloaded => false,
+                   private_key_stored => false,
+                   certificate_body_stored => false,
+                   ca_body_stored => false}};
         _ ->
             {error, maps:get(authorization_reason, Plan,
                              <<"OVPN provisioning denied">>)}
+    end.
+
+create(Mode, SubjectKind, SubjectId) ->
+    case prepare(Mode, SubjectKind, SubjectId) of
+        {ok, Transaction} ->
+            {ok, ias_demo_store:put_runtime_object(Transaction)};
+        {error, _} = Error ->
+            Error
     end.
 
 get(ProvisioningId) ->

@@ -19,6 +19,78 @@ provisioning_transaction_is_created_and_recorded_test() ->
     ?assertEqual(public_bundle_ready, maps:get(artifact_status, Transaction)),
     ?assertEqual(ready_for_device_import, maps:get(delivery_status, Transaction)).
 
+atomic_completion_rolls_back_domain_when_draft_is_rejected_test() ->
+    Draft = setup_ready_wizard(),
+    DeviceId = maps:get(device_id, Draft),
+    {ok, Transaction} =
+        ias_ovpn_provisioning:prepare(device_bound, device, DeviceId),
+    ProvisioningId = maps:get(id, Transaction),
+    Completed = Draft#{provisioning_id => ProvisioningId,
+                       completed => true,
+                       completed_at => <<"2026-06-27T19:30:00Z">>,
+                       current_step => provisioning,
+                       updated_at => <<"2026-06-27T19:30:00Z">>,
+                       private_key_pem => <<"must-not-persist">>},
+
+    ?assertEqual(
+       {error, {forbidden_wizard_draft_material, [private_key_pem]}},
+       ias_provisioning_wizard_completion:commit(
+         Draft, Completed, Transaction)),
+    ?assertEqual(not_found,
+                 ias_domain_store:get(ovpn_provisioning, ProvisioningId)),
+    ?assertEqual(not_found, ias_demo_store:get(ProvisioningId)),
+    ?assertEqual({ok, Draft},
+                 ias_provisioning_wizard_store:get(maps:get(id, Draft))),
+    ?assertEqual({ok, Draft},
+                 ias_provisioning_wizard_draft_store:get(maps:get(id, Draft))).
+
+stale_draft_conflict_rolls_back_completion_test() ->
+    Draft = setup_ready_wizard(),
+    WizardId = maps:get(id, Draft),
+    {ok, CurrentDraft} = ias_provisioning_wizard_store:update(
+                           WizardId,
+                           #{pending_csr_filename => <<"newer-state.csr">>}),
+    {ok, Transaction} =
+        ias_ovpn_provisioning:prepare(
+          device_bound, device, maps:get(device_id, Draft)),
+    ProvisioningId = maps:get(id, Transaction),
+    Completed = Draft#{provisioning_id => ProvisioningId,
+                       completed => true,
+                       completed_at => <<"2026-06-27T19:31:00Z">>,
+                       current_step => provisioning,
+                       updated_at => <<"2026-06-27T19:31:00Z">>},
+
+    ?assertEqual(
+       {error, {wizard_draft_conflict, WizardId}},
+       ias_provisioning_wizard_completion:commit(
+         Draft, Completed, Transaction)),
+    ?assertEqual(not_found,
+                 ias_domain_store:get(ovpn_provisioning, ProvisioningId)),
+    ?assertEqual({ok, CurrentDraft},
+                 ias_provisioning_wizard_store:get(WizardId)),
+    ?assertEqual({ok, CurrentDraft},
+                 ias_provisioning_wizard_draft_store:get(WizardId)).
+
+completed_transaction_and_draft_rehydrate_together_test() ->
+    Draft = setup_ready_wizard(),
+    WizardId = maps:get(id, Draft),
+    {ok, Completed, Transaction} =
+        ias_provisioning_wizard_store:create_provisioning(WizardId),
+    ProvisioningId = maps:get(id, Transaction),
+
+    ets:delete_all_objects(ias_demo_store),
+    ets:delete_all_objects(ias_provisioning_wizard_drafts),
+    ?assertEqual(not_found, ias_demo_store:get(ProvisioningId)),
+    ?assertEqual(not_found, ias_provisioning_wizard_store:get(WizardId)),
+
+    {ok, DomainHealth} = ias_demo_store:rehydrate(),
+    ?assertEqual(synchronized, maps:get(status, DomainHealth)),
+    {ok, _DraftCount} = ias_provisioning_wizard_store:rehydrate(),
+    ?assertMatch({ok, #{id := ProvisioningId}},
+                 ias_ovpn_provisioning:get(ProvisioningId)),
+    ?assertEqual({ok, Completed},
+                 ias_provisioning_wizard_store:get(WizardId)).
+
 provisioning_creation_is_idempotent_test() ->
     Draft = setup_ready_wizard(),
     WizardId = maps:get(id, Draft),
