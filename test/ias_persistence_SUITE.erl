@@ -780,14 +780,8 @@ ensure_distributed_controller() ->
     end.
 
 ias_code_paths(IasRepo) ->
-    TestPatterns = [
-        filename:join([IasRepo, "_build", "test", "lib", "*", "ebin"]),
-        filename:join([IasRepo, "_build", "test", "lib", "*", "test"])
-    ],
-    DefaultPatterns = [
-        filename:join([IasRepo, "_build", "default", "lib", "*", "ebin"]),
-        filename:join([IasRepo, "_build", "default", "lib", "*", "test"])
-    ],
+    TestPatterns = profile_code_path_patterns(IasRepo, "test"),
+    DefaultPatterns = profile_code_path_patterns(IasRepo, "default"),
     %% A partially populated test profile must not hide the default profile:
     %% the application descriptor can still live in the latter while CT beams
     %% are loaded from the former.
@@ -810,6 +804,15 @@ ias_code_paths(IasRepo) ->
         {_, _} ->
             Paths
     end.
+
+profile_code_path_patterns(IasRepo, Profile) ->
+    %% rebar3 normally uses _build/<profile>/lib, but this project keeps the
+    %% historical {deps_dir, "deps"} layout. Support both so the detached IAS
+    %% VM receives the application descriptor as well as every dependency.
+    lists:append(
+      [[filename:join([IasRepo, "_build", Profile, Container, "*", "ebin"]),
+        filename:join([IasRepo, "_build", Profile, Container, "*", "test"])]
+       || Container <- ["lib", "deps"]]).
 
 wildcard_paths(Patterns) ->
     lists:append([filelib:wildcard(Pattern) || Pattern <- Patterns]).
