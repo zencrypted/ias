@@ -58,7 +58,11 @@ validate_all() ->
 
 reset() ->
     case ensure_storage() of
-        ok -> ias_kvs_transaction:run(fun reset_in_transaction/0);
+        ok ->
+            case ias_kvs_transaction:run(fun reset_in_transaction/0) of
+                {ok, ok} -> ok;
+                {error, _} = Error -> Error
+            end;
         {error, _} = Error -> Error
     end.
 
