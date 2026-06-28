@@ -1,34 +1,125 @@
 <html>
+
 <head>
     <meta charset="utf-8" />
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="IAS bootstrap" />
-    <meta name="author" content="IAS" />
+    <meta name="description" content="Zencrypted Identity and Access Services" />
+    <meta name="author" content="Maxim Sokhatsky" />
     <title>IAS</title>
-    <link rel="stylesheet" href="priv/static/css/blank.css" />
-    <link rel="stylesheet" href="priv/static/css/forms.css" />
+    <link rel="stylesheet" href="https://n2o.dev/blank.css" />
+    <link rel="stylesheet" href="https://n2o.dev/zima.css" />
+    <link rel="stylesheet" href="https://n2o.dev/pro/pro.css" />
 </head>
+
 <body>
     <nav>
-        <a href="priv/static/index.htm" style="background:#ededed;">IAS</a>
-        <a href="priv/static/users.htm">Users</a>
-        <a href="priv/static/devices.htm">Devices</a>
-        <a href="priv/static/services.htm">Services</a>
-        <a href="priv/static/certificates.htm">Certificates</a>
-        <a href="priv/static/profiles.htm">Security Profiles</a>
-        <a href="priv/static/relationships.htm">Relationships</a>
-        <a href="priv/static/vpn.htm">VPN</a>
+        <a href="https://erp.uno/ias/index.html">ERP/1</a>
+        <a href="https://ias.n2o.dev" style="background:#ededed;">IAS</a>
     </nav>
-
+    <header>
+        <a href="https://github.com/zencrypted/ias"><img src="https://n2o.dev/img/E08F.svg" /></a>
+        <h1>IAS</h1>
+    </header>
     <aside>
         <article>
             <section>
-                <h2>IAS</h2>
-                <p>Identity, Access and Security Administration bootstrap.</p>
-                <div class="empty-state">Open the IAS application at /app/index.htm.</div>
+                <h3>SYNOPSIS</h3>
+                <div>ERP/1 IAS (Identity and Authorization Service) is a management console and coordinate service for user identities, certificates, security policies, and authorization rules for the Zencrypted environment.</div>
+            </section>
+            <section>
+                <h3>SPEC</h3>
+                <div>
+                    <ul>
+                        <li><a href="man/x509.htm">X.509</a></li>
+                        <li><a href="man/cmp.htm">CMP (RFC 4210)</a></li>
+                        <li><a href="man/est.htm">EST (RFC 7030)</a></li>
+                        <li><a href="man/bpe.htm">BPE (BPMN/FSM)</a></li>
+                        <li><a href="man/kvs.htm">KVS / Mnesia</a></li>
+                        <li><a href="man/otp.htm">Erlang/OTP</a></li>
+                    </ul>
+                </div>
+                <br />
+                <div>
+                    JUN 2026 © <a href="https://github.com/5HT">5HT</a> <a href="https://5HT.co/license/">DHARMA 2.0</a><br />
+                    VER 0.1.0
+                </div>
+            </section>
+        </article>
+        <article>
+            <section>
+                <h3>SERVICES</h3>
+                <div>
+                    <ul>
+                        <li>Identity Management</li>
+                        <li>Certificate Enrollment</li>
+                        <li>ABAC Policy Engine</li>
+                        <li>VPN Provisioning</li>
+                        <li>State Reconciliation</li>
+                    </ul>
+                </div>
+            </section>
+            <section>
+                <h3>FEATURES</h3>
+                <div>
+                    <ul>
+                        <li>Local CSR Generation</li>
+                        <li>Private Key Isolation</li>
+                        <li>Orphan Configuration Detection</li>
+                        <li>N2O/Nitro Dashboard</li>
+                    </ul>
+                </div>
             </section>
         </article>
     </aside>
+    <main>
+        <article>
+            <section>
+                <h3>INTRO</h3>
+                <figure><img src="https://authority.erp.uno/priv/design/ca-shaders.png" width=900></figure>
+                <br>
+            </section>
+            <section>
+                <h3>DEVELOPMENT</h3>
+                <p>
+                    * <a href="#">2026-06-28 Identity graph schema operational</a><br />
+                    * <a href="#">2026-06-28 CA/CMP certificate enrollment wizard operational</a><br />
+                    * <a href="#">2026-06-28 ABAC trust evaluation rules operational</a><br />
+                    * <a href="#">2026-06-28 One-way VPN provisioning and reconciliation operational</a><br />
+                    * <a href="#">2026-06-28 Cowboy/N2O/Nitro dashboard operational</a><br />
+                </p>
+            </section>
+            <section>
+                <h3>ARCHITECTURE</h3>
+                <p>Zencrypted IAS is the central administration, trust, and authorization service for Zencrypted VPN overlay network gateways and endpoints. It coordinates the lifecycle of users, devices, certificates, security profiles, and authorization rules, ensuring that actual network access remains strictly compliant with defined policies.</p>
+
+                <p>
+                    <ul>
+                        <li>● ias_domain_store &mdash; Persistent KVS model managing the object graph</li>
+                        <li>● ias_device_csr_enrollment &mdash; Wizard logic for local CSR upload and CA/CMP certificate enrollment</li>
+                        <li>● ias_vpn_access_lifecycle &mdash; Trust evaluation and ABAC policy enforcement engine</li>
+                        <li>● ias_vpn_provisioning_delivery &mdash; One-way distributed Erlang RPC config provisioning to VPN gateways</li>
+                        <li>● ias_vpn_reconciliation &mdash; Periodic state auditing and reconciliation of orphan VPN configurations</li>
+                    </ul>
+                </p>
+
+                <h4>DURABLE STATE & RECONCILIATION</h4>
+                <p>IAS uses Mnesia through the KVS library to maintain a consistent graph of domain objects and relationships. In the event of a system restart, the durable state is completely rehydrated, preventing split-brain or data inconsistency issues. A background reconciliation loop periodically checks the runtime configurations of all connected VPN gateways via RPC. If a configuration exists on a gateway but is not authorized in IAS, it is flagged as an <code>orphan_vpn_config</code> incident and queued for operator decommissioning.</p>
+
+                <h4>KEY MANAGEMENT & SECURITY</h4>
+                <p>To adhere to military-grade security requirements, IAS isolates private keys. During the provisioning wizard flow, the target client device generates its elliptic curve keypair (secp384r1) and CSR locally. The operator uploads only the CSR, which IAS submits to the Certificate Authority (CA) using CMP or EST. The resulting X.509 certificate is registered in IAS, but the private key never leaves the device and is never stored in the IAS database.</p>
+
+                <br>
+                <br>
+                <center>&dot;</center>
+            </section>
+        </article>
+    </main>
+    <footer>
+        <br>
+        <center>&dot;</center>
+        <br>Namdak Tonpa <span class="heart">❤</span> 2026
+    </footer>
 </body>
+
 </html>
