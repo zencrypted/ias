@@ -224,8 +224,7 @@ vpn_summary() ->
 
 vpn_summary(Running) ->
     {ok, #{<<"peers">> => [#{<<"id">> => client_peer_id(),
-                               <<"running">> => Running,
-                               <<"handshake_status">> => <<"established">>}]}}.
+                               <<"running">> => Running}]}}.
 
 allocation_fields() ->
     #{vpn_allocation_id => allocation_id(),
