@@ -306,11 +306,32 @@ snapshot_error(Value) ->
     Value.
 
 event_order(#{schema_version := 1,
-              type := runtime_reconciled,
+              type := EventType,
               stream_id := EventStream,
               sequence := EventSequence},
             State)
   when is_integer(EventSequence), EventSequence >= 0 ->
+    case supported_event_type(EventType) of
+        true ->
+            event_order_by_sequence(EventStream, EventSequence, State);
+        false ->
+            {reject, {invalid_vpn_event_type, EventType}}
+    end;
+event_order(Event, _State) ->
+    {reject, {invalid_vpn_event, maps:with([schema_version,
+                                           type,
+                                           stream_id,
+                                           sequence],
+                                          Event)}}.
+
+supported_event_type(runtime_reconciled) ->
+    true;
+supported_event_type(peer_runtime_changed) ->
+    true;
+supported_event_type(_) ->
+    false.
+
+event_order_by_sequence(EventStream, EventSequence, State) ->
     CurrentStream = maps:get(stream_id, State, undefined),
     CurrentSequence = maps:get(sequence, State, undefined),
     case {CurrentStream, CurrentSequence} of
@@ -323,13 +344,7 @@ event_order(#{schema_version := 1,
                                     EventSequence > Sequence + 1 -> {accept, sequence_gap};
         {EventStream, _Sequence} -> {accept, event};
         {_OtherStream, _Sequence} -> {accept, stream_reset}
-    end;
-event_order(Event, _State) ->
-    {reject, {invalid_vpn_event, maps:with([schema_version,
-                                           type,
-                                           stream_id,
-                                           sequence],
-                                          Event)}}.
+    end.
 
 read_summary(State) ->
     SummaryFun = maps:get(summary_fun, State),

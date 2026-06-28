@@ -71,6 +71,30 @@ event_bridge_pushes_fresh_runtime_snapshots_test_() ->
                               ok
                           end,
 
+                          ManualEvent = #{schema_version => 1,
+                                          type => peer_runtime_changed,
+                                          stream_id => StreamId,
+                                          sequence => 2,
+                                          source => external_command,
+                                          action => stop,
+                                          peer_id => peer_a},
+                          BridgePid ! {vpn_event, ManualEvent},
+                          receive
+                              {direct,
+                               {vpn_runtime_event,
+                                ManualEvent,
+                                Summary,
+                                ManualEventStatus}} ->
+                                  ?assertEqual(2,
+                                               maps:get(sequence,
+                                                        ManualEventStatus)),
+                                  ?assertEqual(event,
+                                               maps:get(sync_reason,
+                                                        ManualEventStatus))
+                          after 1000 ->
+                              error(vpn_peer_runtime_changed_event_timeout)
+                          end,
+
                           Event3 = Event1#{sequence => 3},
                           BridgePid ! {vpn_event, Event3},
                           receive
