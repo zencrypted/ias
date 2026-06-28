@@ -141,7 +141,7 @@ supported wizard-shaped domain graph through KVS, stops the complete VM and
 starts it again with the same Mnesia directory:
 
 ```bash
-rebar3 ct --suite test/ias_persistence_SUITE
+rebar3 ct --suite test/storage/ias_persistence_SUITE
 ```
 
 It verifies object and relationship rehydration, stable durable/ETS projection
@@ -167,7 +167,7 @@ The VPN checkout can be selected explicitly with `VPN_REPO`:
 
 ```bash
 VPN_REPO=/absolute/path/to/vpn \
-  rebar3 ct --suite test/ias_vpn_rpc_SUITE
+  rebar3 ct --suite test/vpn/ias_vpn_rpc_SUITE
 ```
 
 The suite prepares the VPN debug OVPN identity, compiles the VPN debug profile

@@ -568,7 +568,7 @@ snapshot. Live IAS-to-VPN process and node-restart behavior remains covered by
 Run it with:
 
 ```bash
-rebar3 ct --suite test/ias_persistence_SUITE
+rebar3 ct --suite test/storage/ias_persistence_SUITE
 ```
 
 ### Stage 5 — Durable wizard drafts and atomic completion
