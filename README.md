@@ -34,6 +34,7 @@ IAS відповідає за:
 
 IAS-owned durable KVS state, startup rehydration та завершений workflow
 reconciliation/orphan disposition описані у `docs/IAS-DURABLE-STATE.md`.
+- `docs/IAS-VPN-AUTHORITY-DIGEST-MIGRATION.md` — explicit OTP-upgrade migration for durable VPN authority digests.
 VPN не є автоматичним джерелом авторитетного IAS-стану: orphan projection
 може бути прийнята лише через явний audited `Recover into IAS`, а видалення
 виконується лише через audited compare-and-remove `Decommission from VPN`.

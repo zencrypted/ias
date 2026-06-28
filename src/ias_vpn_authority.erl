@@ -13,13 +13,16 @@
          delete/1,
          reset/0,
          reset_provisioning/0,
-         status/0]).
+         status/0,
+         validate_record/1,
+         validate_migration_record/1]).
 
 -include("ias_vpn_authority.hrl").
 -include_lib("kvs/include/metainfo.hrl").
 
 -define(TABLE, ias_vpn_device_state).
--define(SCHEMA_VERSION, 1).
+-define(SCHEMA_VERSION, 2).
+-define(LEGACY_SCHEMA_VERSION, 1).
 -define(WAIT_TIMEOUT, 5000).
 
 ensure() ->
@@ -71,10 +74,10 @@ all() ->
 
 prepare(DeviceId0, Command0) when is_map(Command0) ->
     DeviceId = normalize_id(DeviceId0),
-    Digest = command_digest(Command0),
     case safe_term(Command0) of
         false -> {error, unsafe_vpn_provisioning_command};
         true ->
+            Digest = ias_vpn_command_digest:digest(Command0),
             case transaction(
                    fun() ->
                        Record0 = read_or_default(DeviceId),
@@ -87,6 +90,7 @@ prepare(DeviceId0, Command0) when is_map(Command0) ->
                                Revision = Record0#ias_vpn_device_state.revision + 1,
                                Command = Command0#{revision => Revision},
                                Record = Record0#ias_vpn_device_state{
+                                          schema_version = ?SCHEMA_VERSION,
                                           revision = Revision,
                                           command_digest = Digest,
                                           canonical_command = Command,
@@ -124,11 +128,12 @@ recover_in_transaction(DeviceId0, Command, Binding0)
     case Valid of
         false -> ias_kvs_transaction:abort(invalid_recovered_vpn_authority);
         true ->
-            Digest = command_digest(Command),
+            Digest = ias_vpn_command_digest:digest(Command),
             case kvs_get_record(DeviceId) of
                 not_found ->
                     Record = #ias_vpn_device_state{
                                device_id = DeviceId,
+                               schema_version = ?SCHEMA_VERSION,
                                revision = Revision,
                                command_digest = Digest,
                                canonical_command = Command,
@@ -167,6 +172,7 @@ ensure_minimum_revision(DeviceId0, Revision)
                    true -> unchanged;
                    false ->
                        Record = Record0#ias_vpn_device_state{
+                                  schema_version = ?SCHEMA_VERSION,
                                   revision = Revision,
                                   command_digest = undefined,
                                   canonical_command = #{},
@@ -217,7 +223,7 @@ sync_device(#{kind := device, id := DeviceId0} = Device) ->
                            fun() ->
                                Record0 = read_or_default(DeviceId),
                                validate_record_or_abort(Record0),
-                               Record = Record0#ias_vpn_device_state{
+                               Record = (upgrade_record(Record0))#ias_vpn_device_state{
                                           binding = Binding,
                                           lifecycle_state = device_lifecycle(
                                                               Binding,
@@ -279,6 +285,7 @@ reset_provisioning() ->
 reset_provisioning_record(#ias_vpn_device_state{} = Record0) ->
     validate_record_or_abort(Record0),
     Record = Record0#ias_vpn_device_state{
+               schema_version = ?SCHEMA_VERSION,
                revision = 0,
                command_digest = undefined,
                canonical_command = #{},
@@ -460,21 +467,49 @@ validate_kvs_access() ->
 normalize_abort({vpn_authority_invalid_record, Reason}) -> Reason;
 normalize_abort(Reason) -> Reason.
 
-validate_record(#ias_vpn_device_state{
-                   device_id = DeviceId,
-                   schema_version = ?SCHEMA_VERSION,
-                   revision = Revision,
-                   command_digest = Digest,
-                   canonical_command = Command,
-                   binding = Binding,
-                   lifecycle_state = Lifecycle,
-                   last_decommission = Last,
-                   decommission_history = History,
-                   decommissioned_at = DecommissionedAt,
-                   updated_at = UpdatedAt}) ->
+validate_record(#ias_vpn_device_state{schema_version = SchemaVersion} = Record)
+  when SchemaVersion =:= ?SCHEMA_VERSION;
+       SchemaVersion =:= ?LEGACY_SCHEMA_VERSION ->
+    validate_record_fields(Record, true);
+validate_record(#ias_vpn_device_state{schema_version = Version}) ->
+    {error, {unsupported_vpn_authority_schema_version, Version}};
+validate_record(_) ->
+    {error, invalid_vpn_authority_record}.
+
+%% Used only by the explicit checksum migration tool. It validates every
+%% durable field and the digest shape, but deliberately does not assert digest
+%% equality because that is the property being migrated across OTP releases.
+validate_migration_record(#ias_vpn_device_state{} = Record) ->
+    validate_record_fields(Record, false);
+validate_migration_record(_) ->
+    {error, invalid_vpn_authority_record}.
+
+validate_record_fields(#ias_vpn_device_state{
+                          device_id = DeviceId,
+                          schema_version = SchemaVersion,
+                          revision = Revision,
+                          command_digest = Digest,
+                          canonical_command = Command,
+                          binding = Binding,
+                          lifecycle_state = Lifecycle,
+                          last_decommission = Last,
+                          decommission_history = History,
+                          decommissioned_at = DecommissionedAt,
+                          updated_at = UpdatedAt}, CheckDigest) ->
+    DigestValid = case CheckDigest of
+                      true -> valid_command_projection(SchemaVersion,
+                                                       Revision,
+                                                       Digest,
+                                                       Command);
+                      false -> valid_command_projection_shape(Revision,
+                                                              Digest,
+                                                              Command)
+                  end,
     Checks = [nonempty_binary(DeviceId),
+              (SchemaVersion =:= ?SCHEMA_VERSION orelse
+               SchemaVersion =:= ?LEGACY_SCHEMA_VERSION),
               is_integer(Revision) andalso Revision >= 0,
-              valid_command_projection(Revision, Digest, Command),
+              DigestValid,
               valid_binding(Binding),
               valid_lifecycle(Lifecycle),
               valid_optional_map(Last),
@@ -484,18 +519,27 @@ validate_record(#ias_vpn_device_state{
     case lists:all(fun(Value) -> Value =:= true end, Checks) of
         true -> ok;
         false -> {error, invalid_vpn_authority_record}
-    end;
-validate_record(#ias_vpn_device_state{schema_version = Version}) ->
-    {error, {unsupported_vpn_authority_schema_version, Version}};
-validate_record(_) ->
-    {error, invalid_vpn_authority_record}.
+    end.
 
-valid_command_projection(Revision, Digest, Command) when is_map(Command) ->
+valid_command_projection(SchemaVersion, Revision, Digest, Command)
+  when is_map(Command) ->
     valid_digest(Digest)
         andalso valid_command_revision(Revision, Command)
-        andalso valid_command_digest(Digest, Command)
+        andalso valid_command_digest(SchemaVersion, Digest, Command)
         andalso safe_term(Command);
-valid_command_projection(_Revision, _Digest, _Command) -> false.
+valid_command_projection(_SchemaVersion, _Revision, _Digest, _Command) -> false.
+
+valid_command_projection_shape(Revision, Digest, Command) when is_map(Command) ->
+    valid_digest(Digest)
+        andalso valid_command_revision(Revision, Command)
+        andalso valid_empty_digest_pair(Digest, Command)
+        andalso safe_term(Command);
+valid_command_projection_shape(_Revision, _Digest, _Command) -> false.
+
+valid_empty_digest_pair(undefined, Command) -> map_size(Command) =:= 0;
+valid_empty_digest_pair(Digest, Command) when is_binary(Digest) ->
+    map_size(Command) > 0;
+valid_empty_digest_pair(_Digest, _Command) -> false.
 
 valid_command_revision(_Revision, Command) when map_size(Command) =:= 0 -> true;
 valid_command_revision(Revision, Command) ->
@@ -505,10 +549,15 @@ valid_digest(undefined) -> true;
 valid_digest(Digest) when is_binary(Digest) -> byte_size(Digest) =:= 32;
 valid_digest(_) -> false.
 
-valid_command_digest(undefined, Command) when map_size(Command) =:= 0 -> true;
-valid_command_digest(Digest, Command) when is_binary(Digest), map_size(Command) > 0 ->
-    Digest =:= command_digest(Command);
-valid_command_digest(_Digest, _Command) -> false.
+valid_command_digest(_SchemaVersion, undefined, Command)
+  when map_size(Command) =:= 0 -> true;
+valid_command_digest(?SCHEMA_VERSION, Digest, Command)
+  when is_binary(Digest), map_size(Command) > 0 ->
+    secure_equal(Digest, ias_vpn_command_digest:digest(Command));
+valid_command_digest(?LEGACY_SCHEMA_VERSION, Digest, Command)
+  when is_binary(Digest), map_size(Command) > 0 ->
+    secure_equal(Digest, ias_vpn_command_digest:legacy_digest(Command));
+valid_command_digest(_SchemaVersion, _Digest, _Command) -> false.
 
 valid_optional_map(undefined) -> true;
 valid_optional_map(Map) when is_map(Map) -> safe_term(Map);
@@ -578,9 +627,24 @@ command_lifecycle(#{operation := revoke}, _Current) -> revoked;
 command_lifecycle(#{operation := remove}, _Current) -> removed;
 command_lifecycle(_Command, Current) -> Current.
 
-command_digest(Command) ->
-    crypto:hash(sha256,
-                term_to_binary(maps:remove(revision, Command), [deterministic])).
+upgrade_record(#ias_vpn_device_state{canonical_command = Command} = Record) ->
+    Digest = case map_size(Command) of
+                 0 -> undefined;
+                 _ -> ias_vpn_command_digest:digest(Command)
+             end,
+    Record#ias_vpn_device_state{schema_version = ?SCHEMA_VERSION,
+                                command_digest = Digest}.
+
+secure_equal(Left, Right)
+  when is_binary(Left), is_binary(Right), byte_size(Left) =:= byte_size(Right) ->
+    secure_equal(Left, Right, 0) =:= 0;
+secure_equal(_Left, _Right) ->
+    false.
+
+secure_equal(<<>>, <<>>, Acc) ->
+    Acc;
+secure_equal(<<Left, LeftRest/binary>>, <<Right, RightRest/binary>>, Acc) ->
+    secure_equal(LeftRest, RightRest, Acc bor (Left bxor Right)).
 
 overlay_state(Device, State) ->
     Binding = maps:get(binding, State, #{}),

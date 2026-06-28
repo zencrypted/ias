@@ -206,3 +206,82 @@ decommission_summary(DeviceId) ->
       identity_state => retained,
       decommissioned_at => 1782330000,
       ias_recorded_at => 1782330001}.
+
+portable_command_digest_is_map_order_independent_test() ->
+    CommandA = #{operation => upsert,
+                 source => ias,
+                 desired_state => #{device_id => <<"portable-device">>,
+                                    enabled => true}},
+    CommandB = maps:from_list(
+                 [{desired_state,
+                   maps:from_list([{enabled, true},
+                                   {device_id, <<"portable-device">>}])},
+                  {source, ias},
+                  {operation, upsert}]),
+    ?assertEqual(ias_vpn_command_digest:digest(CommandA),
+                 ias_vpn_command_digest:digest(CommandB)).
+
+verified_legacy_authority_digest_migration_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(#{device_id := DeviceId}) ->
+         fun() ->
+             Command = (command(DeviceId, upsert, true))#{revision => 4},
+             Legacy = #ias_vpn_device_state{
+                         device_id = DeviceId,
+                         schema_version = 1,
+                         revision = 4,
+                         command_digest =
+                             ias_vpn_command_digest:legacy_digest(Command),
+                         canonical_command = Command,
+                         lifecycle_state = enabled,
+                         updated_at = 1782619000},
+             ok = kvs:put(Legacy),
+             {ok, Inspection} = ias_vpn_authority_migration:inspect(),
+             ?assertEqual(1, maps:get(legacy_verified, Inspection)),
+             {ok, Result} =
+                 ias_vpn_authority_migration:migrate_legacy_digests(),
+             ?assertEqual(1, maps:get(migrated_verified, Result)),
+             {ok, Authority} = ias_vpn_authority:get(DeviceId),
+             ?assertEqual(2, maps:get(schema_version, Authority)),
+             ?assertEqual(4, maps:get(revision, Authority)),
+             ?assertEqual(Command, maps:get(canonical_command, Authority)),
+             ?assertEqual(ias_vpn_command_digest:digest(Command),
+                          maps:get(command_digest, Authority))
+         end
+     end}.
+
+unverifiable_legacy_authority_digest_requires_confirmation_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(#{device_id := DeviceId}) ->
+         fun() ->
+             Command = (command(DeviceId, disable, false))#{revision => 3},
+             Legacy = #ias_vpn_device_state{
+                         device_id = DeviceId,
+                         schema_version = 1,
+                         revision = 3,
+                         command_digest = <<0:256>>,
+                         canonical_command = Command,
+                         lifecycle_state = disabled,
+                         updated_at = 1782619100},
+             ok = kvs:put(Legacy),
+             {ok, Inspection} = ias_vpn_authority_migration:inspect(),
+             ?assertEqual(1, maps:get(legacy_unverifiable, Inspection)),
+             ?assertEqual(
+                {error,
+                 {legacy_vpn_authority_digest_not_verifiable, DeviceId}},
+                ias_vpn_authority_migration:migrate_legacy_digests()),
+             {ok, Result} =
+                 ias_vpn_authority_migration:migrate_legacy_digests(
+                   accept_unverifiable_legacy_digests),
+             ?assertEqual(1,
+                          maps:get(migrated_operator_accepted, Result)),
+             {ok, Authority} = ias_vpn_authority:get(DeviceId),
+             ?assertEqual(2, maps:get(schema_version, Authority)),
+             ?assertEqual(ias_vpn_command_digest:digest(Command),
+                          maps:get(command_digest, Authority))
+         end
+     end}.

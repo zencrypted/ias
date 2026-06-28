@@ -3,7 +3,7 @@
 
 -record(ias_vpn_device_state, {
     device_id,
-    schema_version = 1,
+    schema_version = 2,
     revision = 0,
     command_digest = undefined,
     canonical_command = #{},
