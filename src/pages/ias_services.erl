@@ -18,6 +18,10 @@ event({vpn_runtime_event, _Event, Summary, _BridgeStatus}) ->
     update_services_runtime(Summary);
 event({vpn_runtime_snapshot_failed, _Reason, SummaryError, _BridgeStatus}) ->
     update_services_runtime(SummaryError);
+event({vpn_runtime_event_status, #{connected := false}}) ->
+    update_services_runtime({error, runtime_snapshot_stale});
+event({vpn_runtime_event_status, _BridgeStatus}) ->
+    ok;
 event(_) ->
     ok.
 
