@@ -42,6 +42,28 @@ device_vpn_access_controls_follow_runtime_state_test_() ->
          end
      end}.
 
+
+node_down_runtime_renders_unavailable_without_crashing_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(Context) ->
+         fun() ->
+             Device = maps:get(device, Context),
+             application:set_env(
+               ias,
+               vpn_provisioning_rpc_fun,
+               fun(_Node, vpn_peer_registry, get, [_PeerId], _Timeout) ->
+                       {badrpc, nodedown};
+                  (_Node, _Module, _Function, _Args, _Timeout) ->
+                       {error, unsupported_call}
+               end),
+             Html = render(Device, {error, {badrpc, nodedown}}),
+             ?assertMatch({_, _}, binary:match(Html, <<">unavailable</td>">>)),
+             ?assertEqual(nomatch, binary:match(Html, <<"function_clause">>))
+         end
+     end}.
+
 reserved_device_shows_dynamic_allocation_test_() ->
     {setup,
      fun setup/0,

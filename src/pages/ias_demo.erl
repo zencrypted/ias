@@ -613,6 +613,8 @@ device_vpn_runtime_state({ok, #{revoked := true}}) -> revoked;
 device_vpn_runtime_state({ok, #{enabled := false}}) -> disabled;
 device_vpn_runtime_state({ok, #{authorized := true}}) -> enabled;
 device_vpn_runtime_state({ok, _Peer}) -> available;
+device_vpn_runtime_state({unavailable, _Reason}) -> unavailable;
+device_vpn_runtime_state({error, _Reason}) -> unavailable;
 device_vpn_runtime_state(Value) -> Value.
 
 device_vpn_runtime_value(authorized, {ok, #{revoked := true}}, _Default) -> false;

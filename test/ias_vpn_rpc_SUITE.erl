@@ -448,6 +448,21 @@ vpn_event_bridge_recovers_after_vpn_node_restart(Config) ->
         ?assertEqual(false, maps:get(connected, DisconnectStatus)),
         ?assertEqual(stale, maps:get(snapshot_status, DisconnectStatus)),
 
+        OfflineDevice = ias_demo_store:add_device(
+                          #{id => <<"ias-ct-offline-device">>,
+                            owner => alice,
+                            profile_id => default_user,
+                            runtime_peer_id => ProbePeerId,
+                            vpn_peer => ProbePeerId,
+                            source => manual_device}),
+        OfflineHtml = iolist_to_binary(
+                        nitro:render(
+                          ias_demo:vpn_access_preview(
+                            OfflineDevice,
+                            {error, {badrpc, nodedown}}))),
+        ?assertMatch({_, _},
+                     binary:match(OfflineHtml, <<">unavailable</td>">>)),
+
         %% The bridge may keep quiet recovery attempts while the VPN node is
         %% down, and nodeup may reconnect sooner, but neither path may repeatedly
         %% repaint UI subscribers with the same disconnected state.
