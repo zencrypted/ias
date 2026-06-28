@@ -1,10 +1,27 @@
 -module(ias_devices).
--export([event/1]).
+-export([event/1, content/0, devices_runtime_panel/1]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
+    _ = subscribe_runtime_events(),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event(terminate) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({exit, _Reason}) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({vpn_runtime_snapshot, _Reason, Summary, _BridgeStatus}) ->
+    update_devices_runtime(Summary);
+event({vpn_runtime_event, _Event, Summary, _BridgeStatus}) ->
+    update_devices_runtime(Summary);
+event({vpn_runtime_snapshot_failed, _Reason, SummaryError, _BridgeStatus}) ->
+    update_devices_runtime(SummaryError);
+event({vpn_runtime_event_status, #{connected := false}}) ->
+    update_devices_runtime({error, runtime_snapshot_stale});
+event({vpn_runtime_event_status, _BridgeStatus}) ->
+    ok;
 event(create_demo_device) ->
     Fields = #{name => nitro:q(device_name),
                type => nitro:q(device_type),
@@ -26,17 +43,39 @@ content() ->
         #h2{body = ias_html:text("Devices")},
         #p{body = ias_html:text("Track endpoints and devices that will participate in IAS policies.")},
         #h3{body = count("Devices", Devices)},
-        table([
-            #table{class = <<"ias-table">>,
-                   header = header(["Device", "Security Profile", "VPN Peer", "Peer IP",
-                                    "State", "Remote Peer"]),
-                   body = #tbody{body =
-                       [device_row(Device, VpnSummary)
-                        || Device <- Devices]}}
-        ]),
+        devices_runtime_panel(VpnSummary),
         create_demo_device_panel(),
         #panel{id = device_runtime_objects, body = imported_demo_objects()}
     ]}.
+
+
+devices_runtime_panel(VpnSummary) ->
+    Devices = ias_demo_data:devices(),
+    #panel{id = devices_runtime_summary,
+           body = table([
+               #table{class = <<"ias-table">>,
+                      header = header(["Device", "Security Profile", "VPN Peer", "Peer IP",
+                                       "State", "Remote Peer"]),
+                      body = #tbody{body =
+                          [device_row(Device, VpnSummary)
+                           || Device <- Devices]}}
+           ])}.
+
+update_devices_runtime(Summary) ->
+    nitro:update(devices_runtime_summary,
+                 devices_runtime_panel(Summary)).
+
+subscribe_runtime_events() ->
+    try ias_vpn_event_bridge:subscribe(self())
+    catch
+        exit:_ -> {error, not_started}
+    end.
+
+unsubscribe_runtime_events() ->
+    try ias_vpn_event_bridge:unsubscribe(self())
+    catch
+        exit:_ -> ok
+    end.
 
 create_demo_device_panel() ->
     #panel{class = <<"ias-status-card">>, body = [
