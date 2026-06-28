@@ -551,11 +551,12 @@ reconciliation_fixture(TestFun) ->
          fun() ->
              DeviceId = <<"ias-reconciliation-device">>,
              PeerId = <<"ias-reconciliation-peer">>,
-             ok = ias_demo_store:put_runtime_object(
-                    #{kind => device,
-                      id => DeviceId,
-                      name => <<"Reconciliation device">>,
-                      source => test_fixture}),
+             #{id := DeviceId, kind := device} =
+                 ias_demo_store:put_runtime_object(
+                   #{kind => device,
+                     id => DeviceId,
+                     name => <<"Reconciliation device">>,
+                     source => test_fixture}),
              Command0 = command(DeviceId, PeerId, upsert, true),
              {ok, Command, changed} = ias_vpn_authority:prepare(DeviceId,
                                                                 Command0),
