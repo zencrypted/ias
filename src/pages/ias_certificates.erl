@@ -48,7 +48,7 @@ certificates_runtime_panel(VpnSummary) ->
     Certificates = ias_demo_data:certificates(),
     Profiles = ias_demo_data:profiles(),
     #panel{id = certificates_runtime_summary, body = [
-        #h3{body = count("Certificates", Peers)},
+        #h3{body = certificate_runtime_count(Peers)},
         status(VpnSummary),
         table([
             #table{class = <<"ias-table">>,
@@ -63,6 +63,13 @@ certificates_runtime_panel(VpnSummary) ->
 update_certificates_runtime(Summary) ->
     nitro:update(certificates_runtime_summary,
                  certificates_runtime_panel(Summary)).
+
+certificate_runtime_count(Peers) ->
+    RunningPeers =
+        length([Peer || Peer <- Peers,
+                        ias_vpn_runtime:state(Peer) =:= running]),
+    ias_html:join(["Certificates: ", integer_to_list(length(Peers)),
+                   " · Running peers: ", integer_to_list(RunningPeers)]).
 
 subscribe_runtime_events() ->
     try ias_vpn_event_bridge:subscribe(self())
