@@ -962,7 +962,10 @@ classify(_Authority, _PeerId, undefined, _RegistryEntries, _ExpectedDigest) ->
 classify(Authority, _PeerId, Head, RegistryEntries, ExpectedDigest) ->
     IasRevision = maps:get(revision, Authority),
     VpnRevision = maps:get(revision, Head, undefined),
-    DigestMatch = maps:get(digest, Head, undefined) =:= ExpectedDigest,
+    DigestVersion = maps:get(digest_version, Head, undefined),
+    DigestMatch = DigestVersion =:=
+                      ias_vpn_provisioning_command_digest:schema_version()
+        andalso maps:get(digest, Head, undefined) =:= ExpectedDigest,
     case valid_head_identity(Authority, Head) of
         false ->
             {divergence, vpn_device_identity_mismatch, DigestMatch};
@@ -1035,9 +1038,7 @@ authority_peer_id(Authority) ->
                    maps:get(vpn_peer, Binding, undefined)]).
 
 expected_vpn_digest(Command) when is_map(Command), map_size(Command) > 0 ->
-    crypto:hash(sha256,
-                term_to_binary(maps:remove(dynamic_device_id, Command),
-                               [deterministic]));
+    ias_vpn_provisioning_command_digest:digest(Command);
 expected_vpn_digest(_Command) ->
     undefined.
 
@@ -1327,6 +1328,7 @@ head_summary(undefined) ->
 head_summary(Head) when is_map(Head) ->
     Desired = maps:get(desired_state, Head, #{}),
     Base = maps:with([revision,
+                      digest_version,
                       digest,
                       phase,
                       operation,

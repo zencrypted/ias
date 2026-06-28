@@ -549,9 +549,7 @@ recoverable_kind(relationship) -> true;
 recoverable_kind(_) -> false.
 
 vpn_digest(Command) ->
-    crypto:hash(sha256,
-                term_to_binary(maps:remove(dynamic_device_id, Command),
-                               [deterministic])).
+    ias_vpn_provisioning_command_digest:digest(Command).
 
 plan_id(Plan) ->
     crypto:hash(sha256, term_to_binary(Plan, [deterministic])).

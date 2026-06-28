@@ -665,6 +665,7 @@ tracker_value(Tracker, Key) ->
 
 head(Command, Phase) ->
     #{revision => maps:get(revision, Command),
+      digest_version => ias_vpn_provisioning_command_digest:schema_version(),
       digest => vpn_digest(Command),
       phase => Phase,
       operation => maps:get(operation, Command),
@@ -747,9 +748,7 @@ recovery_manifest(DeviceId) ->
              target_id => ServiceId}]}.
 
 vpn_digest(Command) ->
-    crypto:hash(sha256,
-                term_to_binary(maps:remove(dynamic_device_id, Command),
-                               [deterministic])).
+    ias_vpn_provisioning_command_digest:digest(Command).
 
 restore_env(Key, {ok, Value}) -> application:set_env(ias, Key, Value);
 restore_env(Key, undefined) -> application:unset_env(ias, Key).
