@@ -922,8 +922,10 @@ reconcile_authority(Authority, Snapshot) ->
     RegistryEntries = [maps:get(Id, Registry, undefined)
                        || Id <- ExpectedRegistryIds],
     ExpectedDigest = expected_vpn_digest(Command),
+    DomainDevicePresent = domain_device_present(DeviceId),
     {Status, Reason, DigestMatch} =
-        classify(Authority,
+        classify(DomainDevicePresent,
+                 Authority,
                  PeerId,
                  Head,
                  RegistryEntries,
@@ -935,6 +937,7 @@ reconcile_authority(Authority, Snapshot) ->
       automatic_action => none,
       replay_performed => false,
       ias => #{revision => Revision,
+               domain_device_present => DomainDevicePresent,
                lifecycle_state => maps:get(lifecycle_state,
                                            Authority,
                                            undefined),
@@ -950,16 +953,18 @@ reconcile_authority(Authority, Snapshot) ->
                registry => compact_registry(RegistryEntries)},
       digest_match => DigestMatch}.
 
-classify(Authority, _PeerId, _Head, _RegistryEntries, undefined) ->
+classify(false, _Authority, _PeerId, _Head, _RegistryEntries, _ExpectedDigest) ->
+    {divergence, ias_domain_device_missing, undefined};
+classify(true, Authority, _PeerId, _Head, _RegistryEntries, undefined) ->
     case maps:get(revision, Authority, 0) of
         0 -> {authority_only, no_canonical_command, undefined};
         _ -> {divergence, invalid_canonical_command, undefined}
     end;
-classify(_Authority, undefined, _Head, _RegistryEntries, _ExpectedDigest) ->
+classify(true, _Authority, undefined, _Head, _RegistryEntries, _ExpectedDigest) ->
     {divergence, authority_peer_id_missing, undefined};
-classify(_Authority, _PeerId, undefined, _RegistryEntries, _ExpectedDigest) ->
+classify(true, _Authority, _PeerId, undefined, _RegistryEntries, _ExpectedDigest) ->
     {missing_in_vpn, provisioning_head_missing, undefined};
-classify(Authority, _PeerId, Head, RegistryEntries, ExpectedDigest) ->
+classify(true, Authority, _PeerId, Head, RegistryEntries, ExpectedDigest) ->
     IasRevision = maps:get(revision, Authority),
     VpnRevision = maps:get(revision, Head, undefined),
     DigestVersion = maps:get(digest_version, Head, undefined),
@@ -1000,6 +1005,13 @@ classify_equal_revision(Authority, _Head, RegistryEntries, true) ->
                 true -> {divergence, runtime_registry_should_be_absent, true};
                 false -> {synchronized, in_sync, true}
             end
+    end.
+
+
+domain_device_present(DeviceId) ->
+    case ias_domain_store:get(device, DeviceId) of
+        {ok, _DomainRecord} -> true;
+        _ -> false
     end.
 
 valid_head_identity(Authority, Head) ->

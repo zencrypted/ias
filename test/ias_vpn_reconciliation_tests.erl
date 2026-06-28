@@ -27,6 +27,29 @@ synchronized_snapshot_is_reported_read_only_test_() ->
           ?assertEqual(0, maps:get(drift_records, Report))
       end).
 
+missing_domain_device_is_reported_as_divergence_test_() ->
+    reconciliation_fixture(
+      fun(DeviceId, PeerId, Command) ->
+          ok = ias_domain_store:delete(device, DeviceId),
+          set_snapshot(#{PeerId => head(Command, applied)},
+                       [registry_entry(DeviceId, PeerId, Command)]),
+          {ok, Entry} = ias_vpn_reconciliation:device(DeviceId),
+          ?assertEqual(divergence, maps:get(status, Entry)),
+          ?assertEqual(ias_domain_device_missing, maps:get(reason, Entry)),
+          ?assertEqual(false,
+                       maps:get(domain_device_present,
+                                maps:get(ias, Entry))),
+          ?assertEqual(
+             {error,
+              {vpn_replay_blocked,
+               divergence,
+               ias_domain_device_missing}},
+             ias_vpn_reconciliation:replay(DeviceId)),
+          {ok, Report} = ias_vpn_reconciliation:report(),
+          ?assertEqual(drift_detected, maps:get(state, Report)),
+          ?assertEqual(1, maps:get(divergence, maps:get(counts, Report)))
+      end).
+
 vpn_behind_and_pending_are_reported_without_replay_test_() ->
     reconciliation_fixture(
       fun(DeviceId, PeerId, Command1) ->
@@ -528,6 +551,11 @@ reconciliation_fixture(TestFun) ->
          fun() ->
              DeviceId = <<"ias-reconciliation-device">>,
              PeerId = <<"ias-reconciliation-peer">>,
+             ok = ias_demo_store:put_runtime_object(
+                    #{kind => device,
+                      id => DeviceId,
+                      name => <<"Reconciliation device">>,
+                      source => test_fixture}),
              Command0 = command(DeviceId, PeerId, upsert, true),
              {ok, Command, changed} = ias_vpn_authority:prepare(DeviceId,
                                                                 Command0),
