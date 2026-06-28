@@ -208,10 +208,10 @@ may mirror only a fixed, non-authoritative representation of this workflow.
 
 ### JSON Compatibility
 
-IAS currently uses `jiffy` because OTP 25 is still supported. If JSON handling
-needs to change for newer OTP versions, add a small compatibility layer such as
-`ias_json` and route JSON encode/decode calls through it. Do not scatter direct
-JSON library calls across page modules.
+IAS targets OTP 28 and uses the standard `json` module from `stdlib`. JSON calls
+should remain concentrated in runtime boundary modules rather than being scattered
+across page modules. Introduce an `ias_json` compatibility layer only if support
+for older OTP releases is restored later.
 
 ### Runtime Composition
 

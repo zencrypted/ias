@@ -25,7 +25,7 @@ request(Url) ->
 
 decode(Body) ->
     try
-        {ok, jiffy:decode(Body, [return_maps])}
+        {ok, json:decode(Body)}
     catch
         Class:Reason -> {error, {json_decode, Class, Reason}}
     end.

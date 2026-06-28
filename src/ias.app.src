@@ -3,7 +3,7 @@
   {description, "Identity, Access and Security Administration"},
   {vsn, "3.11.4"},
   {registered, []},
-  {applications, [kernel,stdlib,crypto,public_key,inets,jiffy,mnesia,ranch,cowboy,nitro,kvs,syn,n2o]},
+  {applications, [kernel,stdlib,crypto,public_key,inets,mnesia,ranch,cowboy,nitro,kvs,syn,n2o]},
   {mod, { ias, []}},
   {env, []}
  ]}.
