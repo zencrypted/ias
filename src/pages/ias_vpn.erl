@@ -487,7 +487,7 @@ reconciliation_entry_row(Entry) ->
     DeviceId = maps:get(device_id, Entry, undefined),
     Status = maps:get(status, Entry, undefined),
     #tr{cells = [
-        #td{body = ias_html:text(DeviceId)},
+        #td{body = reconciliation_device_cell(Entry, DeviceId)},
         #td{body = status_badge(Status)},
         #td{body = ias_html:text(maps:get(reason, Entry, undefined))},
         #td{body = ias_html:text(ias_revision(Entry))},
@@ -497,6 +497,13 @@ reconciliation_entry_row(Entry) ->
         #td{body = recovery_preview_cell(Entry)},
         #td{body = replay_button(DeviceId, Status)}
     ]}.
+
+reconciliation_device_cell(#{ias := Ias}, DeviceId) when is_map(Ias) ->
+    #link{url = ias_html:join([<<"/app/demo.htm?id=">>,
+                               ias_html:text(DeviceId)]),
+          body = ias_html:text(DeviceId)};
+reconciliation_device_cell(_Entry, DeviceId) ->
+    ias_html:text(DeviceId).
 
 ias_revision(#{ias := Ias}) when is_map(Ias) -> maps:get(revision, Ias, undefined);
 ias_revision(_Entry) -> undefined.
