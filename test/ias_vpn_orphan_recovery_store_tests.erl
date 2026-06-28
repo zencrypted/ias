@@ -94,9 +94,9 @@ recovery_plan(DeviceId) ->
                                    enabled => true,
                                    recovery_manifest => Manifest}},
     Head = #{revision => 4,
-             digest => crypto:hash(
-                         sha256,
-                         term_to_binary(Command, [deterministic])),
+             digest_version =>
+                 ias_vpn_provisioning_command_digest:schema_version(),
+             digest => ias_vpn_provisioning_command_digest:digest(Command),
              phase => applied,
              operation => upsert,
              source => ias,

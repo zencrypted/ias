@@ -876,10 +876,9 @@ stage7c_recovery_command(DeviceId, PeerId, Manifest) ->
 stage7c_orphan_snapshot(DeviceId, PeerId, Command) ->
     Desired = maps:get(desired_state, Command),
     Head = #{revision => maps:get(revision, Command),
-             digest => crypto:hash(
-                         sha256,
-                         term_to_binary(maps:remove(dynamic_device_id, Command),
-                                        [deterministic])),
+             digest_version =>
+                 ias_vpn_provisioning_command_digest:schema_version(),
+             digest => ias_vpn_provisioning_command_digest:digest(Command),
              phase => applied,
              operation => maps:get(operation, Command),
              source => ias,
@@ -936,10 +935,9 @@ stage7c_recovery_manifest(DeviceId) ->
 reconciliation_snapshot(DeviceId, PeerId, Command) ->
     Desired = maps:get(desired_state, Command),
     Head = #{revision => maps:get(revision, Command),
-             digest => crypto:hash(
-                         sha256,
-                         term_to_binary(maps:remove(dynamic_device_id, Command),
-                                        [deterministic])),
+             digest_version =>
+                 ias_vpn_provisioning_command_digest:schema_version(),
+             digest => ias_vpn_provisioning_command_digest:digest(Command),
              phase => applied,
              operation => maps:get(operation, Command),
              source => ias,
