@@ -66,3 +66,10 @@ portable schema-version-2 digest. Command payloads, revisions, bindings and
 timestamps are preserved.
 
 Run `inspect/0` again, exit the migration shell, and start IAS normally.
+## Relationship to the VPN migrations
+
+This document covers only IAS-owned authority records. The VPN durable
+projection has an independent outer checksum, and each VPN provisioning head has
+an independent command digest. Migrate and start VPN first, then migrate IAS and
+verify reconciliation. See `OTP-28-MIGRATION.md` for the complete paired upgrade
+order.
