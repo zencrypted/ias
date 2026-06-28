@@ -11,14 +11,39 @@ VPN-dependent panels.
 
 ## Start the development topology
 
-Start VPN first with the distributed node name and cookie expected by IAS:
+The required processes depend on the workflow:
+
+| Topology | Supported workflows |
+| --- | --- |
+| IAS + VPN | UI browsing, runtime monitoring, live peer state, reconciliation, recovery and certificate inventory |
+| IAS + VPN + CA/CMP | Complete certificate enrollment and device-bound provisioning, including certificate issuance |
+
+For the full development topology, start the services in this order:
+
+1. CA/CMP;
+2. VPN;
+3. IAS.
+
+Start the OTP 28 CA/CMP development service from the IAS repository with the
+provided helper script:
+
+```bash
+cd ~/ias
+tools/ca/run-ca-otp28.sh
+```
+
+The helper owns the development CA startup details. Use it instead of manually
+reconstructing the CA node arguments. Keep that process running while testing
+enrollment or complete provisioning flows.
+
+Then start VPN with the distributed node name and cookie expected by IAS:
 
 ```bash
 cd ~/vpn
 ERL_FLAGS="-name vpn@127.0.0.1 -setcookie node_runner" rebar3 shell
 ```
 
-Then start IAS:
+Finally start IAS:
 
 ```bash
 cd ~/ias
@@ -37,6 +62,12 @@ same distributed Erlang cookie.
 If IAS is started while VPN is unavailable, IAS remains usable, but
 VPN-dependent panels show `unavailable` or an explicit metadata-unavailable
 message.
+
+If CA/CMP is not running, the monitoring and reconciliation pages continue to
+work with IAS and VPN, but enrollment and complete certificate-issuing
+provisioning flows cannot finish. A configured local CA trust anchor only lets
+IAS validate the expected CA identity; it does not mean that the CA/CMP service
+is currently running.
 
 After restarting IAS, reload any already open browser tabs. The old Nitro page
 process and its VPN event subscription belonged to the previous IAS node even
