@@ -1,10 +1,23 @@
 -module(ias_services).
--export([event/1]).
+-export([event/1, content/0, services_runtime_panel/1]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
+    _ = subscribe_runtime_events(),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event(terminate) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({exit, _Reason}) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({vpn_runtime_snapshot, _Reason, Summary, _BridgeStatus}) ->
+    update_services_runtime(Summary);
+event({vpn_runtime_event, _Event, Summary, _BridgeStatus}) ->
+    update_services_runtime(Summary);
+event({vpn_runtime_snapshot_failed, _Reason, SummaryError, _BridgeStatus}) ->
+    update_services_runtime(SummaryError);
 event(_) ->
     ok.
 
@@ -15,15 +28,36 @@ content() ->
         #h2{body = "Services"},
         #p{body = "Register services that will later use IAS identity and access controls."},
         #h3{body = count("Services", Services)},
-        table([
-            #table{class = <<"ias-table">>,
-                   header = header(["Service", "State", "Configured Peers", "Running Peers", "Certificates"]),
-                   body = #tbody{body =
-                       [service_row(Service, VpnSummary)
-                        || Service <- Services]}}
-        ]),
+        services_runtime_panel(VpnSummary),
         imported_demo_objects()
     ]}.
+
+services_runtime_panel(VpnSummary) ->
+    Services = ias_demo_data:services(),
+    #panel{id = services_runtime_summary,
+           body = table([
+               #table{class = <<"ias-table">>,
+                      header = header(["Service", "State", "Configured Peers", "Running Peers", "Certificates"]),
+                      body = #tbody{body =
+                          [service_row(Service, VpnSummary)
+                           || Service <- Services]}}
+           ])}.
+
+update_services_runtime(Summary) ->
+    nitro:update(services_runtime_summary,
+                 services_runtime_panel(Summary)).
+
+subscribe_runtime_events() ->
+    try ias_vpn_event_bridge:subscribe(self())
+    catch
+        exit:_ -> {error, not_started}
+    end.
+
+unsubscribe_runtime_events() ->
+    try ias_vpn_event_bridge:unsubscribe(self())
+    catch
+        exit:_ -> ok
+    end.
 
 service_row(#{id := vpn, name := Name}, VpnSummary) ->
     Counts = ias_vpn_runtime:counts(VpnSummary),
