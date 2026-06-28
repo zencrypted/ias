@@ -95,7 +95,7 @@ event_bridge_pushes_fresh_runtime_snapshots_test_() ->
                               error(vpn_peer_runtime_changed_event_timeout)
                           end,
 
-                          Event3 = Event1#{sequence => 3},
+                          Event3 = Event1#{sequence => 4},
                           BridgePid ! {vpn_event, Event3},
                           receive
                               {direct,
