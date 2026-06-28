@@ -9,6 +9,7 @@
          end_per_suite/1,
          provisioning_lifecycle/1,
          vpn_runtime_events_notify_ias_after_reconciliation/1,
+         manual_vpn_runtime_changes_notify_ias/1,
          vpn_event_bridge_recovers_after_vpn_node_restart/1,
          provisioning_identity_and_revision_guards/1,
          read_only_reconciliation_reports_synchronized_state/1,
@@ -30,6 +31,7 @@
 all() ->
     [provisioning_lifecycle,
      vpn_runtime_events_notify_ias_after_reconciliation,
+     manual_vpn_runtime_changes_notify_ias,
      provisioning_identity_and_revision_guards,
      read_only_reconciliation_reports_synchronized_state,
      safe_reconciliation_replays_vpn_behind_state,
@@ -320,6 +322,86 @@ vpn_runtime_events_notify_ias_after_reconciliation(Config) ->
                      unsubscribe,
                      [self()],
                      ?RPC_TIMEOUT_MS)
+    end,
+    ok.
+
+
+manual_vpn_runtime_changes_notify_ias(Config) ->
+    VpnNode = proplists:get_value(vpn_node, Config),
+    pong = net_adm:ping(VpnNode),
+    ProbePeerId = peer_c,
+    ok = wait_for_peer_running(VpnNode, ProbePeerId, ?EVENT_TIMEOUT_MS),
+
+    SummaryFun = fun() -> vpn_runtime_summary_over_rpc(VpnNode) end,
+    {ok, BridgePid} = ias_vpn_event_bridge:start_link(
+                        #{vpn_node => VpnNode,
+                          rpc_timeout => ?RPC_TIMEOUT_MS,
+                          retry_ms => 200,
+                          summary_fun => SummaryFun}),
+    try
+        {ok, _SubscriptionStatus} =
+            gen_server:call(BridgePid, {subscribe, self()}),
+        InitialStatus = wait_for_bridge_connected(BridgePid,
+                                                  ?EVENT_TIMEOUT_MS),
+        StreamId = maps:get(stream_id, InitialStatus),
+        InitialSequence = maps:get(sequence, InitialStatus),
+
+        ok = assert_runtime_command_success(
+               rpc:call(VpnNode,
+                        vpn_runtime_command,
+                        stop_peer,
+                        [ProbePeerId],
+                        ?RPC_TIMEOUT_MS)),
+        {StopEvent, StopSummary, StopStatus} =
+            receive_bridge_peer_runtime_changed(ProbePeerId,
+                                                stop,
+                                                StreamId,
+                                                InitialSequence,
+                                                ?EVENT_TIMEOUT_MS),
+        StopSequence = maps:get(sequence, StopEvent),
+        ?assertMatch(#{schema_version := 1,
+                       type := peer_runtime_changed,
+                       source := external_command,
+                       action := stop,
+                       peer_id := ProbePeerId,
+                       stream_id := StreamId},
+                     StopEvent),
+        ?assertEqual(false,
+                     summary_peer_running(ProbePeerId, StopSummary)),
+        ?assertEqual(true, maps:get(connected, StopStatus)),
+        ?assertNot(lists:member(ProbePeerId, running_peers(VpnNode))),
+
+        ok = assert_runtime_command_success(
+               rpc:call(VpnNode,
+                        vpn_runtime_command,
+                        start_peer,
+                        [ProbePeerId],
+                        ?RPC_TIMEOUT_MS)),
+        {StartEvent, StartSummary, StartStatus} =
+            receive_bridge_peer_runtime_changed(ProbePeerId,
+                                                start,
+                                                StreamId,
+                                                StopSequence,
+                                                ?EVENT_TIMEOUT_MS),
+        ?assertMatch(#{schema_version := 1,
+                       type := peer_runtime_changed,
+                       source := external_command,
+                       action := start,
+                       peer_id := ProbePeerId,
+                       stream_id := StreamId},
+                     StartEvent),
+        ?assertEqual(true,
+                     summary_peer_running(ProbePeerId, StartSummary)),
+        ?assertEqual(true, maps:get(connected, StartStatus)),
+        ?assert(lists:member(ProbePeerId, running_peers(VpnNode)))
+    after
+        _ = rpc:call(VpnNode,
+                     vpn_runtime_command,
+                     start_peer,
+                     [ProbePeerId],
+                     ?RPC_TIMEOUT_MS),
+        stop_test_event_bridge(BridgePid),
+        flush_bridge_direct_messages()
     end,
     ok.
 
@@ -2549,6 +2631,78 @@ receive_bridge_runtime_event(DeviceId,
                  StreamId,
                  AfterSequence,
                  LastPayload})
+    end.
+
+
+receive_bridge_peer_runtime_changed(PeerId,
+                                    Action,
+                                    StreamId,
+                                    AfterSequence,
+                                    TimeoutMs) ->
+    Deadline = erlang:monotonic_time(millisecond) + TimeoutMs,
+    receive_bridge_peer_runtime_changed(PeerId,
+                                        Action,
+                                        StreamId,
+                                        AfterSequence,
+                                        Deadline,
+                                        undefined).
+
+receive_bridge_peer_runtime_changed(PeerId,
+                                    Action,
+                                    StreamId,
+                                    AfterSequence,
+                                    Deadline,
+                                    LastPayload) ->
+    Remaining = erlang:max(0,
+                           Deadline - erlang:monotonic_time(millisecond)),
+    receive
+        {direct,
+         {vpn_runtime_event,
+          Event = #{type := peer_runtime_changed,
+                    peer_id := PeerId,
+                    action := Action,
+                    stream_id := StreamId,
+                    sequence := Sequence},
+          Summary = {ok, _},
+          Status}}
+          when Sequence > AfterSequence ->
+            {Event, Summary, Status};
+        {direct, Payload} ->
+            receive_bridge_peer_runtime_changed(PeerId,
+                                                Action,
+                                                StreamId,
+                                                AfterSequence,
+                                                Deadline,
+                                                Payload)
+    after Remaining ->
+        ct:fail({vpn_event_bridge_peer_runtime_event_timeout,
+                 PeerId,
+                 Action,
+                 StreamId,
+                 AfterSequence,
+                 LastPayload})
+    end.
+
+assert_runtime_command_success(ok) ->
+    ok;
+assert_runtime_command_success({ok, Pid}) when is_pid(Pid) ->
+    ok;
+assert_runtime_command_success(Other) ->
+    ct:fail({vpn_runtime_command_failed, Other}).
+
+summary_peer_running(PeerId, {ok, Summary}) ->
+    PeerViewId = case PeerId of
+                     Value when is_atom(Value) -> atom_to_binary(Value, utf8);
+                     Value -> Value
+                 end,
+    Peers = maps:get(peers, Summary, []),
+    case [maps:get(running, Peer, false)
+          || Peer <- Peers,
+             maps:get(id, Peer, undefined) =:= PeerViewId] of
+        [Running] ->
+            Running;
+        [] ->
+            ct:fail({vpn_runtime_summary_peer_missing, PeerId, Summary})
     end.
 
 stop_test_event_bridge(BridgePid) when is_pid(BridgePid) ->
