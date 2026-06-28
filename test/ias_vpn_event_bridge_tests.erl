@@ -94,6 +94,18 @@ event_bridge_pushes_fresh_runtime_snapshots_test_() ->
                           after 1000 ->
                               error(vpn_peer_runtime_changed_event_timeout)
                           end,
+                          receive
+                              {direct,
+                               {vpn_runtime_snapshot,
+                                runtime_settled,
+                                Summary,
+                                SettledStatus}} ->
+                                  ?assertEqual(2,
+                                               maps:get(sequence,
+                                                        SettledStatus))
+                          after 1000 ->
+                              error(vpn_runtime_settled_snapshot_timeout)
+                          end,
 
                           Event3 = Event1#{sequence => 4},
                           BridgePid ! {vpn_event, Event3},

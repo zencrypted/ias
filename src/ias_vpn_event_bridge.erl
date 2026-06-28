@@ -22,6 +22,7 @@
 
 -define(SERVER, ?MODULE).
 -define(DEFAULT_RETRY_MS, 5000).
+-define(DEFAULT_RUNTIME_SETTLE_MS, 150).
 
 start_link() ->
     gen_server:start_link({local, ?SERVER}, ?MODULE, #{}, []).
@@ -65,6 +66,11 @@ init(Options) ->
                                  application:get_env(ias,
                                                      vpn_event_retry_interval_ms,
                                                      ?DEFAULT_RETRY_MS)),
+              runtime_settle_ms => option(runtime_settle_ms,
+                                          Options,
+                                          application:get_env(ias,
+                                                              vpn_runtime_settle_interval_ms,
+                                                              ?DEFAULT_RUNTIME_SETTLE_MS)),
               rpc_fun => option(rpc_fun, Options, fun rpc:call/5),
               summary_fun => option(summary_fun,
                                     Options,
@@ -119,6 +125,17 @@ handle_info(connect, State0) ->
     {noreply, connect_remote(State1)};
 handle_info({vpn_event, Event}, State0) when is_map(Event) ->
     {noreply, accept_remote_event(Event, State0)};
+handle_info({refresh_runtime_snapshot, EventStream, EventSequence}, State0) ->
+    case {maps:get(stream_id, State0, undefined),
+          maps:get(sequence, State0, undefined)} of
+        {EventStream, EventSequence} ->
+            Summary = read_summary(State0),
+            {noreply, publish_snapshot_result(runtime_settled, Summary, State0)};
+        _ ->
+            %% A newer event already refreshed the snapshot. Ignore the stale
+            %% convergence timer instead of repainting with an older reason.
+            {noreply, State0}
+    end;
 handle_info({'DOWN', MonitorRef, process, _Pid, Reason}, State0) ->
     case MonitorRef =:= maps:get(remote_monitor_ref, State0, undefined) of
         true ->
@@ -246,12 +263,26 @@ accept_remote_event(Event, State0) ->
                              last_event_at => erlang:system_time(millisecond),
                              last_error => undefined,
                              sync_reason => SyncReason},
-            publish_event_result(Event, Summary, State1);
+            State2 = publish_event_result(Event, Summary, State1),
+            schedule_runtime_settle_refresh(Event, State2);
         {reject, Reason} ->
             State0#{last_error => Reason,
                     sync_reason => invalid_event}
     end.
 
+
+
+schedule_runtime_settle_refresh(#{type := peer_runtime_changed,
+                                  stream_id := EventStream,
+                                  sequence := EventSequence},
+                                State) ->
+    Delay = maps:get(runtime_settle_ms, State, ?DEFAULT_RUNTIME_SETTLE_MS),
+    _ = erlang:send_after(Delay,
+                          self(),
+                          {refresh_runtime_snapshot, EventStream, EventSequence}),
+    State;
+schedule_runtime_settle_refresh(_Event, State) ->
+    State.
 
 publish_snapshot_result(SyncReason, {ok, SummaryData} = Summary, State0)
   when is_map(SummaryData) ->
