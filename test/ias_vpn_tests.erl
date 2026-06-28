@@ -242,40 +242,62 @@ vpn_orphan_incident_renders_confirmed_decommission_action_test() ->
                  binary:match(Html, <<"vpn_incident_decommission_">>)),
     ?assertEqual(nomatch, binary:match(Html, <<"Adopt orphan">>)).
 
-vpn_reconciliation_links_authority_devices_but_not_orphans_test() ->
-    AuthorityDeviceId = <<"linked-authority-device">>,
+vpn_reconciliation_links_only_existing_demo_devices_test() ->
+    ExistingDeviceId = <<"linked-existing-device">>,
+    MissingDeviceId = <<"plain-missing-authority-device">>,
     OrphanDeviceId = <<"plain-orphan-device">>,
-    Report = #{state => drift_detected,
-               counts => #{synchronized => 1,
-                           vpn_behind => 0,
-                           missing_in_vpn => 0,
-                           divergence => 0,
-                           orphan => 1,
-                           authority_only => 0},
-               entries => [#{device_id => AuthorityDeviceId,
-                              status => synchronized,
-                              reason => in_sync,
-                              digest_match => true,
-                              ias => #{revision => 1},
-                              vpn => #{head => #{revision => 1}, registry => []}},
-                           #{device_id => OrphanDeviceId,
-                              status => orphan,
-                              reason => vpn_device_without_ias_authority,
-                              digest_match => undefined,
-                              vpn => #{head => undefined, registry => []}}]},
+    ias_demo_store:clear(),
+    try
+        _ = ias_demo_store:add_device(#{id => ExistingDeviceId,
+                                        source => reconciliation_link_test}),
+        Report = #{state => drift_detected,
+                   counts => #{synchronized => 2,
+                               vpn_behind => 0,
+                               missing_in_vpn => 0,
+                               divergence => 0,
+                               orphan => 1,
+                               authority_only => 0},
+                   entries => [#{device_id => ExistingDeviceId,
+                                  status => synchronized,
+                                  reason => in_sync,
+                                  digest_match => true,
+                                  ias => #{revision => 1},
+                                  vpn => #{head => #{revision => 1}, registry => []}},
+                               #{device_id => MissingDeviceId,
+                                  status => synchronized,
+                                  reason => in_sync,
+                                  digest_match => true,
+                                  ias => #{revision => 1},
+                                  vpn => #{head => #{revision => 1}, registry => []}},
+                               #{device_id => OrphanDeviceId,
+                                  status => orphan,
+                                  reason => vpn_device_without_ias_authority,
+                                  digest_match => undefined,
+                                  vpn => #{head => undefined, registry => []}}]},
 
-    Html = iolist_to_binary(
-             nitro:render(#panel{body =
-                 ias_vpn:reconciliation_panel({ok, Report}, {ok, []})})),
+        Html = iolist_to_binary(
+                 nitro:render(#panel{body =
+                     ias_vpn:reconciliation_panel({ok, Report}, {ok, []})})),
 
-    ?assertMatch({_, _},
-                 binary:match(Html,
-                              <<"href=\"/app/demo.htm?id=linked-authority-device\"">>)),
-    ?assertMatch({_, _}, binary:match(Html, AuthorityDeviceId)),
-    ?assertMatch({_, _}, binary:match(Html, OrphanDeviceId)),
-    ?assertEqual(nomatch,
-                 binary:match(Html,
-                              <<"href=\"/app/demo.htm?id=plain-orphan-device\"">>)).
+        ?assertMatch({_, _},
+                     binary:match(
+                       Html,
+                       <<"href=\"/app/demo.htm?id=linked-existing-device\"">>)),
+        ?assertMatch({_, _}, binary:match(Html, ExistingDeviceId)),
+        ?assertMatch({_, _}, binary:match(Html, MissingDeviceId)),
+        ?assertMatch({_, _}, binary:match(Html, OrphanDeviceId)),
+        ?assertEqual(
+           nomatch,
+           binary:match(
+             Html,
+             <<"href=\"/app/demo.htm?id=plain-missing-authority-device\"">>)),
+        ?assertEqual(
+           nomatch,
+           binary:match(Html,
+                        <<"href=\"/app/demo.htm?id=plain-orphan-device\"">>))
+    after
+        ias_demo_store:clear()
+    end.
 
 vpn_reconciliation_refresh_failure_notice_is_specific_test() ->
     Notice = ias_vpn:reconciliation_stale_notice(

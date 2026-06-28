@@ -499,9 +499,14 @@ reconciliation_entry_row(Entry) ->
     ]}.
 
 reconciliation_device_cell(#{ias := Ias}, DeviceId) when is_map(Ias) ->
-    #link{url = ias_html:join([<<"/app/demo.htm?id=">>,
-                               ias_html:text(DeviceId)]),
-          body = ias_html:text(DeviceId)};
+    case ias_demo_store:get(DeviceId) of
+        {ok, _Object} ->
+            #link{url = ias_html:join([<<"/app/demo.htm?id=">>,
+                                       ias_html:text(DeviceId)]),
+                  body = ias_html:text(DeviceId)};
+        not_found ->
+            ias_html:text(DeviceId)
+    end;
 reconciliation_device_cell(_Entry, DeviceId) ->
     ias_html:text(DeviceId).
 
