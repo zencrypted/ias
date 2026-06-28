@@ -13,12 +13,8 @@ certificates_runtime_panel_reflects_inventory_changes_test() ->
 
     ?assertMatch({_, _}, binary:match(PresentHtml, <<">peer_live<">>)),
     ?assertMatch({_, _}, binary:match(PresentHtml, <<">client.example<">>)),
-    ?assertMatch({_, _},
-                 binary:match(PresentHtml,
-                              <<"Certificates: 1 · Running peers: 1">>)),
-    ?assertMatch({_, _},
-                 binary:match(EmptyHtml,
-                              <<"Certificates: 0 · Running peers: 0">>)),
+    assert_runtime_counts(PresentHtml, 1, 1),
+    assert_runtime_counts(EmptyHtml, 0, 0),
     ?assertEqual(nomatch, binary:match(EmptyHtml, <<">peer_live<">>)).
 
 certificates_runtime_panel_reflects_peer_runtime_state_test() ->
@@ -28,12 +24,8 @@ certificates_runtime_panel_reflects_peer_runtime_state_test() ->
     ?assertMatch({_, _}, binary:match(RunningHtml, <<">Runtime State<">>)),
     ?assertMatch({_, _}, binary:match(RunningHtml, <<">running</td>">>)),
     ?assertMatch({_, _}, binary:match(StoppedHtml, <<">stopped</td>">>)),
-    ?assertMatch({_, _},
-                 binary:match(RunningHtml,
-                              <<"Certificates: 1 · Running peers: 1">>)),
-    ?assertMatch({_, _},
-                 binary:match(StoppedHtml,
-                              <<"Certificates: 1 · Running peers: 0">>)),
+    assert_runtime_counts(RunningHtml, 1, 1),
+    assert_runtime_counts(StoppedHtml, 1, 0),
     ?assertMatch({_, _}, binary:match(StoppedHtml, <<">peer_live<">>)).
 
 certificates_runtime_panel_marks_disconnected_vpn_unavailable_test() ->
@@ -41,6 +33,14 @@ certificates_runtime_panel_marks_disconnected_vpn_unavailable_test() ->
 
     ?assertMatch({_, _},
                  binary:match(Html, <<"VPN certificate metadata unavailable.">>)).
+
+assert_runtime_counts(Html, Certificates, RunningPeers) ->
+    CertificateText = iolist_to_binary(
+        io_lib:format("Certificates: ~B", [Certificates])),
+    RunningText = iolist_to_binary(
+        io_lib:format("Running peers: ~B", [RunningPeers])),
+    ?assertMatch({_, _}, binary:match(Html, CertificateText)),
+    ?assertMatch({_, _}, binary:match(Html, RunningText)).
 
 render_panel(Summary) ->
     iolist_to_binary(nitro:render(
