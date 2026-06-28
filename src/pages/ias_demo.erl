@@ -9,8 +9,27 @@
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
+    ObjectId = query_id(),
+    put(ias_demo_object_id, ObjectId),
+    _ = maybe_subscribe_runtime_events(ObjectId),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event(terminate) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({exit, _Reason}) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({vpn_runtime_snapshot, _Reason, Summary, _BridgeStatus}) ->
+    update_device_vpn_access(Summary);
+event({vpn_runtime_event, _Event, Summary, _BridgeStatus}) ->
+    update_device_vpn_access(Summary);
+event({vpn_runtime_snapshot_failed, _Reason, SummaryError, _BridgeStatus}) ->
+    update_device_vpn_access(SummaryError);
+event({vpn_runtime_event_status, #{connected := false}}) ->
+    update_device_vpn_access({error, runtime_snapshot_stale});
+event({vpn_runtime_event_status, _BridgeStatus}) ->
+    ok;
 event({link_relationship, RelationType, SourceId, TargetId}) ->
     case ias_relationship_link:create(RelationType, SourceId, TargetId) of
         {ok, _Relationship} ->
@@ -83,6 +102,39 @@ event({device_decommission_vpn_access, DeviceId}) ->
     device_vpn_lifecycle_action(DeviceId, decommission);
 event(_) ->
     ok.
+
+update_device_vpn_access(Summary) ->
+    case current_demo_object() of
+        {ok, #{kind := device} = Device} ->
+            nitro:update(device_vpn_access, vpn_access_preview(Device, Summary));
+        _ ->
+            ok
+    end.
+
+current_demo_object() ->
+    ObjectId = case get(ias_demo_object_id) of
+        undefined -> query_id();
+        StoredId -> StoredId
+    end,
+    ias_demo_store:get(ObjectId).
+
+maybe_subscribe_runtime_events(ObjectId) ->
+    case ias_demo_store:get(ObjectId) of
+        {ok, #{kind := device}} -> subscribe_runtime_events();
+        _ -> ok
+    end.
+
+subscribe_runtime_events() ->
+    try ias_vpn_event_bridge:subscribe(self())
+    catch
+        exit:_ -> {error, not_started}
+    end.
+
+unsubscribe_runtime_events() ->
+    try ias_vpn_event_bridge:unsubscribe(self())
+    catch
+        exit:_ -> ok
+    end.
 
 content() ->
     case ias_demo_store:get(query_id()) of

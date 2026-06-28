@@ -138,6 +138,24 @@ unprovisioned_device_shows_guidance_test_() ->
          end
      end}.
 
+
+dynamic_device_vpn_session_reflects_live_snapshots_test_() ->
+    {setup,
+     fun setup/0,
+     fun cleanup/1,
+     fun(Context) ->
+         fun() ->
+             Device = maps:get(device, Context),
+             RunningHtml = render(Device, vpn_summary(true)),
+             StoppedHtml = render(Device, vpn_summary(false)),
+             UnavailableHtml = render(Device, {error, nodedown}),
+
+             ?assertMatch({_, _}, binary:match(RunningHtml, <<">running</td>">>)),
+             ?assertMatch({_, _}, binary:match(StoppedHtml, <<">stopped</td>">>)),
+             ?assertMatch({_, _}, binary:match(UnavailableHtml, <<">unavailable</td>">>))
+         end
+     end}.
+
 setup() ->
     PreviousTransport = application:get_env(ias, vpn_provisioning_transport),
     PreviousRpcFun = application:get_env(ias, vpn_provisioning_rpc_fun),
@@ -202,8 +220,11 @@ revoked_peer() ->
                       last_provisioning_operation => revoke}.
 
 vpn_summary() ->
+    vpn_summary(true).
+
+vpn_summary(Running) ->
     {ok, #{<<"peers">> => [#{<<"id">> => client_peer_id(),
-                               <<"running">> => true,
+                               <<"running">> => Running,
                                <<"handshake_status">> => <<"established">>}]}}.
 
 allocation_fields() ->
