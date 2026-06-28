@@ -1,10 +1,27 @@
 -module(ias_certificates).
--export([event/1]).
+-export([event/1, content/0, certificates_runtime_panel/1]).
 -include_lib("nitro/include/nitro.hrl").
 
 event(init) ->
+    _ = subscribe_runtime_events(),
     nitro:clear(stand),
     nitro:insert_bottom(stand, content());
+event(terminate) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({exit, _Reason}) ->
+    _ = unsubscribe_runtime_events(),
+    ok;
+event({vpn_runtime_snapshot, _Reason, Summary, _BridgeStatus}) ->
+    update_certificates_runtime(Summary);
+event({vpn_runtime_event, _Event, Summary, _BridgeStatus}) ->
+    update_certificates_runtime(Summary);
+event({vpn_runtime_snapshot_failed, _Reason, SummaryError, _BridgeStatus}) ->
+    update_certificates_runtime(SummaryError);
+event({vpn_runtime_event_status, #{connected := false}}) ->
+    update_certificates_runtime({error, runtime_snapshot_stale});
+event({vpn_runtime_event_status, _BridgeStatus}) ->
+    ok;
 event(register_ca_certificate) ->
     Fields = #{name => nitro:q(ca_certificate_name),
                subject => nitro:q(ca_certificate_subject),
@@ -17,13 +34,20 @@ event(_) ->
 
 content() ->
     VpnSummary = ias_vpn_runtime:summary(),
+    #panel{class = <<"ias-placeholder">>, body = [
+        #h2{body = ias_html:text("Certificates")},
+        #p{body = ias_html:text("Review live VPN certificate metadata from the VPN admin API.")},
+        certificates_runtime_panel(VpnSummary),
+        register_ca_certificate_panel(),
+        #panel{id = certificate_runtime_objects, body = imported_demo_objects()}
+    ]}.
+
+certificates_runtime_panel(VpnSummary) ->
     Peers = ias_vpn_runtime:peers(VpnSummary),
     Devices = ias_demo_data:devices(),
     Certificates = ias_demo_data:certificates(),
     Profiles = ias_demo_data:profiles(),
-    #panel{class = <<"ias-placeholder">>, body = [
-        #h2{body = ias_html:text("Certificates")},
-        #p{body = ias_html:text("Review live VPN certificate metadata from the VPN admin API.")},
+    #panel{id = certificates_runtime_summary, body = [
         #h3{body = count("Certificates", Peers)},
         status(VpnSummary),
         table([
@@ -33,10 +57,24 @@ content() ->
                                     "Claims"]),
                    body = #tbody{body =
                        [certificate_row(Peer, Devices, Certificates, Profiles) || Peer <- Peers]}}
-        ]),
-        register_ca_certificate_panel(),
-        #panel{id = certificate_runtime_objects, body = imported_demo_objects()}
+        ])
     ]}.
+
+update_certificates_runtime(Summary) ->
+    nitro:update(certificates_runtime_summary,
+                 certificates_runtime_panel(Summary)).
+
+subscribe_runtime_events() ->
+    try ias_vpn_event_bridge:subscribe(self())
+    catch
+        exit:_ -> {error, not_started}
+    end.
+
+unsubscribe_runtime_events() ->
+    try ias_vpn_event_bridge:unsubscribe(self())
+    catch
+        exit:_ -> ok
+    end.
 
 status({error, _Reason}) ->
     #panel{class = <<"ias-status-card">>, body = ias_html:text("VPN certificate metadata unavailable.")};
