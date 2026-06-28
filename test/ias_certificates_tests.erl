@@ -17,6 +17,15 @@ certificates_runtime_panel_reflects_inventory_changes_test() ->
     ?assertMatch({_, _}, binary:match(EmptyHtml, <<"Certificates: 0">>)),
     ?assertEqual(nomatch, binary:match(EmptyHtml, <<">peer_live<">>)).
 
+certificates_runtime_panel_reflects_peer_runtime_state_test() ->
+    RunningHtml = render_panel(summary([certificate_peer(<<"peer_live">>, true)])),
+    StoppedHtml = render_panel(summary([certificate_peer(<<"peer_live">>, false)])),
+
+    ?assertMatch({_, _}, binary:match(RunningHtml, <<">Runtime State<">>)),
+    ?assertMatch({_, _}, binary:match(RunningHtml, <<">running</td>">>)),
+    ?assertMatch({_, _}, binary:match(StoppedHtml, <<">stopped</td>">>)),
+    ?assertMatch({_, _}, binary:match(StoppedHtml, <<">peer_live<">>)).
+
 certificates_runtime_panel_marks_disconnected_vpn_unavailable_test() ->
     Html = render_panel({error, nodedown}),
 
@@ -34,8 +43,11 @@ summary(Peers) ->
            <<"peers">> => Peers}}.
 
 certificate_peer(PeerId) ->
+    certificate_peer(PeerId, true).
+
+certificate_peer(PeerId, Running) ->
     #{<<"id">> => PeerId,
-      <<"running">> => true,
+      <<"running">> => Running,
       <<"certificate">> =>
           #{<<"subject_cn">> => <<"client.example">>,
             <<"issuer_cn">> => <<"Example CA">>,

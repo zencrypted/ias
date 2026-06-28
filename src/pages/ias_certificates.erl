@@ -52,9 +52,9 @@ certificates_runtime_panel(VpnSummary) ->
         status(VpnSummary),
         table([
             #table{class = <<"ias-table">>,
-                   header = header(["Peer", "Subject CN", "Issuer CN", "Valid From",
-                                    "Valid To", "Trusted", "Key Match", "Security Profile",
-                                    "Claims"]),
+                   header = header(["Peer", "Runtime State", "Subject CN", "Issuer CN",
+                                    "Valid From", "Valid To", "Trusted", "Key Match",
+                                    "Security Profile", "Claims"]),
                    body = #tbody{body =
                        [certificate_row(Peer, Devices, Certificates, Profiles) || Peer <- Peers]}}
         ])
@@ -146,6 +146,7 @@ register_result({error, Reason}) ->
 certificate_row(Peer, Devices, Certificates, Profiles) ->
     ProfileId = profile_id(Peer, Devices, Certificates),
     row([ias_vpn_runtime:field(Peer, [<<"id">>, id, peer, name]),
+         ias_vpn_runtime:state(Peer),
          ias_vpn_runtime:certificate_field(Peer, [subject_cn]),
          ias_vpn_runtime:certificate_field(Peer, [issuer_cn]),
          ias_vpn_runtime:certificate_field(Peer, [not_before]),
