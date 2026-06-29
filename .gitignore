@@ -10,3 +10,8 @@ chatgpt-*/
 .idea/
 *.iml
 rebar.lock
+/priv/*.log
+/priv/*.aux
+/priv/*.synctex.gz
+/priv/*.toc
+/priv/*.out
