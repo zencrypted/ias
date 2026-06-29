@@ -185,10 +185,12 @@
 \paragraph{Доменна модель і граф зв'язків.}
 \begin{figure}[htbp]
 \centering
+\resizebox{0.96\textwidth}{!}{%
 \begin{tikzpicture}[
-  node distance=10mm and 13mm,
-  box/.style={draw=nato, rounded corners, align=center, minimum height=9mm, text width=28mm, fill=white},
-  rel/.style={-{Latex[length=2.2mm]}, thick, color=nato}
+  node distance=14mm and 18mm,
+  box/.style={draw=nato, rounded corners, align=center, minimum height=10mm, text width=31mm, fill=white},
+  rel/.style={-{Latex[length=2.2mm]}, thick, color=nato},
+  rel label/.style={font=\scriptsize, text=nato, fill=white, inner sep=1.5pt, align=center}
 ]
 \node[box] (user) {Користувач};
 \node[box, right=of user] (device) {Пристрій};
@@ -196,16 +198,17 @@
 \node[box, below=of device] (profile) {Профіль безпеки};
 \node[box, left=of profile] (policy) {Політика безпеки};
 \node[box, right=of profile] (vpn) {VPN-сервіс};
-\node[box, below=of profile] (ca) {Сертифікат CA};
+\node[box, below=of cert] (ca) {Сертифікат CA};
 
-\draw[rel] (user) -- node[above, font=\small] {володіє} (device);
-\draw[rel] (device) -- node[above, font=\small] {ідентифікується} (cert);
-\draw[rel] (device) -- node[right, font=\small] {призначено} (profile);
-\draw[rel] (policy) -- node[above, font=\small] {визначає правила} (profile);
-\draw[rel] (profile) -- node[above, font=\small] {дозволяє} (vpn);
-\draw[rel] (ca) -- node[right, font=\small] {формує довіру} (cert);
-\draw[rel] (cert) -- node[right, font=\small] {доступ до} (vpn);
-\end{tikzpicture}
+\draw[rel] (user) -- node[rel label, above] {володіє} (device);
+\draw[rel] (device) -- node[rel label, above] {ідентифікується} (cert);
+\draw[rel] (device) -- node[rel label, right] {призначено} (profile);
+\draw[rel] (policy) -- node[rel label, above] {визначає правила} (profile);
+\draw[rel] (profile) -- node[rel label, above] {дозволяє доступ} (vpn);
+\draw[rel] (ca) -- node[rel label, right] {формує довіру} (cert);
+\draw[rel] (cert) -- node[rel label, right] {надає доступ} (vpn);
+\end{tikzpicture}%
+}
 \caption{Поточна доменна модель IAS та основні зв'язки}
 \label{fig:ias-domain-model}
 \end{figure}
