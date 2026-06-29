@@ -139,52 +139,19 @@
 \section{Відомості про робочий процес та умови експлуатації}
 
 \subsection{Опис бізнес-процесів (BPMN / FSM)}
-Поточні процеси IAS реалізовано спеціалізованими модулями та стійкими записами стану, а не рушієм BPE. Наведені нижче процесні описи мають бути перевірені за фактичним кодом у наступних ітераціях цього документа: поточний стан слід описувати як AS IS FSM, а BPE/BPMN --- як цільову модель перенесення керування станами й переходами. Фрагменти BPE DSL у поточній редакції не є доказом наявної реалізації.
+Поточні процеси IAS реалізовано спеціалізованими модулями та стійкими записами стану, а не рушієм BPE. Тому цей розділ фіксує лише фактичний процесний контур без приписування системі неіснуючих BPE-модулів або виконуваних BPMN-схем.
 
-\subsubsection{Процес реєстрації пристрою та імпорту OVPN (bpe\_ovpn\_import.erl)}
-Цей процес відповідає за початкове імпортування раніше створених OpenVPN конфігурацій та створення відповідних реєстрових сутностей в IAS.
-\begin{enumerate}
-    \item \textbf{StartImport:} Початок процесу оператором безпеки.
-    \item \textbf{ParseConfig:} Сервісна задача, яка парсить .ovpn та створює структуру вилучених параметрів.
-    \item \textbf{VerifyCertificates:} Перевірка валідності імпортованого сертифіката (підпис, термін дії, ланцюжок довіри).
-    \item \textbf{ApproveImportPlan:} Користувацька задача затвердження згенерованого плану імпорту оператором.
-    \item \textbf{CreateGraphObjects:} Сервісна задача, яка записує об'єкти Device, Certificate, VPN Service та зв'язки між ними в KVS.
-    \item \textbf{ImportCompleted:} Завершення процесу.
-\end{enumerate}
+\subsubsection{Поточний процесний контур}
+У наявній реалізації окремі доменні сценарії координуються кодом IAS і збереженим станом:
+\begin{itemize}
+    \item імпорт OVPN виконує попередній аналіз конфігурації та формує доменні об'єкти без збереження приватного ключа;
+    \item випуск сертифіката приймає та перевіряє CSR, взаємодіє з CA і зв'язує результат із пристроєм та профілем безпеки;
+    \item майстер налаштування VPN веде стійку чернетку, перевіряє умови переходів і готовність матеріалів;
+    \item передавання конфігурації формує канонічну команду з ревізією та контрольною сумою, доставляє її до VPN і зберігає результат;
+    \item звіряння стану виявляє розбіжності, осиротілі записи та потребу у відновленні або виведенні з експлуатації.
+\end{itemize}
 
-\subsubsection{Процес випуску та сертифікації CMP (bpe\_cmp\_enrollment.erl)}
-Процес забезпечує автоматизоване отримання сертифіката від CA за допомогою CSR, згенерованого безпосередньо клієнтським пристроєм.
-\begin{enumerate}
-    \item \textbf{StartEnrollment:} Ініціація пристроєм запиту на випуск.
-    \item \textbf{GenerateKeyCSRPlan:} Створення в IAS плану генерації ключів та CSR на пристрої.
-    \item \textbf{AwaitCSRUpload:} Очікування завантаження файлу CSR з пристрою.
-    \item \textbf{ValidateCSR:} Перевірка підпису та параметрів CSR.
-    \item \textbf{SubmitToCMP:} Відправка CSR до CA через протокол CMP.
-    \item \textbf{VerifyCertificate:} Отримання випущеного сертифіката, перевірка публічного ключа проти CSR, запис у сховище та оновлення статусу пристрою.
-    \item \textbf{EnrollmentCompleted:} Завершення випуску.
-\end{enumerate}
-
-\subsubsection{Процес авторизації та оцінки довіри (bpe\_trust\_evaluation.erl)}
-Процес динамічної оцінки права пристрою чи користувача на підключення.
-\begin{enumerate}
-    \item \textbf{StartEvaluation:} Виклик процесу під час handshake пристрою або планової перевірки.
-    \item \textbf{CheckExpiry:} Перевірка дати закінчення дії сертифіката.
-    \item \textbf{CheckCRL:} Запит та перевірка серійного номера за списками відкликання (CRL/OCSP).
-    \item \textbf{EvaluateABACRules:} Оцінка контекстних правил (роль, ЄДРПОУ, час, робоче місце).
-    \item \textbf{UpdateTrustStatus:} Запис оновленого статусу довіри пристрою (Ready або Blocked).
-    \item \textbf{EvaluationCompleted:} Завершення оцінки.
-\end{enumerate}
-
-\subsubsection{Процес провіженінгу VPN (bpe\_vpn\_provisioning.erl)}
-Процес транзакційної доставки налаштувань на шлюзи VPN та контролю узгодження.
-\begin{enumerate}
-    \item \textbf{StartProvisioning:} Ініціація оновлення конфігурації.
-    \item \textbf{BuildCommand:} Генерація канонічної команди провіженінгу з інкрементним номером ревізії.
-    \item \textbf{DeliverToVPN:} Виклик віддаленої процедури RPC на шлюзі VPN.
-    \item \textbf{AwaitCompletionNotice:} Очікування повідомлення від vpn\_event\_bus про успішне застосування змін на шлюзі.
-    \item \textbf{VerifyDataplane:} Перевірка проходження тестового пакету через зашифрований тунель.
-    \item \textbf{ProvisioningCompleted:} Завершення провіженінгу.
-\end{enumerate}
+Фактичні стани, переходи, умови, повторні спроби та помилки мають бути окремо відтворені як модель AS IS за кодом і тестами. Лише після цього керування процесом може бути поетапно перенесене на \texttt{synrc/bpmn}/BPE. У цільовій архітектурі BPE керує станами й переходами, а наявний майстер залишається користувацьким інтерфейсом над процесом.
 
 \subsection{Опис ролей та прав доступу (ABAC)}
 Доступ до адміністративних функцій IAS обмежується на базі ABAC. Приклад правила авторизації:
@@ -321,161 +288,10 @@ evaluate_device_trust(DeviceState, CertRecord, CurrentTime) ->
 
 \subsection{Програмне забезпечення (Реалізація)}
 
-\subsubsection{bpe\_ovpn\_import.erl (DSL процесу імпорту)}
-\begin{verbatim}
--module(bpe_ovpn_import).
--include("bpe.hrl").
--compile(export_all).
+\subsubsection{Цільова інтеграція з BPE}
+Виконувані BPE-модулі для імпорту OVPN, випуску сертифікатів, оцінки довіри та передавання конфігурацій у поточному репозиторії відсутні. Техноробочий проєкт не повинен наводити для них вигаданий Erlang-код або назви модулів як частину реалізованої системи.
 
-def() ->
-    #process{
-        name = 'OVPN Profile Import',
-        beginEvent = 'StartImport',
-        endEvent = 'ImportCompleted',
-        tasks = [
-            #beginEvent{name='StartImport'},
-            #serviceTask{name='ParseConfig', module=?MODULE},
-            #serviceTask{name='VerifyCertificates', module=?MODULE},
-            #userTask{name='ApproveImportPlan', module=?MODULE},
-            #serviceTask{name='CreateGraphObjects', module=?MODULE},
-            #endEvent{name='ImportCompleted'}
-        ],
-        flows = [
-            #sequenceFlow{name='1', source='StartImport', target='ParseConfig'},
-            #sequenceFlow{name='2', source='ParseConfig', target='VerifyCertificates'},
-            #sequenceFlow{name='3', source='VerifyCertificates', 
-                          target='ApproveImportPlan', condition="certs_ok"},
-            #sequenceFlow{name='4', source='VerifyCertificates', 
-                          target='StartImport', condition="certs_invalid"},
-            #sequenceFlow{name='5', source='ApproveImportPlan', target='CreateGraphObjects'},
-            #sequenceFlow{name='6', source='CreateGraphObjects', target='ImportCompleted'}
-        ],
-        roles = [security_admin, operator]
-    }.
-
-action({serviceTask, 'ParseConfig'}, Proc) ->
-    % Логіка парсингу OVPN файлу
-    {reply, Proc, "certs_ok"};
-action({serviceTask, 'CreateGraphObjects'}, Proc) ->
-    % Створення сутностей в KVS
-    {reply, Proc};
-action(_, Proc) -> {reply, Proc}.
-\end{verbatim}
-
-\subsubsection{bpe\_cmp\_enrollment.erl (DSL процесу CMP випуску)}
-\begin{verbatim}
--module(bpe_cmp_enrollment).
--include("bpe.hrl").
--compile(export_all).
-
-def() ->
-    #process{
-        name = 'CA CMP Enrollment',
-        beginEvent = 'StartEnrollment',
-        endEvent = 'EnrollmentCompleted',
-        tasks = [
-            #beginEvent{name='StartEnrollment'},
-            #serviceTask{name='GenerateKeyCSRPlan', module=?MODULE},
-            #userTask{name='AwaitCSRUpload', module=?MODULE},
-            #serviceTask{name='ValidateCSR', module=?MODULE},
-            #serviceTask{name='SubmitToCMP', module=?MODULE},
-            #serviceTask{name='VerifyCertificate', module=?MODULE},
-            #endEvent{name='EnrollmentCompleted'}
-        ],
-        flows = [
-            #sequenceFlow{name='1', source='StartEnrollment', target='GenerateKeyCSRPlan'},
-            #sequenceFlow{name='2', source='GenerateKeyCSRPlan', target='AwaitCSRUpload'},
-            #sequenceFlow{name='3', source='AwaitCSRUpload', target='ValidateCSR'},
-            #sequenceFlow{name='4', source='ValidateCSR', target='SubmitToCMP', condition="csr_valid"},
-            #sequenceFlow{name='5', source='ValidateCSR', target='AwaitCSRUpload', condition="csr_invalid"},
-            #sequenceFlow{name='6', source='SubmitToCMP', target='VerifyCertificate', condition="enrollment_ok"},
-            #sequenceFlow{name='7', source='SubmitToCMP', target='StartEnrollment', condition="enrollment_failed"},
-            #sequenceFlow{name='8', source='VerifyCertificate', target='EnrollmentCompleted'}
-        ],
-        roles = [operator, device]
-    }.
-
-action({serviceTask, 'ValidateCSR'}, Proc) ->
-    {reply, Proc, "csr_valid"};
-action({serviceTask, 'SubmitToCMP'}, Proc) ->
-    {reply, Proc, "enrollment_ok"};
-action(_, Proc) -> {reply, Proc}.
-\end{verbatim}
-
-\subsubsection{bpe\_trust\_evaluation.erl (DSL процесу перевірки довіри)}
-\begin{verbatim}
--module(bpe_trust_evaluation).
--include("bpe.hrl").
--compile(export_all).
-
-def() ->
-    #process{
-        name = 'Device Trust Evaluation',
-        beginEvent = 'StartEvaluation',
-        endEvent = 'EvaluationCompleted',
-        tasks = [
-            #beginEvent{name='StartEvaluation'},
-            #serviceTask{name='CheckExpiry', module=?MODULE},
-            #serviceTask{name='CheckCRL', module=?MODULE},
-            #serviceTask{name='EvaluateABACRules', module=?MODULE},
-            #serviceTask{name='UpdateTrustStatus', module=?MODULE},
-            #endEvent{name='EvaluationCompleted'}
-        ],
-        flows = [
-            #sequenceFlow{name='1', source='StartEvaluation', target='CheckExpiry'},
-            #sequenceFlow{name='2', source='CheckExpiry', target='CheckCRL', condition="not_expired"},
-            #sequenceFlow{name='3', source='CheckExpiry', target='UpdateTrustStatus', condition="expired"},
-            #sequenceFlow{name='4', source='CheckCRL', target='EvaluateABACRules', condition="not_revoked"},
-            #sequenceFlow{name='5', source='CheckCRL', target='UpdateTrustStatus', condition="revoked"},
-            #sequenceFlow{name='6', source='EvaluateABACRules', target='UpdateTrustStatus'},
-            #sequenceFlow{name='7', source='UpdateTrustStatus', target='EvaluationCompleted'}
-        ],
-        roles = [security_admin, system]
-    }.
-
-action({serviceTask, 'CheckExpiry'}, Proc) ->
-    {reply, Proc, "not_expired"};
-action({serviceTask, 'CheckCRL'}, Proc) ->
-    {reply, Proc, "not_revoked"};
-action(_, Proc) -> {reply, Proc}.
-\end{verbatim}
-
-\subsubsection{bpe\_vpn\_provisioning.erl (DSL процесу провіженінгу VPN)}
-\begin{verbatim}
--module(bpe_vpn_provisioning).
--include("bpe.hrl").
--compile(export_all).
-
-def() ->
-    #process{
-        name = 'VPN Command Provisioning',
-        beginEvent = 'StartProvisioning',
-        endEvent = 'ProvisioningCompleted',
-        tasks = [
-            #beginEvent{name='StartProvisioning'},
-            #serviceTask{name='BuildCommand', module=?MODULE},
-            #serviceTask{name='DeliverToVPN', module=?MODULE},
-            #userTask{name='AwaitCompletionNotice', module=?MODULE},
-            #serviceTask{name='VerifyDataplane', module=?MODULE},
-            #endEvent{name='ProvisioningCompleted'}
-        ],
-        flows = [
-            #sequenceFlow{name='1', source='StartProvisioning', target='BuildCommand'},
-            #sequenceFlow{name='2', source='BuildCommand', target='DeliverToVPN'},
-            #sequenceFlow{name='3', source='DeliverToVPN', target='AwaitCompletionNotice', condition="delivery_ok"},
-            #sequenceFlow{name='4', source='DeliverToVPN', target='StartProvisioning', condition="delivery_failed"},
-            #sequenceFlow{name='5', source='AwaitCompletionNotice', target='VerifyDataplane'},
-            #sequenceFlow{name='6', source='VerifyDataplane', target='ProvisioningCompleted'}
-        ],
-        roles = [operator, system]
-    }.
-
-action({serviceTask, 'BuildCommand'}, Proc) ->
-    {reply, Proc};
-action({serviceTask, 'DeliverToVPN'}, Proc) ->
-    {reply, Proc, "delivery_ok"};
-action(_, Proc) -> {reply, Proc}.
-\end{verbatim}
+Після фіксації моделі AS IS може бути підготовлена цільова BPMN/BPE-модель. Вона повинна повторно використовувати наявні доменні модулі як сервісні дії, зберігати перевірену поведінку та не переносити криптографічну або доменну логіку безпосередньо до визначення процесу.
 
 \subsubsection{ias\_validator.erl (Модуль валідації)}
 \begin{verbatim}
