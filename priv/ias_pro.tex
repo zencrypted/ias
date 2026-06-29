@@ -206,8 +206,8 @@
 \draw[rel] (policy) -- node[rel label, above] {задає правила} (profile);
 \draw[rel] (profile) -- node[rel label, above] {дозволяє} (vpn);
 \draw[rel] (cert) -- node[rel label, left, xshift=-3pt] {доступ} (vpn);
-\draw[rel] (ca.east) -- ++(1.9,0) coordinate (ca_cert_bend1)
-  -- node[rel label, right, xshift=2pt] {підтверджує} ++(0,6.4) coordinate (ca_cert_bend2)
+\draw[rel] (ca.east) -- ++(1.2,0) coordinate (ca_cert_bend1)
+  -- node[rel label, left, xshift=-2pt] {підтверджує} ++(0,6.4) coordinate (ca_cert_bend2)
   -- (cert.east);
 \end{tikzpicture}
 \caption{Поточна доменна модель IAS та основні зв'язки}
