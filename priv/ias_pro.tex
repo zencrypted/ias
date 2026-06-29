@@ -153,6 +153,30 @@
 
 Фактичні стани, переходи, умови, повторні спроби та помилки мають бути окремо відтворені як модель AS IS за кодом і тестами. Лише після цього керування процесом може бути поетапно перенесене на \texttt{synrc/bpmn}/BPE. У цільовій архітектурі BPE керує станами й переходами, а наявний майстер залишається користувацьким інтерфейсом над процесом.
 
+
+\subsubsection{Фактична модульна архітектура}
+Поточна реалізація поділена на веб-рівень, доменні служби, стійкі сховища та інтеграційні модулі. Веб-модулі не повинні містити криптографічну, транзакційну або мережеву логіку: вони приймають події користувача, викликають доменні служби та відображають результат.
+
+\begin{longtable}{p{0.29\textwidth} p{0.63\textwidth}}
+\toprule
+\textbf{Модуль або група модулів} & \textbf{Фактична відповідальність} \\
+\midrule
+\endhead
+\path{ias_provisioning_wizard.erl} & Веб-сторінка майстра: приймання подій, навігація між кроками та відображення стану. Не є авторитетним сховищем процесу. \\
+\path{ias_provisioning_wizard_store.erl}, \path{ias_provisioning_wizard_draft_store.erl} & Створення, оновлення, відновлення та збереження чернетки майстра; вибір доменних об'єктів і виконання переходів між кроками. \\
+\path{ias_provisioning_wizard_readiness.erl}, \path{ias_provisioning_wizard_relationships.erl}, \path{ias_provisioning_wizard_authorization.erl} & Перевірка готовності матеріалів, узгодженості графа зв'язків, сертифікатів і рішення про авторизацію перед передаванням конфігурації. \\
+\path{ias_domain_store.erl} & Авторитетне стійке зберігання доменних об'єктів через KVS/Mnesia, перевірка схем і транзакційне оновлення проєкцій. \\
+\path{ias_relationship_*} & Побудова, перевірка та відображення графа зв'язків між користувачами, пристроями, сертифікатами, профілями, політиками й VPN-сервісами. \\
+\path{ias_csr_validation.erl}, \path{ias_certificate_verification.erl}, \path{ias_x509_validation.erl} & Перевірка CSR і X.509, зв'язування сертифікатного матеріалу з доменними об'єктами та формування результатів перевірки. \\
+\path{ias_device_csr_enrollment.erl}, \path{ias_cmp_enrollment.erl} & Підготовка випуску сертифіката для пристрою та поточний перехідний CMP-шлях. \path{ias_cmp_enrollment.erl} поки запускає зовнішній OpenSSL і має бути замінений керованим клієнтом або адаптером CA. \\
+\path{ias_ovpn_preview.erl}, \path{ias_ovpn_import.erl}, \path{ias_ovpn_provisioning.erl} & Аналіз OVPN, формування попереднього перегляду й доменної проєкції та підготовка керованого сценарію без збереження приватного ключа в IAS. \\
+\path{ias_vpn_provisioning_command.erl}, \path{ias_vpn_provisioning_delivery.erl}, \path{ias_vpn_client.erl} & Формування канонічної команди, ревізії та контрольної суми, передавання до VPN через Erlang RPC і фіксація результату доставки. \\
+\path{ias_vpn_reconciliation.erl}, \path{ias_vpn_orphan_recovery.erl}, \path{ias_vpn_recovery_manifest.erl} & Порівняння стану IAS і VPN, виявлення розбіжностей та осиротілих записів, планування й атомарне виконання відновлення. \\
+\bottomrule
+\end{longtable}
+
+Межі відповідальності є такими: KVS/Mnesia зберігає авторитетний стан IAS; CA випускає сертифікати; VPN застосовує передані команди та зберігає власний стан виконання; IAS координує процес, але не підміняє CA або VPN.
+
 \subsection{Опис ролей та прав доступу (ABAC)}
 Доступ до адміністративних функцій IAS обмежується на базі ABAC. Приклад правила авторизації:
 \begin{verbatim}
@@ -293,30 +317,16 @@ evaluate_device_trust(DeviceState, CertRecord, CurrentTime) ->
 
 Після фіксації моделі AS IS може бути підготовлена цільова BPMN/BPE-модель. Вона повинна повторно використовувати наявні доменні модулі як сервісні дії, зберігати перевірену поведінку та не переносити криптографічну або доменну логіку безпосередньо до визначення процесу.
 
-\subsubsection{ias\_validator.erl (Модуль валідації)}
-\begin{verbatim}
--module(ias_validator).
--export([validate_csr/1, validate_chain/2, verify_fingerprint/2]).
-
-validate_csr(CSR_PEM) ->
-    % Виклик OpenSSL або вбудованого ASN.1 розшифровувача для перевірки підпису CSR
-    case public_key:pem_decode(CSR_PEM) of
-        [_] -> ok;
-        _   -> {error, invalid_csr_format}
-    end.
-
-validate_chain(Cert_PEM, CA_Chain_PEM) ->
-    % Криптографічна перевірка ланцюжка сертифікатів CA
-    ok.
-
-verify_fingerprint(Cert_PEM, SHA256) ->
-    % Порівняння відбитку SHA-256
-    Calculated = crypto:hash(sha256, Cert_PEM),
-    case Calculated of
-        SHA256 -> ok;
-        _      -> {error, fingerprint_mismatch}
-    end.
-\end{verbatim}
+\subsubsection{Модулі перевірки CSR і сертифікатів}
+Окремого модуля \path{ias_validator.erl} у поточному репозиторії немає. Його вигаданий код не є частиною реалізації та вилучений із техноробочого проєкту. Фактичні обов'язки розподілено між такими модулями:
+\begin{itemize}
+    \item \path{ias_csr_validation.erl} --- синтаксична та структурна перевірка CSR;
+    \item \path{ias_x509_validation.erl} --- розбір і перевірка матеріалу X.509;
+    \item \path{ias_certificate_verification.erl} --- перевірка сертифіката у доменному контексті IAS;
+    \item \path{ias_configured_ca_trust_anchor.erl} --- отримання налаштованого якоря довіри CA;
+    \item \path{ias_certificate_material_store.erl} --- стійке зберігання публічного сертифікатного матеріалу та метаданих.
+\end{itemize}
+Приватні ключі пристроїв не передаються цим модулям і не зберігаються в IAS. Перевірка CRL/OCSP у режимі реального часу залишається цільовим станом до появи окремого реалізованого й протестованого адаптера.
 
 \newpage
 \section{Вимоги до засобу за ISO/IEC/IEEE 29148}
