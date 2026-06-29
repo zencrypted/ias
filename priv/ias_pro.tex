@@ -15,6 +15,7 @@
 \usepackage{amsthm}
 \usepackage{longtable}
 \usepackage{booktabs}
+\usepackage{float}
 \usepackage{hyperref}
 \usepackage{titlesec}
 \usepackage{tikz}
@@ -182,8 +183,9 @@
 \subsubsection{Архітектурні діаграми поточного стану}
 Наведені нижче діаграми відображають поточний стан системи за наявними модулями, стійкими структурами та інтеграційними контрактами. Вони не позначають BPE, EST, CMC або повний ABAC як реалізовані компоненти.
 
+\clearpage
 \paragraph{Доменна модель і граф зв'язків.}
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[
   box/.style={draw=nato, rounded corners, align=center, minimum height=12mm, text width=36mm, fill=white},
@@ -209,10 +211,9 @@
 \caption{Поточна доменна модель IAS та основні зв'язки}
 \label{fig:ias-domain-model}
 \end{figure}
-\clearpage
 
 \paragraph{Станова модель майстра налаштування VPN.}
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
 \resizebox{0.92\textwidth}{!}{%
 \begin{tikzpicture}[
@@ -254,7 +255,7 @@
 \clearpage
 
 \paragraph{Взаємодія IAS, CA та VPN.}
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
 \begin{tikzpicture}[
   system/.style={draw=nato, rounded corners, align=center, minimum width=46mm, minimum height=20mm, fill=white},
@@ -276,10 +277,9 @@
 \caption{Архітектурні межі та взаємодія IAS, CA, VPN і KVS/Mnesia}
 \label{fig:ias-ca-vpn}
 \end{figure}
-\clearpage
 
 \paragraph{Послідовність передавання та звіряння стану.}
-\begin{figure}[htbp]
+\begin{figure}[H]
 \centering
 \resizebox{0.96\textwidth}{!}{%
 \begin{tikzpicture}[
