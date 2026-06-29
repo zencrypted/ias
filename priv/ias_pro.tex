@@ -186,50 +186,53 @@
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
-  box/.style={draw=nato, rounded corners, align=center, minimum height=11mm, text width=34mm, fill=white},
+  box/.style={draw=nato, rounded corners, align=center, minimum height=12mm, text width=36mm, fill=white},
   rel/.style={-{Latex[length=2.2mm]}, thick, color=nato},
-  rel label/.style={font=\footnotesize, text=nato, fill=white, inner sep=1.1pt}
+  rel label/.style={font=\footnotesize, text=nato, fill=white, inner sep=1.2pt}
 ]
-\node[box] (user) at (0,3.0) {Користувач};
-\node[box] (device) at (5.7,3.0) {Пристрій};
-\node[box] (cert) at (11.4,3.0) {Сертифікат};
+\node[box] (user) at (0,3.2) {Користувач};
+\node[box] (device) at (5.6,3.2) {Пристрій};
+\node[box] (cert) at (11.2,3.2) {Сертифікат};
 \node[box] (policy) at (0,0) {Політика безпеки};
-\node[box] (profile) at (5.7,0) {Профіль безпеки};
-\node[box] (vpn) at (11.4,0) {VPN-сервіс};
-\node[box] (ca) at (11.4,-3.0) {Сертифікат CA};
+\node[box] (profile) at (5.6,0) {Профіль безпеки};
+\node[box] (vpn) at (11.2,0) {VPN-сервіс};
+\node[box] (ca) at (11.2,-3.2) {Сертифікат CA};
 
 \draw[rel] (user) -- node[rel label, above] {володіє} (device);
 \draw[rel] (device) -- node[rel label, above] {ідентифікує} (cert);
 \draw[rel] (device) -- node[rel label, right] {має профіль} (profile);
 \draw[rel] (policy) -- node[rel label, above] {задає правила} (profile);
 \draw[rel] (profile) -- node[rel label, above] {дозволяє} (vpn);
-\draw[rel] (cert) -- node[rel label, left, xshift=-2pt] {доступ} (vpn);
-\draw[rel] (ca) -- node[rel label, right, xshift=2pt] {підтверджує} (cert);
+\draw[rel] (cert) -- node[rel label, left, xshift=-3pt] {доступ} (vpn);
+\draw[rel] (ca) -- node[rel label, right, xshift=3pt] {підтверджує} (cert);
 \end{tikzpicture}
 \caption{Поточна доменна модель IAS та основні зв'язки}
 \label{fig:ias-domain-model}
 \end{figure}
+\clearpage
 
 \paragraph{Станова модель майстра налаштування VPN.}
 \begin{figure}[htbp]
 \centering
+\resizebox{0.92\textwidth}{!}{%
 \begin{tikzpicture}[
-  state/.style={draw=nato, rounded corners, align=center, minimum height=10mm, text width=29mm, fill=white},
+  state/.style={draw=nato, rounded corners, align=center, minimum height=11mm, text width=31mm, fill=white},
   flow/.style={-{Latex[length=2mm]}, thick, color=nato},
   correction/.style={-{Latex[length=2mm]}, dashed, thick, color=nato},
-  note/.style={font=\footnotesize, text=nato, fill=white, inner sep=1.1pt}
+  note/.style={font=\footnotesize, text=nato, fill=white, inner sep=1.2pt}
 ]
-\node[state] (scheme) at (0,4.0) {Схема};
-\node[state] (user) at (4.2,4.0) {Користувач};
-\node[state] (device) at (8.4,4.0) {Пристрій};
-\node[state] (profile) at (12.6,4.0) {Профіль і політика};
-\node[state] (service) at (16.8,4.0) {VPN-сервіс};
+\node[state] (scheme) at (0,4.8) {Схема};
+\node[state] (user) at (4.2,4.8) {Користувач};
+\node[state] (device) at (8.4,4.8) {Пристрій};
+\node[state] (profile) at (12.6,4.8) {Профіль і політика};
 
-\node[state] (ca) at (16.8,1.6) {Сертифікат CA};
-\node[state] (client) at (12.6,1.6) {Клієнтський сертифікат};
-\node[state] (relations) at (8.4,1.6) {Зв'язки};
-\node[state] (ready) at (4.2,1.6) {Готовність матеріалів};
-\node[state] (delivery) at (0,1.6) {Підготовка та\\передавання};
+\node[state] (service) at (12.6,2.4) {VPN-сервіс};
+\node[state] (ca) at (8.4,2.4) {Сертифікат CA};
+\node[state] (client) at (4.2,2.4) {Клієнтський сертифікат};
+\node[state] (relations) at (0,2.4) {Зв'язки};
+
+\node[state] (ready) at (0,0) {Готовність матеріалів};
+\node[state] (delivery) at (4.2,0) {Підготовка та\\передавання};
 
 \draw[flow] (scheme) -- (user);
 \draw[flow] (user) -- (device);
@@ -241,65 +244,71 @@
 \draw[flow] (relations) -- (ready);
 \draw[flow] (ready) -- (delivery);
 
-\draw[correction] (ready.north) to[bend left=34] node[note, above, yshift=2pt] {виправлення} (relations.north);
-\draw[correction] (delivery.south) to[bend left=28] node[note, below, yshift=-2pt] {повтор} (ready.south);
-\end{tikzpicture}
+\draw[correction] (ready.west) to[bend right=40] node[note, left] {виправлення} (relations.west);
+\draw[correction] (delivery.south) to[bend left=30] node[note, below] {повтор} (ready.south);
+\end{tikzpicture}%
+}
 \caption{Поточна станова модель майстра налаштування VPN}
 \label{fig:ias-wizard-fsm}
 \end{figure}
+\clearpage
 
 \paragraph{Взаємодія IAS, CA та VPN.}
 \begin{figure}[htbp]
 \centering
 \begin{tikzpicture}[
-  system/.style={draw=nato, rounded corners, align=center, minimum width=43mm, minimum height=18mm, fill=white},
-  store/.style={draw=nato, cylinder, shape border rotate=90, aspect=0.25, align=center, minimum width=37mm, minimum height=16mm, fill=white},
+  system/.style={draw=nato, rounded corners, align=center, minimum width=46mm, minimum height=20mm, fill=white},
+  store/.style={draw=nato, cylinder, shape border rotate=90, aspect=0.25, align=center, minimum width=40mm, minimum height=18mm, fill=white},
   link/.style={-{Latex[length=2.2mm]}, thick, color=nato},
-  link label/.style={font=\footnotesize, text=nato, fill=white, inner sep=1.2pt, align=center}
+  link label/.style={font=\footnotesize, text=nato, fill=white, inner sep=1.4pt, align=center}
 ]
-\node[system] (ias) at (0,2.8) {IAS\\майстер і доменні модулі};
-\node[system] (ca) at (9.0,2.8) {CA\\випуск сертифікатів};
-\node[store] (kvs) at (0,-2.4) {KVS/Mnesia\\стан IAS};
-\node[system] (vpn) at (9.0,-2.4) {VPN\\застосування команд};
+\node[system] (ias) at (0,4.0) {IAS\\майстер і доменні модулі};
+\node[system] (ca) at (9.5,4.0) {CA\\випуск сертифікатів};
+\node[store] (kvs) at (0,0) {KVS/Mnesia\\стан IAS};
+\node[system] (vpn) at (9.5,0) {VPN\\застосування команд};
 
 \draw[link] (ias) -- node[link label, above] {CSR і контекст випуску} (ca);
 \draw[link] (ca) -- node[link label, below] {публічний сертифікат} (ias);
 \draw[link] (ias) -- node[link label, left] {читання і запис} (kvs);
-\draw[link] (ias.east) -- ++(1.5,0) -- ++(0,-0.9) -- node[link label, right] {команда через RPC} (vpn.north);
-\draw[link] (vpn.west) -- ++(-1.5,0) -- ++(0,0.9) -- node[link label, left] {результат і стан} (ias.south);
+\draw[link] (ias.south east) to[bend left=12] node[link label, above right] {команда через RPC} (vpn.north west);
+\draw[link] (vpn.north west) to[bend left=12] node[link label, below left] {результат і стан} (ias.south east);
 \end{tikzpicture}
 \caption{Архітектурні межі та взаємодія IAS, CA, VPN і KVS/Mnesia}
 \label{fig:ias-ca-vpn}
 \end{figure}
+\clearpage
 
 \paragraph{Послідовність передавання та звіряння стану.}
 \begin{figure}[htbp]
 \centering
+\resizebox{0.96\textwidth}{!}{%
 \begin{tikzpicture}[
-  lifeline/.style={draw=nato, rounded corners, align=center, minimum width=33mm, minimum height=10mm, fill=white},
+  lifeline/.style={draw=nato, rounded corners, align=center, minimum width=35mm, minimum height=11mm, fill=white},
   msg/.style={-{Latex[length=2mm]}, thick, color=nato},
   return/.style={-{Latex[length=2mm]}, dashed, thick, color=nato},
-  msg label/.style={font=\footnotesize, text=nato, fill=white, inner sep=1.1pt}
+  msg label/.style={font=\footnotesize, text=nato, fill=white, inner sep=1.2pt}
 ]
 \node[lifeline] (wizard) at (0,0) {Майстер};
-\node[lifeline] (delivery) at (5.0,0) {Модуль доставки};
-\node[lifeline] (store) at (10.0,0) {KVS/Mnesia};
-\node[lifeline] (vpn) at (15.0,0) {VPN};
+\node[lifeline] (delivery) at (4.6,0) {Модуль доставки};
+\node[lifeline] (store) at (9.2,0) {KVS/Mnesia};
+\node[lifeline] (vpn) at (13.8,0) {VPN};
 
-\foreach \x in {0,5.0,10.0,15.0} {\draw[densely dashed, color=footergray] (\x,-0.6) -- (\x,-8.6);}
+\foreach \x in {0,4.6,9.2,13.8} {\draw[densely dashed, color=footergray] (\x,-0.65) -- (\x,-9.0);}
 
-\draw[msg] (0,-1.2) -- node[msg label, above] {підготувати конфігурацію} (5.0,-1.2);
-\draw[msg] (5.0,-2.2) -- node[msg label, above] {зберегти ревізію} (10.0,-2.2);
-\draw[msg] (5.0,-3.3) -- node[msg label, above] {команда через RPC} (15.0,-3.3);
-\draw[return] (15.0,-4.4) -- node[msg label, above] {результат} (5.0,-4.4);
-\draw[msg] (5.0,-5.4) -- node[msg label, above] {записати спробу} (10.0,-5.4);
-\draw[msg] (5.0,-6.5) -- node[msg label, above] {запит стану} (15.0,-6.5);
-\draw[return] (15.0,-7.5) -- node[msg label, above] {стан VPN} (5.0,-7.5);
-\draw[msg] (5.0,-8.3) -- node[msg label, above] {зафіксувати результат} (10.0,-8.3);
-\end{tikzpicture}
+\draw[msg] (0,-1.3) -- node[msg label, above] {підготувати конфігурацію} (4.6,-1.3);
+\draw[msg] (4.6,-2.4) -- node[msg label, above] {зберегти ревізію} (9.2,-2.4);
+\draw[msg] (4.6,-3.5) -- node[msg label, above] {команда через RPC} (13.8,-3.5);
+\draw[return] (13.8,-4.6) -- node[msg label, above] {результат} (4.6,-4.6);
+\draw[msg] (4.6,-5.7) -- node[msg label, above] {записати спробу} (9.2,-5.7);
+\draw[msg] (4.6,-6.8) -- node[msg label, above] {запит стану} (13.8,-6.8);
+\draw[return] (13.8,-7.9) -- node[msg label, above] {стан VPN} (4.6,-7.9);
+\draw[msg] (4.6,-8.8) -- node[msg label, above] {зафіксувати результат} (9.2,-8.8);
+\end{tikzpicture}%
+}
 \caption{Послідовність передавання конфігурації та звіряння стану}
 \label{fig:ias-delivery-reconciliation}
 \end{figure}
+\clearpage
 
 \subsection{Авторизація та атрибути доступу}
 Поточна реалізація використовує профілі й політики безпеки, атрибути доменних об'єктів,
